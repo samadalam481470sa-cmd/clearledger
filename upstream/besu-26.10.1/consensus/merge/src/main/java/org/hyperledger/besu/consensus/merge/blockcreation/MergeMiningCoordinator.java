@@ -1,0 +1,397 @@
+/*
+ * Copyright contributors to Hyperledger Besu.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+ * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations under the License.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+package org.hyperledger.besu.consensus.merge.blockcreation;
+
+import static org.hyperledger.besu.consensus.merge.blockcreation.MergeMiningCoordinator.ForkchoiceResult.Status.IGNORE_UPDATE_TO_OLD_HEAD;
+import static org.hyperledger.besu.consensus.merge.blockcreation.MergeMiningCoordinator.ForkchoiceResult.Status.VALID;
+
+import org.hyperledger.besu.datatypes.Address;
+import org.hyperledger.besu.datatypes.Hash;
+import org.hyperledger.besu.ethereum.BlockProcessingResult;
+import org.hyperledger.besu.ethereum.blockcreation.MiningCoordinator;
+import org.hyperledger.besu.ethereum.chain.BadBlockCause;
+import org.hyperledger.besu.ethereum.core.Block;
+import org.hyperledger.besu.ethereum.core.BlockHeader;
+import org.hyperledger.besu.ethereum.core.Withdrawal;
+import org.hyperledger.besu.ethereum.eth.manager.EthScheduler;
+import org.hyperledger.besu.ethereum.mainnet.block.access.list.BlockAccessList;
+
+import java.util.List;
+import java.util.Optional;
+import java.util.OptionalLong;
+import java.util.concurrent.CompletableFuture;
+
+import org.apache.tuweni.bytes.Bytes32;
+import org.immutables.value.Value;
+
+/** The interface Merge mining coordinator. */
+public interface MergeMiningCoordinator extends MiningCoordinator {
+  /** The maximum number of blocks that we can reorg back to */
+  long MAX_REORG_DEPTH = 90_000L;
+
+  /**
+   * Arguments passed to {@link MergeMiningCoordinator#preparePayload(PreparePayloadArgs)}.
+   *
+   * @param parentHeader the parent block header
+   * @param timestamp the payload timestamp
+   * @param prevRandao the previous RANDAO mix
+   * @param feeRecipient the suggested fee recipient address
+   * @param withdrawals the withdrawals, if present
+   * @param parentBeaconBlockRoot the parent beacon block root, if present
+   * @param slotNumber the consensus-layer slot number, if present
+   * @param targetGasLimit the CL-supplied target gas limit, if present
+   */
+  @Value.Builder
+  record PreparePayloadArgs(
+      BlockHeader parentHeader,
+      Long timestamp,
+      Bytes32 prevRandao,
+      Address feeRecipient,
+      Optional<List<Withdrawal>> withdrawals,
+      Optional<Bytes32> parentBeaconBlockRoot,
+      Optional<Long> slotNumber,
+      Optional<Long> targetGasLimit) {}
+
+  /**
+   * Prepare payload identifier.
+   *
+   * @param preparePayloadArgs the payload arguments
+   * @return the payload identifier
+   */
+  PayloadIdentifier preparePayload(final PreparePayloadArgs preparePayloadArgs);
+
+  @Override
+  default boolean isCompatibleWithEngineApi() {
+    return true;
+  }
+
+  /**
+   * Remember block.
+   *
+   * @param block the block
+   * @return the block processing result
+   */
+  BlockProcessingResult rememberBlock(final Block block);
+
+  /**
+   * Remember block with optional block access list.
+   *
+   * @param block the block
+   * @param blockAccessList optional block access list
+   * @return the block processing result
+   */
+  BlockProcessingResult rememberBlock(
+      final Block block, final Optional<BlockAccessList> blockAccessList);
+
+  /**
+   * Validate block.
+   *
+   * @param block the block
+   * @return the block processing result
+   */
+  BlockProcessingResult validateBlock(final Block block);
+
+  /**
+   * Update fork choice without applying the legacy "ignore update to old head" optimization that
+   * skips when the new head is an ancestor of the canonical chain head. Used by the post
+   * execution-apis #786 forkchoiceUpdated flow, where the narrowed skip (ancestor of finalized) is
+   * checked before this call.
+   *
+   * @param newHead the new head
+   * @param finalizedBlockHash the finalized block hash
+   * @param safeBlockHash the safe block hash
+   * @return the forkchoice result
+   */
+  ForkchoiceResult updateForkChoice(
+      final BlockHeader newHead, final Hash finalizedBlockHash, final Hash safeBlockHash);
+
+  /**
+   * Returns true if the given block header is a strict ancestor of the currently finalized block
+   * (i.e. an older block on the same chain, not finalized itself). Returns false when no finalized
+   * block is known, when the candidate hash cannot be located, or when the candidate IS the
+   * finalized block
+   *
+   * @param candidateHeadBlockHeader the candidate block header
+   * @return whether the candidate is a strict ancestor of the latest known finalized block
+   */
+  boolean isAncestorOfFinalized(BlockHeader candidateHeadBlockHeader);
+
+  /**
+   * Computes the reorg depth that would result from switching the canonical head to {@code
+   * newHead}. Reorg depth is defined as {@code currentChainHead.number - commonAncestor(newHead,
+   * currentChainHead).number}. Returns {@link OptionalLong#empty()} when the common ancestor cannot
+   * be found. Implementations may early-exit once the depth exceeds an internal limit.
+   *
+   * @param newHead the candidate new head
+   * @return the reorg depth, or empty if the common ancestor with the canonical chain cannot be
+   *     determined
+   */
+  OptionalLong computeReorgDepth(BlockHeader newHead);
+
+  /**
+   * Gets latest valid ancestor.
+   *
+   * @param blockHash the block hash
+   * @return the latest valid ancestor
+   */
+  Optional<Hash> getLatestValidAncestor(Hash blockHash);
+
+  /**
+   * Gets latest valid ancestor.
+   *
+   * @param blockheader the blockheader
+   * @return the latest valid ancestor
+   */
+  Optional<Hash> getLatestValidAncestor(BlockHeader blockheader);
+
+  /**
+   * Checks if a block descends from another
+   *
+   * @param ancestorBlock the ancestor block
+   * @param newBlock the block we want to check if it is descendant
+   * @return true if newBlock is a descendant of ancestorBlock
+   */
+  boolean isDescendantOf(final BlockHeader ancestorBlock, final BlockHeader newBlock);
+
+  /**
+   * Is backward syncing.
+   *
+   * @return the boolean
+   */
+  boolean isBackwardSyncing();
+
+  /**
+   * Append new payload to sync.
+   *
+   * @param newPayload the new payload
+   * @param blockAccessList the block access list received with the payload, if any
+   * @return the completable future
+   */
+  CompletableFuture<Void> appendNewPayloadToSync(
+      Block newPayload, Optional<BlockAccessList> blockAccessList);
+
+  /**
+   * Gets or sync head by hash.
+   *
+   * @param headHash the head hash
+   * @param finalizedHash the finalized hash
+   * @return the block header or empty if not present
+   */
+  Optional<BlockHeader> getOrSyncHeadByHash(Hash headHash, Hash finalizedHash);
+
+  /**
+   * Is mining before merge enabled.
+   *
+   * @return the boolean
+   */
+  boolean isMiningBeforeMerge();
+
+  /**
+   * Is bad block.
+   *
+   * @param blockHash the block hash
+   * @return the boolean
+   */
+  boolean isBadBlock(Hash blockHash);
+
+  /**
+   * Check whether a block that has not been imported yet descends from a bad block, recording it as
+   * bad if it does. Only the direct parent is checked, so a deeper bad ancestor is detected as long
+   * as every block in between was checked too. A parent that is on the chain is never bad.
+   *
+   * @param header the header of the block
+   * @return the cause the block is bad for, empty if the parent is not known as bad
+   */
+  Optional<BadBlockCause> checkAndMarkBadDescendant(BlockHeader header);
+
+  /**
+   * Best-effort variant of {@link #checkAndMarkBadDescendant(BlockHeader)} for a block only known
+   * by hash. The check needs the block's header to find its parent, so it only covers a block whose
+   * header a previous sync attempt already fetched. {@code false} means the block was not detected
+   * as a bad descendant, not that it is none.
+   *
+   * @param blockHash the block hash
+   * @return true if the block was detected to descend from a bad block
+   */
+  boolean checkAndMarkBadDescendant(Hash blockHash);
+
+  /**
+   * Gets latest valid hash of bad block.
+   *
+   * @param blockHash the block hash
+   * @return the latest valid hash of bad block
+   */
+  Optional<Hash> getLatestValidHashOfBadBlock(final Hash blockHash);
+
+  /**
+   * Finalize proposal by id.
+   *
+   * @param payloadId the payload id
+   */
+  void finalizeProposalById(final PayloadIdentifier payloadId);
+
+  /**
+   * Await current build completion for the given payload.
+   *
+   * <p>This method waits for the in-progress block building task to complete, with a timeout. This
+   * is useful when we want to wait for a non-empty block to be built before returning a payload.
+   * The timeout is determined by the configured PoS block finalization timeout.
+   *
+   * @param payloadId the payload id
+   */
+  void awaitCurrentBuildCompletion(final PayloadIdentifier payloadId);
+
+  /**
+   * Return the scheduler
+   *
+   * @return the instance of the scheduler
+   */
+  EthScheduler getEthScheduler();
+
+  /** The type Forkchoice result. */
+  class ForkchoiceResult {
+    /** The enum Status. */
+    public enum Status {
+      /** Valid status. */
+      VALID,
+      /** Invalid status. */
+      INVALID,
+      /** Invalid payload attributes status. */
+      INVALID_PAYLOAD_ATTRIBUTES,
+      /** Ignore update to old head status. */
+      IGNORE_UPDATE_TO_OLD_HEAD,
+      /** The head could not be set because of a local failure, the head itself may be valid. */
+      INTERNAL_ERROR
+    }
+
+    private final Status status;
+    private final Optional<String> errorMessage;
+    private final Optional<BlockHeader> newFinalized;
+    private final Optional<BlockHeader> newHead;
+    private final Optional<Hash> latestValid;
+
+    private ForkchoiceResult(
+        final Status status,
+        final Optional<String> errorMessage,
+        final Optional<BlockHeader> newFinalized,
+        final Optional<BlockHeader> newHead,
+        final Optional<Hash> latestValid) {
+      this.status = status;
+      this.errorMessage = errorMessage;
+      this.newFinalized = newFinalized;
+      this.newHead = newHead;
+      this.latestValid = latestValid;
+    }
+
+    /**
+     * Create forkchoice result with failure.
+     *
+     * @param status the status
+     * @param errorMessage the error message
+     * @param latestValid the latest valid
+     * @return the forkchoice result
+     */
+    public static ForkchoiceResult withFailure(
+        final Status status, final String errorMessage, final Optional<Hash> latestValid) {
+      return new ForkchoiceResult(
+          status,
+          Optional.ofNullable(errorMessage),
+          Optional.empty(),
+          Optional.empty(),
+          latestValid);
+    }
+
+    /**
+     * Create forkchoice result with ignore update to old head.
+     *
+     * @param oldHead the old head
+     * @return the forkchoice result
+     */
+    public static ForkchoiceResult withIgnoreUpdateToOldHead(final BlockHeader oldHead) {
+      return new ForkchoiceResult(
+          IGNORE_UPDATE_TO_OLD_HEAD,
+          Optional.empty(),
+          Optional.empty(),
+          Optional.empty(),
+          Optional.of(oldHead.getHash()));
+    }
+
+    /**
+     * Create forkchoice result with result.
+     *
+     * @param newFinalized the new finalized
+     * @param newHead the new head
+     * @return the forkchoice result
+     */
+    public static ForkchoiceResult withResult(
+        final Optional<BlockHeader> newFinalized, final Optional<BlockHeader> newHead) {
+      return new ForkchoiceResult(VALID, Optional.empty(), newFinalized, newHead, Optional.empty());
+    }
+
+    /**
+     * Gets status.
+     *
+     * @return the status
+     */
+    public Status getStatus() {
+      return status;
+    }
+
+    /**
+     * Gets error message.
+     *
+     * @return the error message
+     */
+    public Optional<String> getErrorMessage() {
+      return errorMessage;
+    }
+
+    /**
+     * Gets new finalized.
+     *
+     * @return the new finalized
+     */
+    public Optional<BlockHeader> getNewFinalized() {
+      return newFinalized;
+    }
+
+    /**
+     * Gets new head.
+     *
+     * @return the new head
+     */
+    public Optional<BlockHeader> getNewHead() {
+      return newHead;
+    }
+
+    /**
+     * Gets latest valid.
+     *
+     * @return the latest valid
+     */
+    public Optional<Hash> getLatestValid() {
+      return latestValid;
+    }
+
+    /**
+     * Is valid.
+     *
+     * @return the boolean
+     */
+    public boolean shouldNotProceedToPayloadBuildProcess() {
+      return status != VALID;
+    }
+  }
+}

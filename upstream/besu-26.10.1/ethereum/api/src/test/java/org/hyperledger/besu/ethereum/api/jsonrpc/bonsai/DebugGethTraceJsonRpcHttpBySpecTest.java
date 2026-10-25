@@ -1,0 +1,56 @@
+/*
+ * Copyright contributors to Hyperledger Besu.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+ * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations under the License.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+package org.hyperledger.besu.ethereum.api.jsonrpc.bonsai;
+
+import org.hyperledger.besu.ethereum.api.jsonrpc.AbstractJsonRpcHttpBySpecTest;
+import org.hyperledger.besu.ethereum.core.BlockchainSetupUtil;
+import org.hyperledger.besu.plugin.services.storage.DataStorageFormat;
+
+public class DebugGethTraceJsonRpcHttpBySpecTest extends AbstractJsonRpcHttpBySpecTest {
+  @Override
+  protected void doSetup() throws Exception {
+    setupBonsaiBlockchain();
+    startService();
+  }
+
+  @Override
+  protected BlockchainSetupUtil getBlockchainSetupUtil(final DataStorageFormat storageFormat) {
+    return createBlockchainSetupUtil(
+        "debug-geth/chain-data/genesis.json", "debug-geth/chain-data/blocks.bin", storageFormat);
+  }
+
+  /**
+   * Method source for parameterized test jsonRPCCallWithSpecFile
+   *
+   * @return Paths to spec files
+   */
+  public static Object[][] specs() {
+    return AbstractJsonRpcHttpBySpecTest.findSpecFiles(
+        new String[] {
+          "debug-geth/specs/prestate-tracer/diff-mode-true",
+          "debug-geth/specs/prestate-tracer/diff-mode-false",
+          "debug-geth/specs/prestate-tracer/disable-code",
+          "debug-geth/specs/prestate-tracer/disable-storage",
+          "debug-geth/specs/prestate-tracer/include-empty",
+          "debug-geth/specs/call-tracer",
+          "debug-geth/specs/call-tracer/only-top-call",
+          "debug-geth/specs/call-tracer/with-log",
+          "debug-geth/specs/flatcall-tracer",
+          "debug-geth/specs/flatcall-tracer/convert-parity-errors",
+          "debug-geth/specs/flatcall-tracer/include-precompiles",
+          "debug-geth/specs/4byte-tracer"
+        });
+  }
+}

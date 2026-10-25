@@ -1,0 +1,87 @@
+/*
+ * Copyright contributors to Hyperledger Besu.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+ * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations under the License.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+package org.hyperledger.besu.cli.options;
+
+import org.hyperledger.besu.ethereum.mainnet.BalConfiguration;
+import org.hyperledger.besu.ethereum.mainnet.ImmutableBalConfiguration;
+
+import picocli.CommandLine;
+
+/** Command-line options for configuring Block Access List behaviour. */
+public class BalConfigurationOptions {
+  /** Default constructor. */
+  public BalConfigurationOptions() {}
+
+  @CommandLine.Option(
+      names = {"--Xbal-perfect-parallelization-enabled"},
+      hidden = true,
+      description =
+          "Allows disabling BAL-based perfect parallelization even when BALs are present.")
+  boolean balPerfectParallelizationEnabled = true;
+
+  @CommandLine.Option(
+      names = {"--Xbal-state-root-enabled"},
+      hidden = true,
+      negatable = true,
+      description =
+          "Use the BAL-based state root commit path when a BAL is present (default: true).")
+  boolean balStateRootEnabled = true;
+
+  @CommandLine.Option(
+      names = {"--Xbal-log-bals-on-mismatch"},
+      hidden = true,
+      description = "Log the constructed and block's BAL when they differ.")
+  boolean balLogBalsOnMismatch = false;
+
+  @CommandLine.Option(
+      names = {"--Xbal-prefetch-reading-enabled"},
+      hidden = true,
+      arity = "1",
+      description =
+          "Enable prefetching of state data based on BAL read operations (default: ${DEFAULT-VALUE}).")
+  boolean balPreFetchReadingEnabled = BalConfiguration.DEFAULT.isBalPreFetchReadingEnabled();
+
+  @CommandLine.Option(
+      names = {"--Xbal-prefetch-batch-size"},
+      hidden = true,
+      paramLabel = "<INT>",
+      description =
+          "Keys per BAL prefetch MultiGet (0 = one MultiGet per segment; default: ${DEFAULT-VALUE}).")
+  int balPreFetchBatchSize = BalConfiguration.DEFAULT.getBalPreFetchBatchSize();
+
+  @CommandLine.Option(
+      names = {"--Xbal-prefetch-sorting-enabled"},
+      hidden = true,
+      arity = "1",
+      description =
+          "Enable sorting of storage state data based on BAL (default: ${DEFAULT-VALUE}).")
+  boolean balPreFetchSortingEnabled = BalConfiguration.DEFAULT.isBalPreFetchSortingEnabled();
+
+  /**
+   * Builds the immutable {@link BalConfiguration} corresponding to the parsed CLI options.
+   *
+   * @return an immutable BAL configuration reflecting the current option values
+   */
+  public BalConfiguration toDomainObject() {
+    return ImmutableBalConfiguration.builder()
+        .isPerfectParallelizationEnabled(balPerfectParallelizationEnabled)
+        .shouldLogBalsOnMismatch(balLogBalsOnMismatch)
+        .isBalStateRootEnabled(balStateRootEnabled)
+        .isBalPreFetchReadingEnabled(balPreFetchReadingEnabled)
+        .isBalPreFetchSortingEnabled(balPreFetchSortingEnabled)
+        .balPreFetchBatchSize(balPreFetchBatchSize)
+        .build();
+  }
+}

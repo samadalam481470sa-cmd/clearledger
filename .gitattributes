@@ -1,0 +1,4 @@
+* text=auto
+upstream/** linguist-vendored
+*.png binary
+*.zip binary

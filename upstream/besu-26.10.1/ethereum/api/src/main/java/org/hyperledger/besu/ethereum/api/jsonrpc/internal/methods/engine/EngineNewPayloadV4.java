@@ -1,0 +1,153 @@
+/*
+ * Copyright contributors to Hyperledger Besu.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+ * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations under the License.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+package org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.engine;
+
+import static org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods.engine.RequestValidatorProvider.getRequestsValidator;
+import static org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.JsonRpcParameter.Configuration.FAIL_ON_UNKNOWN_BUT_NULL;
+
+import org.hyperledger.besu.datatypes.HardforkId;
+import org.hyperledger.besu.datatypes.RequestType;
+import org.hyperledger.besu.ethereum.api.jsonrpc.RpcMethod;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequestContext;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.ExecutionPayloadV3;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.JsonRpcParameter.JsonRpcParameterException;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.NewPayloadRequestParametersV2;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.parameters.NewPayloadRequestParametersV3;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcErrorResponse;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcResponse;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.RpcErrorType;
+import org.hyperledger.besu.ethereum.core.BlockHeaderBuilder;
+import org.hyperledger.besu.ethereum.core.Request;
+import org.hyperledger.besu.ethereum.mainnet.BodyValidation;
+import org.hyperledger.besu.ethereum.mainnet.ValidationResult;
+
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+public sealed class EngineNewPayloadV4<
+        EP extends ExecutionPayloadV3, NPRP extends NewPayloadRequestParametersV3<? extends EP>>
+    extends EngineNewPayloadV3<EP, NPRP> permits EngineNewPayloadV5 {
+  private static final Logger LOG = LoggerFactory.getLogger(EngineNewPayloadV4.class);
+
+  public EngineNewPayloadV4(
+      final ConstructorArguments constructorArguments,
+      final HardforkId minSupportedFork,
+      final HardforkId firstUnsupportedFork) {
+    super(constructorArguments, minSupportedFork, firstUnsupportedFork);
+  }
+
+  @Override
+  protected Logger logger() {
+    return LOG;
+  }
+
+  @Override
+  public String getName() {
+    return RpcMethod.ENGINE_NEW_PAYLOAD_V4.getMethodName();
+  }
+
+  @Override
+  @SuppressWarnings("unchecked")
+  protected NPRP readRequestParameters(final JsonRpcRequestContext requestContext) {
+    final NewPayloadRequestParametersV2<? extends EP> requestParameters =
+        super.readRequestParameters(requestContext);
+    final List<Request> executionRequests;
+    try {
+      executionRequests =
+          requestContext.getRequiredList(3, Request.class, FAIL_ON_UNKNOWN_BUT_NULL);
+    } catch (JsonRpcParameterException e) {
+      throw new InvalidRequestParametersException(
+          requestParameters.payloadParameter(),
+          "Invalid execution request parameters (index 3)",
+          RpcErrorType.INVALID_EXECUTION_REQUESTS_PARAMS,
+          e);
+    }
+    return (NPRP) new NewPayloadRequestParametersV3<>(requestParameters, executionRequests);
+  }
+
+  @Override
+  protected int getNumberOfParameters() {
+    return 4;
+  }
+
+  @Override
+  protected ValidationResult<RpcErrorType> validateParameters(final NPRP requestParameters) {
+    final ValidationResult<RpcErrorType> result = super.validateParameters(requestParameters);
+    return result.isValid() ? validateParametersV4(requestParameters) : result;
+  }
+
+  private ValidationResult<RpcErrorType> validateParametersV4(
+      final NewPayloadRequestParametersV3<? extends EP> requestParameters) {
+    final var payloadParameter = requestParameters.payloadParameter();
+    if (!getRequestsValidator(
+            protocolSchedule, payloadParameter.getTimestamp(), payloadParameter.getBlockNumber())
+        .validate(Optional.of(requestParameters.executionRequests()))) {
+      return ValidationResult.invalid(RpcErrorType.INVALID_EXECUTION_REQUESTS_PARAMS);
+    }
+    return ValidationResult.valid();
+  }
+
+  @Override
+  protected void setBlockHeaderFields(
+      final BlockHeaderBuilder blockHeaderBuilder, final NPRP requestParameters) {
+    super.setBlockHeaderFields(blockHeaderBuilder, requestParameters);
+    blockHeaderBuilder.requestsHash(
+        BodyValidation.requestsHash(requestParameters.executionRequests()));
+  }
+
+  @Override
+  protected JsonRpcResponse processParametersParsingException(
+      final Object reqId, final InvalidRequestParametersException e) {
+
+    final Optional<RequestType.InvalidRequestTypeException> maybeRequestTypeEx =
+        extractCauseByType(e, RequestType.InvalidRequestTypeException.class);
+    if (maybeRequestTypeEx.isPresent()) {
+      if (e.hasPayloadParameter()) {
+        return respondWithInvalid(
+            reqId,
+            e.getPayloadParameter(),
+            mergeCoordinator
+                .getLatestValidAncestor(e.getPayloadParameter().getParentHash())
+                .orElse(null),
+            EngineStatus.INVALID,
+            // The validationError is the only diagnostic the consensus client receives, so it has
+            // to identify the field at fault, not just the reason.
+            RpcErrorType.INVALID_EXECUTION_REQUESTS.getMessage()
+                + ": "
+                + maybeRequestTypeEx.get().getMessage());
+      } else {
+        // payload parameter should be present in this case, so treat this as an internal error
+        logger()
+            .error(
+                "Internal error: we expected payload parameter to not be null, please report this",
+                e);
+        return new JsonRpcErrorResponse(reqId, RpcErrorType.INTERNAL_ERROR);
+      }
+    }
+
+    if (e.getRpcErrorType() == RpcErrorType.INVALID_EXECUTION_REQUESTS_PARAMS) {
+      return new JsonRpcErrorResponse(
+          reqId,
+          ValidationResult.invalid(
+              RpcErrorType.INVALID_EXECUTION_REQUESTS_PARAMS,
+              Objects.requireNonNullElse(e.getCause(), e).getMessage()));
+    }
+    return super.processParametersParsingException(reqId, e);
+  }
+}

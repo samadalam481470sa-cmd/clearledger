@@ -1,0 +1,816 @@
+/*
+ * Copyright contributors to Besu.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+ * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations under the License.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+package org.hyperledger.besu.ethereum.transaction;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.hyperledger.besu.ethereum.worldstate.WorldStateQueryParams.withBlockHeaderAndNoUpdateNodeHead;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import org.hyperledger.besu.datatypes.Address;
+import org.hyperledger.besu.datatypes.Hash;
+import org.hyperledger.besu.datatypes.StateOverride;
+import org.hyperledger.besu.datatypes.StateOverrideMap;
+import org.hyperledger.besu.datatypes.TransactionType;
+import org.hyperledger.besu.datatypes.Wei;
+import org.hyperledger.besu.datatypes.parameters.UnsignedLongParameter;
+import org.hyperledger.besu.ethereum.GasLimitCalculator;
+import org.hyperledger.besu.ethereum.chain.Blockchain;
+import org.hyperledger.besu.ethereum.core.BlockHeader;
+import org.hyperledger.besu.ethereum.core.BlockHeaderBuilder;
+import org.hyperledger.besu.ethereum.core.Difficulty;
+import org.hyperledger.besu.ethereum.core.MiningConfiguration;
+import org.hyperledger.besu.ethereum.core.Transaction;
+import org.hyperledger.besu.ethereum.core.TransactionReceipt;
+import org.hyperledger.besu.ethereum.mainnet.AbstractBlockProcessor;
+import org.hyperledger.besu.ethereum.mainnet.BlockGasAccountingStrategy;
+import org.hyperledger.besu.ethereum.mainnet.MainnetBlockHeaderFunctions;
+import org.hyperledger.besu.ethereum.mainnet.MainnetTransactionProcessor;
+import org.hyperledger.besu.ethereum.mainnet.MiningBeneficiaryCalculator;
+import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
+import org.hyperledger.besu.ethereum.mainnet.ProtocolSpec;
+import org.hyperledger.besu.ethereum.mainnet.TransactionValidationParams;
+import org.hyperledger.besu.ethereum.mainnet.ValidationResult;
+import org.hyperledger.besu.ethereum.mainnet.blockhash.PreExecutionProcessor;
+import org.hyperledger.besu.ethereum.mainnet.feemarket.FeeMarket;
+import org.hyperledger.besu.ethereum.processing.TransactionProcessingResult;
+import org.hyperledger.besu.ethereum.transaction.exceptions.BlockStateCallError;
+import org.hyperledger.besu.ethereum.transaction.exceptions.BlockStateCallException;
+import org.hyperledger.besu.ethereum.worldstate.WorldStateArchive;
+import org.hyperledger.besu.ethereum.worldstate.WorldStateQueryParams;
+import org.hyperledger.besu.evm.account.MutableAccount;
+import org.hyperledger.besu.evm.gascalculator.GasCalculator;
+import org.hyperledger.besu.evm.gascalculator.StateGasCostCalculator;
+import org.hyperledger.besu.evm.log.EIP7708TransferLogEmitter;
+import org.hyperledger.besu.evm.log.TransferLogEmitter;
+import org.hyperledger.besu.evm.tracing.EthTransferLogOperationTracer;
+import org.hyperledger.besu.evm.tracing.OperationTracer;
+import org.hyperledger.besu.evm.worldstate.WorldUpdater;
+import org.hyperledger.besu.plugin.data.BlockOverrides;
+import org.hyperledger.besu.plugin.services.worldstate.MutableWorldState;
+
+import java.math.BigInteger;
+import java.time.Duration;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.OptionalLong;
+import java.util.Set;
+
+import org.apache.tuweni.bytes.Bytes;
+import org.apache.tuweni.bytes.Bytes32;
+import org.apache.tuweni.units.bigints.UInt256;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+public class BlockSimulatorTest {
+
+  @Mock private WorldStateArchive worldStateArchive;
+  @Mock private ProtocolSchedule protocolSchedule;
+  @Mock private TransactionSimulator transactionSimulator;
+  @Mock private MiningConfiguration miningConfiguration;
+  @Mock private MutableWorldState mutableWorldState;
+  @Mock private Blockchain blockchain;
+  @Mock private WorldUpdater updater;
+  @Mock private ProtocolSpec protocolSpec;
+  @Mock private MainnetTransactionProcessor transactionProcessor;
+
+  private BlockHeader blockHeader;
+  private BlockSimulator blockSimulator;
+  private GasLimitCalculator gasLimitCalculator;
+
+  @BeforeEach
+  public void setUp() {
+    blockSimulator =
+        new BlockSimulator(
+            worldStateArchive,
+            protocolSchedule,
+            transactionSimulator,
+            miningConfiguration,
+            blockchain,
+            0);
+    blockHeader = BlockHeaderBuilder.createDefault().buildBlockHeader();
+    when(miningConfiguration.getCoinbase()).thenReturn(Optional.of(Address.fromHexString("0x1")));
+    when(protocolSchedule.getForNextBlockHeader(any(), anyLong())).thenReturn(protocolSpec);
+    when(protocolSchedule.getByBlockHeader(any())).thenReturn(protocolSpec);
+    when(protocolSpec.getTransactionProcessor()).thenReturn(transactionProcessor);
+    when(transactionProcessor.getTransferLogEmitter()).thenReturn(TransferLogEmitter.NOOP);
+    when(protocolSpec.getMiningBeneficiaryCalculator())
+        .thenReturn(mock(MiningBeneficiaryCalculator.class));
+    gasLimitCalculator = mock(GasLimitCalculator.class);
+    when(protocolSpec.getGasLimitCalculator()).thenReturn(gasLimitCalculator);
+    when(protocolSpec.getFeeMarket()).thenReturn(mock(FeeMarket.class));
+    when(protocolSpec.getPreExecutionProcessor()).thenReturn(mock(PreExecutionProcessor.class));
+    when(protocolSpec.getSlotDuration()).thenReturn(Duration.ofSeconds(12));
+    when(protocolSpec.getBlockGasAccountingStrategy())
+        .thenReturn(BlockGasAccountingStrategy.FRONTIER);
+    GasCalculator gasCalculator = mock(GasCalculator.class);
+    when(gasCalculator.stateGasCostCalculator()).thenReturn(StateGasCostCalculator.NONE);
+    when(protocolSpec.getGasCalculator()).thenReturn(gasCalculator);
+    when(gasLimitCalculator.computeExcessBlobGas(anyLong(), anyLong(), anyLong())).thenReturn(0L);
+  }
+
+  @Test
+  public void shouldProcessWithValidWorldState() {
+
+    when(worldStateArchive.getWorldState(withBlockHeaderAndNoUpdateNodeHead(blockHeader)))
+        .thenReturn(Optional.of(mutableWorldState));
+
+    List<BlockSimulationResult> results =
+        blockSimulator.process(blockHeader, BlockSimulationParameter.EMPTY);
+    assertNotNull(results);
+    verify(worldStateArchive).getWorldState(withBlockHeaderAndNoUpdateNodeHead(blockHeader));
+  }
+
+  @Test
+  public void shouldNotProcessWithInvalidWorldState() {
+    when(worldStateArchive.getWorldState(any(WorldStateQueryParams.class)))
+        .thenAnswer(invocation -> Optional.empty());
+
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> blockSimulator.process(blockHeader, BlockSimulationParameter.EMPTY));
+
+    assertEquals(
+        String.format("Public world state not available for block %s", blockHeader.toLogString()),
+        exception.getMessage());
+  }
+
+  @Test
+  public void shouldStopWhenTransactionSimulationIsInvalid() {
+    assertInvalidTransactionMapsToError(
+        TransactionInvalidReason.UPFRONT_GAS_COST_EXCEEDS_BALANCE,
+        BlockStateCallError.UPFRONT_COST_EXCEEDS_BALANCE);
+  }
+
+  @Test
+  public void shouldSurfaceInsufficientFundsForTransferAsUpfrontCostExceedsBalance() {
+    assertInvalidTransactionMapsToError(
+        TransactionInvalidReason.INSUFFICIENT_FUNDS_FOR_TRANSFER,
+        BlockStateCallError.UPFRONT_COST_EXCEEDS_BALANCE);
+  }
+
+  @Test
+  public void shouldSurfaceNonceTooLowFromTransactionSimulation() {
+    assertInvalidTransactionMapsToError(
+        TransactionInvalidReason.NONCE_TOO_LOW, BlockStateCallError.NONCE_TOO_LOW);
+  }
+
+  @Test
+  public void shouldSurfaceNonceTooHighFromTransactionSimulation() {
+    assertInvalidTransactionMapsToError(
+        TransactionInvalidReason.NONCE_TOO_HIGH, BlockStateCallError.NONCE_TOO_HIGH);
+  }
+
+  private void assertInvalidTransactionMapsToError(
+      final TransactionInvalidReason invalidReason, final BlockStateCallError expectedError) {
+    when(worldStateArchive.getWorldState(withBlockHeaderAndNoUpdateNodeHead(blockHeader)))
+        .thenReturn(Optional.of(mutableWorldState));
+    when(mutableWorldState.updater()).thenReturn(updater);
+
+    CallParameter callParameter = mock(CallParameter.class);
+    when(callParameter.getGas()).thenReturn(OptionalLong.empty());
+    BlockStateCall blockStateCall = new BlockStateCall(List.of(callParameter), null, null);
+
+    TransactionSimulatorResult transactionSimulatorResult = mock(TransactionSimulatorResult.class);
+    when(transactionSimulatorResult.isInvalid()).thenReturn(true);
+    when(transactionSimulatorResult.getInvalidReason())
+        .thenReturn(Optional.of("Invalid Transaction"));
+    when(transactionSimulatorResult.getValidationResult())
+        .thenReturn(ValidationResult.invalid(invalidReason, "Invalid Transaction"));
+    when(transactionSimulator.processWithWorldUpdater(
+            any(), any(), any(), any(), any(), any(), any(), anyLong(), any(), any(), any(), any(),
+            any()))
+        .thenReturn(Optional.of(transactionSimulatorResult));
+
+    BlockStateCallException exception =
+        assertThrows(
+            BlockStateCallException.class,
+            () ->
+                blockSimulator.process(
+                    blockHeader, createSimulationParameter(blockStateCall), mutableWorldState));
+
+    assertThat(exception.getError()).isEqualTo(expectedError);
+    assertEquals("Invalid Transaction", exception.getMessage());
+  }
+
+  @Test
+  public void shouldStopWhenTransactionSimulationIsEmpty() {
+
+    when(worldStateArchive.getWorldState(withBlockHeaderAndNoUpdateNodeHead(blockHeader)))
+        .thenReturn(Optional.of(mutableWorldState));
+    when(mutableWorldState.updater()).thenReturn(updater);
+
+    CallParameter callParameter = mock(CallParameter.class);
+    when(callParameter.getGas()).thenReturn(OptionalLong.empty());
+    BlockStateCall blockStateCall = new BlockStateCall(List.of(callParameter), null, null);
+
+    when(transactionSimulator.processWithWorldUpdater(
+            any(), any(), any(), any(), any(), any(), any(), anyLong(), any(), any(), any(), any(),
+            any()))
+        .thenReturn(Optional.empty());
+
+    BlockStateCallException exception =
+        assertThrows(
+            BlockStateCallException.class,
+            () ->
+                blockSimulator.process(
+                    blockHeader, createSimulationParameter(blockStateCall), mutableWorldState));
+
+    assertEquals("Transaction simulation returned no result", exception.getMessage());
+  }
+
+  @Test
+  public void shouldApplyStateOverridesCorrectly() {
+    StateOverrideMap stateOverrideMap = new StateOverrideMap();
+    Address address = mock(Address.class);
+    StateOverride stateOverride =
+        new StateOverride.Builder()
+            .withBalance(Wei.of(456L))
+            .withNonce(new UnsignedLongParameter(123L))
+            .withCode("")
+            .withStateDiff(Map.of("0x0", "0x1"))
+            .build();
+
+    stateOverrideMap.put(address, stateOverride);
+
+    WorldUpdater worldUpdater = mock(WorldUpdater.class);
+    when(mutableWorldState.updater()).thenReturn(worldUpdater);
+
+    MutableAccount mutableAccount = mock(MutableAccount.class);
+    when(mutableAccount.getAddress()).thenReturn(address);
+    when(worldUpdater.getOrCreate(address)).thenReturn(mutableAccount);
+
+    blockSimulator.applyStateOverrides(stateOverrideMap, mutableWorldState);
+
+    verify(mutableAccount).setNonce(anyLong());
+    verify(mutableAccount).setBalance(any(Wei.class));
+    verify(mutableAccount).setCode(any(Bytes.class));
+    verify(mutableAccount).setStorageValue(any(UInt256.class), any(UInt256.class));
+  }
+
+  @Test
+  public void shouldOverrideBlockHeaderCorrectly() {
+    FeeMarket feeMarket = mock(FeeMarket.class);
+    when(feeMarket.implementsBaseFee()).thenReturn(true);
+    when(protocolSpec.getFeeMarket()).thenReturn(feeMarket);
+    when(protocolSpec.isPoS()).thenReturn(true);
+
+    var expectedTimestamp = 1L;
+    var expectedBlockNumber = 2L;
+    var expectedFeeRecipient = Address.fromHexString("0x1");
+    var expectedBaseFeePerGas = Wei.of(7L);
+    var expectedGasLimit = 5L;
+    var expectedDifficulty = BigInteger.ONE;
+    var expectedMixHashOrPrevRandao = Hash.hash(Bytes.fromHexString("0x01"));
+    var expectedPrevRandao = Hash.hash(Bytes.fromHexString("0x01"));
+    var expectedParentBeaconBlockRoot =
+        Bytes32.wrap(Hash.hash(Bytes.fromHexString("0x03")).getBytes());
+    var expectedExtraData = Bytes.fromHexString("0x02");
+
+    BlockOverrides blockOverrides =
+        BlockOverrides.builder()
+            .timestamp(expectedTimestamp)
+            .blockNumber(expectedBlockNumber)
+            .feeRecipient(expectedFeeRecipient)
+            .baseFeePerGas(expectedBaseFeePerGas)
+            .gasLimit(expectedGasLimit)
+            .difficulty(expectedDifficulty)
+            .mixHashOrPrevRandao(Bytes32.wrap(expectedMixHashOrPrevRandao.getBytes()))
+            .extraData(expectedExtraData)
+            .parentBeaconBlockRoot(expectedParentBeaconBlockRoot)
+            .build();
+
+    BlockHeader result =
+        blockSimulator.overrideBlockHeader(blockHeader, protocolSpec, blockOverrides, true, false);
+
+    assertNotNull(result);
+    assertEquals(expectedTimestamp, result.getTimestamp());
+    assertEquals(expectedBlockNumber, result.getNumber());
+    assertEquals(expectedFeeRecipient, result.getCoinbase());
+    assertEquals(Optional.of(expectedBaseFeePerGas), result.getBaseFee());
+    assertEquals(expectedGasLimit, result.getGasLimit());
+    assertThat(result.getDifficulty()).isEqualTo(Difficulty.of(expectedDifficulty));
+    assertEquals(expectedMixHashOrPrevRandao, result.getMixHash());
+    assertEquals(expectedPrevRandao.getBytes(), result.getPrevRandao().get());
+    assertEquals(expectedExtraData, result.getExtraData());
+  }
+
+  @Test
+  public void shouldInheritFeeRecipientFromParentBlock() {
+    // When feeRecipient is set on the first block, subsequent blocks without feeRecipient
+    // should inherit from the parent block's coinbase, regardless of mining configuration.
+
+    var expectedFeeRecipient = Address.fromHexString("0xc200000000000000000000000000000000000000");
+
+    // Block 1: with feeRecipient override
+    BlockOverrides block1Overrides =
+        BlockOverrides.builder()
+            .timestamp(1L)
+            .blockNumber(1L)
+            .feeRecipient(expectedFeeRecipient)
+            .build();
+
+    BlockHeader block1Header =
+        blockSimulator.overrideBlockHeader(
+            blockHeader, protocolSpec, block1Overrides, false, false);
+    assertEquals(expectedFeeRecipient, block1Header.getCoinbase());
+
+    // Block 2: no feeRecipient override — should inherit from block 1
+    BlockOverrides block2Overrides =
+        BlockOverrides.builder().timestamp(13L).blockNumber(2L).build();
+
+    BlockHeader block2Header =
+        blockSimulator.overrideBlockHeader(
+            block1Header, protocolSpec, block2Overrides, false, false);
+    assertEquals(expectedFeeRecipient, block2Header.getCoinbase());
+  }
+
+  @Test
+  public void shouldSetSlotNumberFromParentSlotNumber() {
+    BlockOverrides overrides = BlockOverrides.builder().timestamp(1L).blockNumber(1L).build();
+
+    BlockHeader parentWithSlot =
+        BlockHeaderBuilder.fromHeader(blockHeader)
+            .slotNumber(41L)
+            .blockHeaderFunctions(new MainnetBlockHeaderFunctions())
+            .buildBlockHeader();
+    assertEquals(
+        Optional.of(42L),
+        blockSimulator
+            .overrideBlockHeader(parentWithSlot, protocolSpec, overrides, false, false)
+            .getOptionalSlotNumber());
+
+    assertEquals(
+        Optional.empty(),
+        blockSimulator
+            .overrideBlockHeader(blockHeader, protocolSpec, overrides, false, false)
+            .getOptionalSlotNumber());
+  }
+
+  @Test
+  public void shouldUseNextGasLimitWhenEnforceConsensusGasLimitIsTrue() {
+    final long parentGasLimit = 10_000_000L;
+    final long targetGasLimit = 20_000_000L;
+    final long nextGasLimit = 10_001_024L; // small EIP-1559 step toward target
+
+    BlockHeader parent =
+        BlockHeaderBuilder.createDefault().gasLimit(parentGasLimit).buildBlockHeader();
+    when(miningConfiguration.getTargetGasLimit()).thenReturn(OptionalLong.of(targetGasLimit));
+    when(gasLimitCalculator.nextGasLimit(anyLong(), anyLong(), anyLong())).thenReturn(nextGasLimit);
+
+    BlockOverrides overrides = BlockOverrides.builder().timestamp(1L).blockNumber(1L).build();
+
+    BlockHeader result =
+        blockSimulator.overrideBlockHeader(parent, protocolSpec, overrides, false, true);
+
+    assertEquals(nextGasLimit, result.getGasLimit());
+  }
+
+  @Test
+  public void shouldInheritParentGasLimitWhenEnforceConsensusGasLimitIsFalse() {
+    final long parentGasLimit = 10_000_000L;
+
+    BlockHeader parent =
+        BlockHeaderBuilder.createDefault().gasLimit(parentGasLimit).buildBlockHeader();
+
+    BlockOverrides overrides = BlockOverrides.builder().timestamp(1L).blockNumber(1L).build();
+
+    BlockHeader result =
+        blockSimulator.overrideBlockHeader(parent, protocolSpec, overrides, false, false);
+
+    assertEquals(parentGasLimit, result.getGasLimit());
+  }
+
+  @Test
+  public void shouldDetectInvalidPrecompile() {
+    var stateOverrideMap = new StateOverrideMap();
+    var targetAddress = Address.fromHexString("0x3");
+    var precompileAddress = Address.fromHexString("0x1");
+
+    var stateOverride =
+        new StateOverride.Builder().withMovePrecompileToAddress(targetAddress).build();
+
+    stateOverrideMap.put(precompileAddress, stateOverride);
+
+    var validationResult = buildParameterWithOverrides(stateOverrideMap).validate(Set.of());
+
+    assertThat(validationResult).isPresent();
+    assertThat(validationResult.orElseThrow())
+        .isEqualTo(BlockStateCallError.INVALID_PRECOMPILE_ADDRESS);
+  }
+
+  @Test
+  public void shouldAllowDuplicatePrecompileTargetAddresses() {
+    var stateOverrideMap = new StateOverrideMap();
+    var targetAddress = Address.fromHexString("0x3");
+    var precompileAddress1 = Address.fromHexString("0x1");
+    var precompileAddress2 = Address.fromHexString("0x2");
+
+    var stateOverride =
+        new StateOverride.Builder().withMovePrecompileToAddress(targetAddress).build();
+
+    // Map two precompile addresses to the same target address - should be allowed
+    stateOverrideMap.put(precompileAddress1, stateOverride);
+    stateOverrideMap.put(precompileAddress2, stateOverride);
+
+    var validationResult =
+        buildParameterWithOverrides(stateOverrideMap)
+            .validate(Set.of(precompileAddress1, precompileAddress2));
+
+    assertThat(validationResult).isEmpty();
+  }
+
+  @Test
+  public void shouldThrowBlockGasLimitExceededWhenTxGasExceedsBlockLimitWithValidationDisabled() {
+    when(mutableWorldState.updater()).thenReturn(updater);
+
+    // Parent block has gasLimit=1; simulated block inherits it, so tx requesting 1M gas is rejected
+    BlockHeader smallGasLimitHeader =
+        BlockHeaderBuilder.createDefault().gasLimit(1L).buildBlockHeader();
+    CallParameter callParameter = mock(CallParameter.class);
+    when(callParameter.getGas()).thenReturn(OptionalLong.of(1_000_000L));
+    BlockStateCall blockStateCall = new BlockStateCall(List.of(callParameter), null, null);
+
+    BlockSimulationParameter parameter =
+        new BlockSimulationParameter.BlockSimulationParameterBuilder()
+            .blockStateCalls(List.of(blockStateCall))
+            .validation(false)
+            .build();
+
+    BlockStateCallException exception =
+        assertThrows(
+            BlockStateCallException.class,
+            () -> blockSimulator.process(smallGasLimitHeader, parameter, mutableWorldState));
+
+    assertThat(exception.getError()).isEqualTo(BlockStateCallError.BLOCK_GAS_LIMIT_EXCEEDED);
+    assertThat(exception.getError().getCode()).isEqualTo(-38015);
+  }
+
+  @Test
+  public void shouldThrowBlockGasLimitExceededWhenTxGasExceedsBlockLimitWithValidationEnabled() {
+    when(mutableWorldState.updater()).thenReturn(updater);
+
+    // Parent block has gasLimit=1; simulated block inherits it, so tx requesting 1M gas is rejected
+    BlockHeader smallGasLimitHeader =
+        BlockHeaderBuilder.createDefault().gasLimit(1L).buildBlockHeader();
+    CallParameter callParameter = mock(CallParameter.class);
+    when(callParameter.getGas()).thenReturn(OptionalLong.of(1_000_000L));
+    BlockStateCall blockStateCall = new BlockStateCall(List.of(callParameter), null, null);
+
+    BlockSimulationParameter parameter =
+        new BlockSimulationParameter.BlockSimulationParameterBuilder()
+            .blockStateCalls(List.of(blockStateCall))
+            .validation(true)
+            .build();
+
+    BlockStateCallException exception =
+        assertThrows(
+            BlockStateCallException.class,
+            () -> blockSimulator.process(smallGasLimitHeader, parameter, mutableWorldState));
+
+    assertThat(exception.getError()).isEqualTo(BlockStateCallError.BLOCK_GAS_LIMIT_EXCEEDED);
+    assertThat(exception.getError().getCode()).isEqualTo(-38015);
+  }
+
+  @Test
+  public void
+      shouldThrowBlockGasLimitExceededWhenSecondTxGasExceedsRemainingAfterFirstTxConsumed() {
+    // Block gas limit = 30,000. First tx consumes 21,000 (leaving 9,000 remaining).
+    // Second tx explicitly requests 10,000 gas, which exceeds the 9,000 remaining.
+    BlockHeader header30k = BlockHeaderBuilder.createDefault().gasLimit(30_000L).buildBlockHeader();
+    when(gasLimitCalculator.computeExcessBlobGas(anyLong(), anyLong(), anyLong())).thenReturn(0L);
+
+    WorldUpdater transactionUpdater = mock(WorldUpdater.class);
+    when(mutableWorldState.updater()).thenReturn(updater);
+    when(updater.updater()).thenReturn(transactionUpdater);
+
+    CallParameter firstCallParam = mock(CallParameter.class);
+    when(firstCallParam.getGas()).thenReturn(OptionalLong.empty());
+    when(firstCallParam.getGasPrice()).thenReturn(Optional.empty());
+    when(firstCallParam.getMaxFeePerGas()).thenReturn(Optional.empty());
+    when(firstCallParam.getMaxPriorityFeePerGas()).thenReturn(Optional.empty());
+
+    CallParameter secondCallParam = mock(CallParameter.class);
+    when(secondCallParam.getGas()).thenReturn(OptionalLong.of(10_000L));
+
+    BlockStateCall blockStateCall =
+        new BlockStateCall(List.of(firstCallParam, secondCallParam), null, null);
+
+    Transaction tx = mock(Transaction.class);
+    when(tx.getType()).thenReturn(TransactionType.FRONTIER);
+    when(tx.getGasLimit()).thenReturn(21_000L);
+
+    TransactionProcessingResult processingResult = mock(TransactionProcessingResult.class);
+    when(processingResult.getPartialBlockAccessView()).thenReturn(Optional.empty());
+
+    TransactionSimulatorResult firstTxResult = mock(TransactionSimulatorResult.class);
+    when(firstTxResult.isInvalid()).thenReturn(false);
+    when(firstTxResult.getGasEstimate()).thenReturn(21_000L);
+    when(firstTxResult.transaction()).thenReturn(tx);
+    when(firstTxResult.result()).thenReturn(processingResult);
+
+    when(transactionSimulator.processWithWorldUpdater(
+            any(), any(), any(), any(), any(), any(), any(), anyLong(), any(), any(), any(), any(),
+            any()))
+        .thenReturn(Optional.of(firstTxResult));
+
+    AbstractBlockProcessor.TransactionReceiptFactory receiptFactory =
+        mock(AbstractBlockProcessor.TransactionReceiptFactory.class);
+    when(protocolSpec.getTransactionReceiptFactory()).thenReturn(receiptFactory);
+    TransactionReceipt receipt = mock(TransactionReceipt.class);
+    when(receipt.getLogsList()).thenReturn(List.of());
+    when(receiptFactory.create(any(TransactionType.class), any(), any(), anyLong()))
+        .thenReturn(receipt);
+
+    BlockSimulationParameter parameter =
+        new BlockSimulationParameter.BlockSimulationParameterBuilder()
+            .blockStateCalls(List.of(blockStateCall))
+            .validation(false)
+            .build();
+
+    BlockStateCallException exception =
+        assertThrows(
+            BlockStateCallException.class,
+            () -> blockSimulator.process(header30k, parameter, mutableWorldState));
+
+    assertThat(exception.getError()).isEqualTo(BlockStateCallError.BLOCK_GAS_LIMIT_EXCEEDED);
+    assertThat(exception.getError().getCode()).isEqualTo(-38015);
+  }
+
+  @Test
+  public void
+      shouldCapAutoFilledGasToTransactionGasLimitCapWhenEnforcingConsensusAndBlockLimitIsHigher() {
+    // Regression: BlockSimulatorServiceImpl (e.g. Linea state recovery plugin) uses rpcGasCap=0
+    // and enforceConsensusGasLimit=true. On Osaka, txGasLimitCap (EIP-7825) = 16,777,216
+    // while blockGasLimit can be 30M. Without a fix, the auto-filled gasLimit passed to
+    // processWithWorldUpdater is blockGasLimit (30M), and the consensus-strict validator then
+    // rejects it with EXCEEDS_TRANSACTION_GAS_LIMIT. The gasLimit must be bounded by
+    // txGasLimitCap when enforceConsensusGasLimit=true.
+    final long blockGasLimit = 30_000_000L;
+    final long txGasLimitCap = 16_777_216L;
+
+    GasLimitCalculator gasLimitCalculator = mock(GasLimitCalculator.class);
+    when(protocolSpec.getGasLimitCalculator()).thenReturn(gasLimitCalculator);
+    when(gasLimitCalculator.nextGasLimit(anyLong(), anyLong(), anyLong()))
+        .thenReturn(blockGasLimit);
+    when(gasLimitCalculator.computeExcessBlobGas(anyLong(), anyLong(), anyLong())).thenReturn(0L);
+    when(gasLimitCalculator.transactionGasLimitCap()).thenReturn(txGasLimitCap);
+
+    when(mutableWorldState.updater()).thenReturn(updater);
+
+    CallParameter callParameter = mock(CallParameter.class);
+    when(callParameter.getGas()).thenReturn(OptionalLong.empty());
+    BlockStateCall blockStateCall = new BlockStateCall(List.of(callParameter), null, null);
+
+    // transactionSimulator.calculateSimulationGasCap() is also mocked; stub it to return the
+    // realistic uncapped value (blockGasLimit) so the captured gasLimit reflects the bug.
+    when(transactionSimulator.calculateSimulationGasCap(any(), any(), anyLong()))
+        .thenReturn(blockGasLimit);
+
+    ArgumentCaptor<Long> gasCaptor = ArgumentCaptor.forClass(Long.class);
+    when(transactionSimulator.processWithWorldUpdater(
+            any(),
+            any(),
+            any(),
+            any(),
+            any(),
+            any(),
+            any(),
+            gasCaptor.capture(),
+            any(),
+            any(),
+            any(),
+            any(),
+            any()))
+        .thenReturn(Optional.empty());
+
+    BlockSimulationParameter parameter =
+        new BlockSimulationParameter.BlockSimulationParameterBuilder()
+            .blockStateCalls(List.of(blockStateCall))
+            .validation(true)
+            .enforceConsensusGasLimit(true)
+            .build();
+
+    assertThrows(
+        BlockStateCallException.class,
+        () -> blockSimulator.process(blockHeader, parameter, mutableWorldState));
+
+    assertThat(gasCaptor.getValue())
+        .as("auto-filled gasLimit must not exceed txGasLimitCap when enforcing consensus")
+        .isLessThanOrEqualTo(txGasLimitCap);
+  }
+
+  @Test
+  public void shouldEnforceConsensusGasLimitCapsWhenFlagIsTrue() {
+    // enforceConsensusGasLimit=true is the path used by BlockSimulatorServiceImpl (e.g. Linea
+    // state recovery plugin). It must pass CONSENSUS_STRICT_VALIDATION_PARAMS so that EIP-7825 /
+    // EIP-8037 transaction gas limit caps are enforced during block-building simulation.
+    when(mutableWorldState.updater()).thenReturn(updater);
+
+    CallParameter callParameter = mock(CallParameter.class);
+    when(callParameter.getGas()).thenReturn(OptionalLong.empty());
+    BlockStateCall blockStateCall = new BlockStateCall(List.of(callParameter), null, null);
+
+    ArgumentCaptor<TransactionValidationParams> paramsCaptor =
+        ArgumentCaptor.forClass(TransactionValidationParams.class);
+    when(transactionSimulator.processWithWorldUpdater(
+            any(),
+            any(),
+            paramsCaptor.capture(),
+            any(),
+            any(),
+            any(),
+            any(),
+            anyLong(),
+            any(),
+            any(),
+            any(),
+            any(),
+            any()))
+        .thenReturn(Optional.empty());
+
+    BlockSimulationParameter parameter =
+        new BlockSimulationParameter.BlockSimulationParameterBuilder()
+            .blockStateCalls(List.of(blockStateCall))
+            .validation(true)
+            .enforceConsensusGasLimit(true)
+            .build();
+
+    assertThrows(
+        BlockStateCallException.class,
+        () -> blockSimulator.process(blockHeader, parameter, mutableWorldState));
+
+    assertThat(paramsCaptor.getValue().isAllowExceedingGasLimit()).isFalse();
+  }
+
+  @Test
+  public void shouldNotEnforceConsensusGasLimitCapsWhenFlagIsFalse() {
+    // enforceConsensusGasLimit=false is the eth_simulateV1 path. EIP-7825 / EIP-8037 caps
+    // must NOT apply so that callers can simulate transactions with gas above the cap.
+    when(mutableWorldState.updater()).thenReturn(updater);
+
+    CallParameter callParameter = mock(CallParameter.class);
+    when(callParameter.getGas()).thenReturn(OptionalLong.empty());
+    BlockStateCall blockStateCall = new BlockStateCall(List.of(callParameter), null, null);
+
+    ArgumentCaptor<TransactionValidationParams> paramsCaptor =
+        ArgumentCaptor.forClass(TransactionValidationParams.class);
+    when(transactionSimulator.processWithWorldUpdater(
+            any(),
+            any(),
+            paramsCaptor.capture(),
+            any(),
+            any(),
+            any(),
+            any(),
+            anyLong(),
+            any(),
+            any(),
+            any(),
+            any(),
+            any()))
+        .thenReturn(Optional.empty());
+
+    BlockSimulationParameter parameter =
+        new BlockSimulationParameter.BlockSimulationParameterBuilder()
+            .blockStateCalls(List.of(blockStateCall))
+            .validation(true)
+            .enforceConsensusGasLimit(false)
+            .build();
+
+    assertThrows(
+        BlockStateCallException.class,
+        () -> blockSimulator.process(blockHeader, parameter, mutableWorldState));
+
+    assertThat(paramsCaptor.getValue().isAllowExceedingGasLimit()).isTrue();
+  }
+
+  private BlockSimulationParameter createSimulationParameter(final BlockStateCall blockStateCall) {
+    return new BlockSimulationParameter.BlockSimulationParameterBuilder()
+        .blockStateCalls(List.of(blockStateCall))
+        .build();
+  }
+
+  @Test
+  public void shouldUseEthTransferLogTracerForPreAmsterdamWhenTraceTransfersTrue() {
+    // Pre-Amsterdam: TransferLogEmitter is NOOP, so traceTransfers=true should activate the
+    // legacy EthTransferLogOperationTracer (which emits at 0xeeee...).
+    when(transactionProcessor.getTransferLogEmitter()).thenReturn(TransferLogEmitter.NOOP);
+    when(mutableWorldState.updater()).thenReturn(updater);
+
+    CallParameter callParameter = mock(CallParameter.class);
+    when(callParameter.getGas()).thenReturn(OptionalLong.empty());
+    BlockStateCall blockStateCall = new BlockStateCall(List.of(callParameter), null, null);
+
+    ArgumentCaptor<OperationTracer> tracerCaptor = ArgumentCaptor.forClass(OperationTracer.class);
+    when(transactionSimulator.processWithWorldUpdater(
+            any(),
+            any(),
+            any(),
+            tracerCaptor.capture(),
+            any(),
+            any(),
+            any(),
+            anyLong(),
+            any(),
+            any(),
+            any(),
+            any(),
+            any()))
+        .thenReturn(Optional.empty());
+
+    BlockSimulationParameter parameter =
+        new BlockSimulationParameter.BlockSimulationParameterBuilder()
+            .blockStateCalls(List.of(blockStateCall))
+            .traceTransfers(true)
+            .build();
+
+    assertThrows(
+        BlockStateCallException.class,
+        () -> blockSimulator.process(blockHeader, parameter, mutableWorldState));
+
+    assertThat(tracerCaptor.getValue()).isInstanceOf(EthTransferLogOperationTracer.class);
+  }
+
+  @Test
+  public void shouldNotUseEthTransferLogTracerForAmsterdamWhenTraceTransfersTrue() {
+    // Amsterdam+: the transaction processor already emits EIP-7708 transfer logs into receipts
+    // via its wired-in TransferLogEmitter. The legacy traceTransfers flag must be ignored so that
+    // receipt logs (at 0xffff...) are returned rather than the old tracer logs (at 0xeeee...).
+    when(transactionProcessor.getTransferLogEmitter())
+        .thenReturn(EIP7708TransferLogEmitter.INSTANCE);
+    when(mutableWorldState.updater()).thenReturn(updater);
+
+    CallParameter callParameter = mock(CallParameter.class);
+    when(callParameter.getGas()).thenReturn(OptionalLong.empty());
+    BlockStateCall blockStateCall = new BlockStateCall(List.of(callParameter), null, null);
+
+    ArgumentCaptor<OperationTracer> tracerCaptor = ArgumentCaptor.forClass(OperationTracer.class);
+    when(transactionSimulator.processWithWorldUpdater(
+            any(),
+            any(),
+            any(),
+            tracerCaptor.capture(),
+            any(),
+            any(),
+            any(),
+            anyLong(),
+            any(),
+            any(),
+            any(),
+            any(),
+            any()))
+        .thenReturn(Optional.empty());
+
+    BlockSimulationParameter parameter =
+        new BlockSimulationParameter.BlockSimulationParameterBuilder()
+            .blockStateCalls(List.of(blockStateCall))
+            .traceTransfers(true)
+            .build();
+
+    assertThrows(
+        BlockStateCallException.class,
+        () -> blockSimulator.process(blockHeader, parameter, mutableWorldState));
+
+    assertThat(tracerCaptor.getValue()).isNotInstanceOf(EthTransferLogOperationTracer.class);
+    assertThat(tracerCaptor.getValue()).isEqualTo(OperationTracer.NO_TRACING);
+  }
+
+  private BlockSimulationParameter buildParameterWithOverrides(
+      final StateOverrideMap stateOverrideMap) {
+    var blockStateCall = new BlockStateCall(List.of(), null, stateOverrideMap);
+    var parameter =
+        new BlockSimulationParameter.BlockSimulationParameterBuilder()
+            .blockStateCalls(List.of(blockStateCall))
+            .build();
+    return new BlockSimulationParameter(parameter.getBlockStateCalls(), false, false, false);
+  }
+}

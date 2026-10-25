@@ -1,0 +1,301 @@
+/*
+ * Copyright contributors to Hyperledger Besu.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+ * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations under the License.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+package org.hyperledger.besu.controller;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.fail;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.when;
+
+import org.hyperledger.besu.config.GenesisConfig;
+import org.hyperledger.besu.config.GenesisConfigOptions;
+import org.hyperledger.besu.config.QbftConfigOptions;
+import org.hyperledger.besu.ethereum.eth.sync.SyncMode;
+import org.hyperledger.besu.ethereum.eth.sync.common.checkpoint.Checkpoint;
+
+import java.io.IOException;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
+import java.util.OptionalLong;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+@ExtendWith(MockitoExtension.class)
+public class BesuControllerTest {
+
+  @Mock GenesisConfig genesisConfig;
+  @Mock GenesisConfigOptions genesisConfigOptions;
+  @Mock QbftConfigOptions qbftConfigOptions;
+
+  @BeforeEach
+  public void setUp() {
+    lenient().when(genesisConfig.getConfigOptions()).thenReturn(genesisConfigOptions);
+  }
+
+  @Test
+  public void missingQbftStartBlock() {
+    mockGenesisConfigForMigration("ibft2", OptionalLong.empty());
+    assertThatThrownBy(
+            () -> new BesuController.Builder().fromGenesisFile(genesisConfig, SyncMode.FULL))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Missing QBFT startBlock config in genesis file");
+  }
+
+  @Test
+  public void invalidQbftStartBlock() {
+    mockGenesisConfigForMigration("ibft2", OptionalLong.of(-1L));
+    assertThatThrownBy(
+            () -> new BesuController.Builder().fromGenesisFile(genesisConfig, SyncMode.FULL))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Invalid QBFT startBlock config in genesis file");
+  }
+
+  @Test
+  public void invalidConsensusCombination() {
+    when(genesisConfigOptions.isConsensusMigration()).thenReturn(true);
+    // explicitly not setting isIbft2() for genesisConfigOptions
+
+    assertThatThrownBy(
+            () -> new BesuController.Builder().fromGenesisFile(genesisConfig, SyncMode.FULL))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage(
+            "Invalid genesis migration config. Migration is supported from IBFT (legacy) or IBFT2 to QBFT)");
+  }
+
+  @Test
+  public void createConsensusScheduleBesuControllerBuilderWhenMigratingFromIbft2ToQbft() {
+    final long qbftStartBlock = 10L;
+    mockGenesisConfigForMigration("ibft2", OptionalLong.of(qbftStartBlock));
+
+    final BesuControllerBuilder besuControllerBuilder =
+        new BesuController.Builder().fromGenesisFile(genesisConfig, SyncMode.FULL);
+
+    assertThat(besuControllerBuilder).isInstanceOf(ConsensusScheduleBesuControllerBuilder.class);
+
+    final Map<Long, BesuControllerBuilder> besuControllerBuilderSchedule =
+        ((ConsensusScheduleBesuControllerBuilder) besuControllerBuilder)
+            .getBesuControllerBuilderSchedule();
+
+    assertThat(besuControllerBuilderSchedule).containsKeys(0L, qbftStartBlock);
+    assertThat(besuControllerBuilderSchedule.get(0L)).isInstanceOf(IbftBesuControllerBuilder.class);
+    assertThat(besuControllerBuilderSchedule.get(qbftStartBlock))
+        .isInstanceOf(QbftBesuControllerBuilder.class);
+  }
+
+  @Test
+  public void createConsensusScheduleBesuControllerBuilderWhenMigratingFromIbftLegacyToQbft() {
+    final long qbftStartBlock = 10L;
+    mockGenesisConfigForMigration("ibftLegacy", OptionalLong.of(qbftStartBlock));
+
+    final BesuControllerBuilder besuControllerBuilder =
+        new BesuController.Builder().fromGenesisFile(genesisConfig, SyncMode.FULL);
+
+    assertThat(besuControllerBuilder).isInstanceOf(ConsensusScheduleBesuControllerBuilder.class);
+
+    final Map<Long, BesuControllerBuilder> besuControllerBuilderSchedule =
+        ((ConsensusScheduleBesuControllerBuilder) besuControllerBuilder)
+            .getBesuControllerBuilderSchedule();
+
+    assertThat(besuControllerBuilderSchedule).containsKeys(0L, qbftStartBlock);
+    assertThat(besuControllerBuilderSchedule.get(0L))
+        .isInstanceOf(IbftLegacyBesuControllerBuilder.class);
+    assertThat(besuControllerBuilderSchedule.get(qbftStartBlock))
+        .isInstanceOf(QbftBesuControllerBuilder.class);
+  }
+
+  private void mockGenesisConfigForMigration(
+      final String consensus, final OptionalLong startBlock) {
+    when(genesisConfigOptions.isConsensusMigration()).thenReturn(true);
+
+    switch (consensus.toLowerCase(Locale.ROOT)) {
+      case "ibft2":
+        {
+          when(genesisConfigOptions.isIbft2()).thenReturn(true);
+          break;
+        }
+      case "ibftlegacy":
+        {
+          when(genesisConfigOptions.isIbftLegacy()).thenReturn(true);
+          break;
+        }
+      default:
+        fail("Invalid consensus algorithm");
+    }
+
+    when(genesisConfigOptions.getQbftConfigOptions()).thenReturn(qbftConfigOptions);
+    when(qbftConfigOptions.getStartBlock()).thenReturn(startBlock);
+  }
+
+  @Test
+  public void postMergeSnapSyncWithPoSCheckpointUsesMergeControllerBuilder() {
+    final GenesisConfig postMergeGenesisFile =
+        GenesisConfig.fromResource("/valid_post_merge_near_head_checkpoint.json");
+
+    final BesuControllerBuilder besuControllerBuilder =
+        new BesuController.Builder()
+            .checkpoint(genesisCheckpoint(postMergeGenesisFile))
+            .fromGenesisFile(postMergeGenesisFile, SyncMode.SNAP);
+
+    assertThat(besuControllerBuilder).isInstanceOf(MergeBesuControllerBuilder.class);
+  }
+
+  @Test
+  public void defaultMainnetSnapSyncUsesMergeControllerBuilder() {
+    final GenesisConfig mainnet = GenesisConfig.mainnet();
+    final BesuControllerBuilder besuControllerBuilder =
+        new BesuController.Builder()
+            .checkpoint(genesisCheckpoint(mainnet))
+            .fromGenesisFile(mainnet, SyncMode.SNAP);
+
+    assertThat(besuControllerBuilder).isInstanceOf(MergeBesuControllerBuilder.class);
+  }
+
+  @Test
+  public void postMergeSnapSyncWithTotalDifficultyEqualsTTDUsesTransitionControllerBuilder()
+      throws IOException {
+    final GenesisConfig mergeAtGenesisFile =
+        GenesisConfig.fromResource(
+            "/invalid_post_merge_checkpoint_total_difficulty_same_as_TTD.json");
+
+    final BesuControllerBuilder besuControllerBuilder =
+        new BesuController.Builder()
+            .checkpoint(genesisCheckpoint(mergeAtGenesisFile))
+            .fromGenesisFile(mergeAtGenesisFile, SyncMode.SNAP);
+
+    assertThat(besuControllerBuilder).isInstanceOf(TransitionBesuControllerBuilder.class);
+  }
+
+  @Test
+  public void preMergeSnapSyncUsesTransitionControllerBuilder() {
+    final GenesisConfig checkpointPreMerge =
+        GenesisConfig.fromResource("/valid_pre_merge_checkpoint.json");
+    final BesuControllerBuilder besuControllerBuilder =
+        new BesuController.Builder()
+            .checkpoint(genesisCheckpoint(checkpointPreMerge))
+            .fromGenesisFile(checkpointPreMerge, SyncMode.SNAP);
+
+    assertThat(besuControllerBuilder).isInstanceOf(TransitionBesuControllerBuilder.class);
+  }
+
+  @Test
+  public void hoodiSnapSyncUsesMergeControllerBuilder() {
+    // Hoodi is post-merge at genesis (difficulty 0x01, TTD 0) and has no pre-merge blocks, so the
+    // transition machinery must be skipped entirely.
+    final GenesisConfig hoodi = GenesisConfig.fromResource("/hoodi.json");
+
+    final BesuControllerBuilder besuControllerBuilder =
+        new BesuController.Builder().fromGenesisFile(hoodi, SyncMode.SNAP);
+
+    assertThat(besuControllerBuilder).isInstanceOf(MergeBesuControllerBuilder.class);
+  }
+
+  @Test
+  public void hoodiFullSyncUsesMergeControllerBuilder() {
+    // Unlike the checkpoint early-out, this must not depend on the sync mode.
+    final GenesisConfig hoodi = GenesisConfig.fromResource("/hoodi.json");
+
+    final BesuControllerBuilder besuControllerBuilder =
+        new BesuController.Builder().fromGenesisFile(hoodi, SyncMode.FULL);
+
+    assertThat(besuControllerBuilder).isInstanceOf(MergeBesuControllerBuilder.class);
+  }
+
+  @Test
+  public void sepoliaFullSyncUsesTransitionControllerBuilder() {
+    // Sepolia has real proof-of-work history, so it keeps the transition builder.
+    final GenesisConfig sepolia = GenesisConfig.fromResource("/sepolia.json");
+
+    final BesuControllerBuilder besuControllerBuilder =
+        new BesuController.Builder().fromGenesisFile(sepolia, SyncMode.FULL);
+
+    assertThat(besuControllerBuilder).isInstanceOf(TransitionBesuControllerBuilder.class);
+  }
+
+  @Test
+  public void explicitPostMergeCheckpointOnPreMergeGenesisUsesMergeControllerBuilder() {
+    // Genesis has a pre-merge checkpoint (TD < TTD), which alone selects the transition builder. An
+    // explicitly provided post-merge checkpoint (TD > TTD = 58750000000000000000000) is used in
+    // preference to the genesis fallback and selects the vanilla merge builder.
+    final GenesisConfig checkpointPreMerge =
+        GenesisConfig.fromResource("/valid_pre_merge_checkpoint.json");
+    final Checkpoint postMergeCheckpoint =
+        Checkpoint.of(
+            "0x0000000000000000000000000000000000000000000000000000000000000000",
+            12345678L,
+            "58750000000000000000001");
+
+    final BesuControllerBuilder besuControllerBuilder =
+        new BesuController.Builder()
+            .checkpoint(Optional.of(postMergeCheckpoint))
+            .fromGenesisFile(checkpointPreMerge, SyncMode.SNAP);
+
+    assertThat(besuControllerBuilder).isInstanceOf(MergeBesuControllerBuilder.class);
+  }
+
+  @Test
+  public void fromGenesisFilePropagatesCheckpointToBuilderForSyncState() {
+    // The factory must hand the resolved checkpoint to the built controller builder (which feeds it
+    // to SyncState), not only use it for builder selection.
+    final Checkpoint checkpoint =
+        Checkpoint.of(
+            "0x0000000000000000000000000000000000000000000000000000000000000001", 50L, "0x64");
+
+    final BesuControllerBuilder besuControllerBuilder =
+        new BesuController.Builder()
+            .checkpoint(Optional.of(checkpoint))
+            .fromGenesisFile(GenesisConfig.mainnet(), SyncMode.SNAP);
+
+    assertThat(besuControllerBuilder.checkpoint).contains(checkpoint);
+  }
+
+  private static Optional<Checkpoint> genesisCheckpoint(final GenesisConfig genesisConfig) {
+    return Checkpoint.fromConfig(genesisConfig.getConfigOptions().getCheckpointOptions());
+  }
+
+  @Test
+  public void fullSyncUsesTransitionControllerBuild() {
+    final BesuControllerBuilder besuControllerBuilder =
+        new BesuController.Builder().fromGenesisFile(GenesisConfig.mainnet(), SyncMode.FULL);
+
+    assertThat(besuControllerBuilder).isInstanceOf(TransitionBesuControllerBuilder.class);
+  }
+
+  @Test
+  public void missingConsensusMechanismFallsBackToPoS() {
+    final String emptyConsensusGenesis =
+        """
+        {
+          "config": {},
+          "nonce": "0x0",
+          "timestamp": "0x0",
+          "gasLimit": "0x1388",
+          "difficulty": "0x400",
+          "alloc": {}
+        }
+        """;
+    final GenesisConfig genesis = GenesisConfig.fromConfig(emptyConsensusGenesis);
+
+    final BesuControllerBuilder besuControllerBuilder =
+        new BesuController.Builder().fromGenesisFile(genesis, SyncMode.FULL);
+
+    assertThat(besuControllerBuilder).isInstanceOf(MergeBesuControllerBuilder.class);
+  }
+}

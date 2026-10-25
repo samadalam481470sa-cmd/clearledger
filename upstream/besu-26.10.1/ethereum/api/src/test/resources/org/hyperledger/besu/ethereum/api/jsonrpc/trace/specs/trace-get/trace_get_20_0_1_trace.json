@@ -1,0 +1,31 @@
+{
+  "comment" : "Call to a contract creation that fails with a depth of 1",
+  "request" : {
+    "jsonrpc" : "2.0",
+    "method" : "trace_get",
+    "params" : [ "0x3a9118fe52689f19ec58b4e1a50a0ae07021812f4c0d72c703a669e90622f3cd", [ "0x0" ] ],
+    "id" : 386
+  },
+  "response" : {
+    "jsonrpc" : "2.0",
+    "result" : {
+      "action" : {
+        "creationMethod": "create",
+        "from" : "0x0180000000000000000000000000000000000000",
+        "gas" : "0x4eaa",
+        "init" : "0x600c600055602060406000f000",
+        "value" : "0x0"
+      },
+      "blockHash" : "0x355300dcd19d9c01a0fa519d1d6911e8a5d0e1bb756f631ba49b3e8b4cfecb28",
+      "blockNumber" : 32,
+      "error" : "Out of gas",
+      "subtraces" : 0,
+      "traceAddress" : [ 0 ],
+      "transactionHash" : "0x3a9118fe52689f19ec58b4e1a50a0ae07021812f4c0d72c703a669e90622f3cd",
+      "transactionPosition" : 0,
+      "type" : "create"
+    },
+    "id" : 386
+  },
+  "statusCode" : 200
+}

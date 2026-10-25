@@ -1,0 +1,282 @@
+/*
+ * Copyright ConsenSys AG.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+ * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations under the License.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+package org.hyperledger.besu.consensus.common.bft.blockcreation;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+import static org.mockito.internal.verification.VerificationModeFactory.times;
+
+import org.hyperledger.besu.consensus.common.bft.BftEventQueue;
+import org.hyperledger.besu.consensus.common.bft.BftExecutors;
+import org.hyperledger.besu.consensus.common.bft.BftProcessor;
+import org.hyperledger.besu.consensus.common.bft.events.NewChainHead;
+import org.hyperledger.besu.consensus.common.bft.statemachine.BftEventHandler;
+import org.hyperledger.besu.datatypes.Wei;
+import org.hyperledger.besu.ethereum.chain.BlockAddedEvent;
+import org.hyperledger.besu.ethereum.chain.Blockchain;
+import org.hyperledger.besu.ethereum.core.Block;
+import org.hyperledger.besu.ethereum.core.BlockBody;
+import org.hyperledger.besu.ethereum.core.BlockHeader;
+
+import java.time.Duration;
+import java.util.Collections;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+@ExtendWith(MockitoExtension.class)
+public class BftMiningCoordinatorTest {
+  @Mock private BftEventHandler controller;
+  @Mock private BftExecutors bftExecutors;
+  @Mock private BftProcessor bftProcessor;
+  @Mock private BftBlockCreatorFactory<?> bftBlockCreatorFactory;
+  @Mock private Blockchain blockChain;
+  @Mock private Block block;
+  @Mock private BlockBody blockBody;
+  @Mock private BlockHeader blockHeader;
+  private final BftEventQueue eventQueue = new BftEventQueue(1000);
+  private BftMiningCoordinator bftMiningCoordinator;
+
+  @BeforeEach
+  public void setup() {
+    eventQueue.start();
+    bftMiningCoordinator =
+        new BftMiningCoordinator(
+            bftExecutors, controller, bftProcessor, bftBlockCreatorFactory, blockChain, eventQueue);
+    lenient().when(block.getBody()).thenReturn(blockBody);
+    lenient().when(block.getHeader()).thenReturn(blockHeader);
+    lenient().when(blockBody.getTransactions()).thenReturn(Collections.emptyList());
+  }
+
+  @Test
+  public void startsMining() {
+    bftMiningCoordinator.start();
+  }
+
+  @Test
+  public void stopsMining() {
+    // Shouldn't stop without first starting
+    bftMiningCoordinator.stop();
+    verify(bftProcessor, never()).stop();
+
+    bftMiningCoordinator.enable();
+    bftMiningCoordinator.start();
+    bftMiningCoordinator.stop();
+    verify(bftProcessor).stop();
+  }
+
+  @Test
+  public void stopsMiningWhenDisabledForMergeTransition() {
+    bftMiningCoordinator.enable();
+    bftMiningCoordinator.start();
+    // the merge transition watcher disables then stops the coordinator when TTD is reached
+    bftMiningCoordinator.disable();
+    bftMiningCoordinator.stop();
+    verify(bftProcessor).stop();
+  }
+
+  @Test
+  public void stopsMiningWhenIdleAfterHavingBeenStarted() {
+    bftMiningCoordinator.enable();
+    bftMiningCoordinator.start();
+    // disable()/enable() only flip the tracked state, they never touch the processor/executors
+    // themselves, so a previously started coordinator can be sitting in IDLE (not just PAUSED)
+    // while its processor is genuinely still running.
+    bftMiningCoordinator.disable();
+    bftMiningCoordinator.enable();
+    bftMiningCoordinator.stop();
+    verify(bftProcessor).stop();
+  }
+
+  @Test
+  public void restartsMiningAfterStop() {
+    assertThat(bftMiningCoordinator.isMining()).isFalse();
+    bftMiningCoordinator.stop();
+    verify(bftProcessor, never()).stop();
+
+    bftMiningCoordinator.enable();
+    bftMiningCoordinator.start();
+    assertThat(bftMiningCoordinator.isMining()).isTrue();
+
+    bftMiningCoordinator.stop();
+    assertThat(bftMiningCoordinator.isMining()).isFalse();
+    verify(bftProcessor).stop();
+
+    bftMiningCoordinator.start();
+    assertThat(bftMiningCoordinator.isMining()).isTrue();
+
+    // BFT processor should be started once for every time the mining
+    // coordinator is restarted
+    verify(bftProcessor, times(2)).start();
+  }
+
+  @Test
+  public void concurrentStopDoesNotTearDownAStartInProgress() throws Exception {
+    final Thread[] stopper = new Thread[1];
+    doAnswer(
+            invocation -> {
+              stopper[0] = new Thread(bftMiningCoordinator::stop, "concurrent-stop");
+              stopper[0].start();
+              stopper[0].join(500);
+              return null;
+            })
+        .when(controller)
+        .start();
+
+    bftMiningCoordinator.enable();
+    bftMiningCoordinator.start();
+    assertTimeoutPreemptively(Duration.ofSeconds(5), () -> stopper[0].join());
+
+    final InOrder inOrder = inOrder(bftExecutors);
+    inOrder.verify(bftExecutors).start();
+    inOrder.verify(bftExecutors).executeBftProcessor(bftProcessor);
+    inOrder.verify(bftExecutors).stop();
+  }
+
+  @Test
+  public void enableWaitsForAnInProgressStop() throws Exception {
+    final CountDownLatch stopEntered = new CountDownLatch(1);
+    final CountDownLatch releaseStop = new CountDownLatch(1);
+
+    // Block stop() inside its synchronized section (bftProcessor.stop() runs while the
+    // coordinator's monitor is held) so a concurrent enable() has to wait for the whole
+    // transition instead of interleaving with it.
+    doAnswer(
+            invocation -> {
+              stopEntered.countDown();
+              releaseStop.await(5, TimeUnit.SECONDS);
+              return null;
+            })
+        .when(bftProcessor)
+        .stop();
+
+    bftMiningCoordinator.enable();
+    bftMiningCoordinator.start();
+
+    final Thread stopper = new Thread(bftMiningCoordinator::stop, "stopper");
+    stopper.start();
+    assertThat(stopEntered.await(5, TimeUnit.SECONDS)).isTrue();
+
+    final AtomicBoolean enableResult = new AtomicBoolean();
+    final CountDownLatch enableReturned = new CountDownLatch(1);
+    final Thread enabler =
+        new Thread(
+            () -> {
+              enableResult.set(bftMiningCoordinator.enable());
+              enableReturned.countDown();
+            },
+            "enabler");
+    enabler.start();
+
+    // enable() must not observe the half-completed stop(): without the shared monitor it would
+    // return immediately while stop() is still mid-transition.
+    assertThat(enableReturned.await(500, TimeUnit.MILLISECONDS)).isFalse();
+
+    releaseStop.countDown();
+    assertThat(enableReturned.await(5, TimeUnit.SECONDS)).isTrue();
+    stopper.join(TimeUnit.SECONDS.toMillis(5));
+    enabler.join(TimeUnit.SECONDS.toMillis(5));
+
+    // Serialized behind the completed stop(), enable() sees STOPPED and reports failure instead
+    // of racing the transition.
+    assertThat(enableResult.get()).isFalse();
+    assertThat(bftMiningCoordinator.isMining()).isFalse();
+  }
+
+  @Test
+  public void disableWaitsForAnInProgressStart() throws Exception {
+    final CountDownLatch startEntered = new CountDownLatch(1);
+    final CountDownLatch releaseStart = new CountDownLatch(1);
+
+    // Block start() inside its synchronized body (bftProcessor.start() runs while the
+    // coordinator's monitor is held) so a concurrent disable() has to wait for the whole
+    // transition. Without the shared monitor, disable() would flip RUNNING -> PAUSED while
+    // start() is still wiring up the processor.
+    doAnswer(
+            invocation -> {
+              startEntered.countDown();
+              releaseStart.await(5, TimeUnit.SECONDS);
+              return null;
+            })
+        .when(bftProcessor)
+        .start();
+
+    bftMiningCoordinator.enable();
+    final Thread starter = new Thread(bftMiningCoordinator::start, "starter");
+    starter.start();
+    assertThat(startEntered.await(5, TimeUnit.SECONDS)).isTrue();
+
+    final AtomicBoolean disableResult = new AtomicBoolean();
+    final CountDownLatch disableReturned = new CountDownLatch(1);
+    final Thread disabler =
+        new Thread(
+            () -> {
+              disableResult.set(bftMiningCoordinator.disable());
+              disableReturned.countDown();
+            },
+            "disabler");
+    disabler.start();
+
+    assertThat(disableReturned.await(500, TimeUnit.MILLISECONDS)).isFalse();
+
+    releaseStart.countDown();
+    assertThat(disableReturned.await(5, TimeUnit.SECONDS)).isTrue();
+    starter.join(TimeUnit.SECONDS.toMillis(5));
+    disabler.join(TimeUnit.SECONDS.toMillis(5));
+
+    // Serialized behind the completed start(), disable() sees RUNNING and pauses it.
+    assertThat(disableResult.get()).isTrue();
+    assertThat(bftMiningCoordinator.isMining()).isFalse();
+  }
+
+  @Test
+  public void getsMinTransactionGasPrice() {
+    final Wei minGasPrice = Wei.of(10);
+    when(bftBlockCreatorFactory.getMinTransactionGasPrice()).thenReturn(minGasPrice);
+    assertThat(bftMiningCoordinator.getMinTransactionGasPrice()).isEqualTo(minGasPrice);
+  }
+
+  @Test
+  public void addsNewChainHeadEventWhenNewCanonicalHeadBlockEventReceived() throws Exception {
+    BlockAddedEvent headAdvancement =
+        BlockAddedEvent.createForHeadAdvancement(
+            block, Collections.emptyList(), Collections.emptyList());
+    bftMiningCoordinator.onBlockAdded(headAdvancement);
+
+    assertThat(eventQueue.size()).isEqualTo(1);
+    final NewChainHead ibftEvent = (NewChainHead) eventQueue.poll(1, TimeUnit.SECONDS);
+    assertThat(ibftEvent.getNewChainHeadHeader()).isEqualTo(blockHeader);
+  }
+
+  @Test
+  public void doesntAddNewChainHeadEventWhenNotACanonicalHeadBlockEvent() {
+    final BlockAddedEvent fork = BlockAddedEvent.createForFork(block);
+    bftMiningCoordinator.onBlockAdded(fork);
+    assertThat(eventQueue.isEmpty()).isTrue();
+  }
+}

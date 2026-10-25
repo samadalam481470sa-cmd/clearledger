@@ -1,0 +1,90 @@
+/*
+ * Copyright contributors to Hyperledger Besu.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+ * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations under the License.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+package org.hyperledger.besu.ethereum.mainnet.requests;
+
+import org.hyperledger.besu.datatypes.BytesHolder;
+import org.hyperledger.besu.datatypes.RequestType;
+import org.hyperledger.besu.ethereum.core.Request;
+import org.hyperledger.besu.ethereum.mainnet.block.access.list.AccessLocationTracker;
+
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.stream.Collectors;
+
+import com.google.common.collect.ImmutableSortedMap;
+import org.apache.tuweni.bytes.Bytes;
+
+/** Processes various types of requests based on their RequestType. */
+public class RequestProcessorCoordinator {
+  private final ImmutableSortedMap<RequestType, RequestProcessor> processors;
+
+  /**
+   * Constructs a RequestsProcessor with a given map of processors.
+   *
+   * @param processors A map associating RequestType with their corresponding RequestProcessor.
+   */
+  private RequestProcessorCoordinator(
+      final ImmutableSortedMap<RequestType, RequestProcessor> processors) {
+    this.processors = processors;
+  }
+
+  public List<Request> process(
+      final RequestProcessingContext context,
+      final Optional<AccessLocationTracker> accessLocationTracker) {
+    return processors.values().stream()
+        .map(requestProcessor -> requestProcessor.process(context, accessLocationTracker))
+        .toList();
+  }
+
+  public static RequestProcessorCoordinator noOp() {
+    return new RequestProcessorCoordinator(ImmutableSortedMap.of());
+  }
+
+  public static class Builder {
+    private final ImmutableSortedMap.Builder<RequestType, RequestProcessor>
+        requestProcessorBuilder = ImmutableSortedMap.naturalOrder();
+
+    public RequestProcessorCoordinator.Builder addProcessor(
+        final RequestType type, final RequestProcessor processor) {
+      this.requestProcessorBuilder.put(type, processor);
+      return this;
+    }
+
+    public RequestProcessorCoordinator build() {
+      final ImmutableSortedMap<RequestType, RequestProcessor> processors =
+          requestProcessorBuilder.build();
+      if (processors.isEmpty()) {
+        throw new IllegalStateException("No processors added to RequestProcessorCoordinator");
+      }
+      return new RequestProcessorCoordinator(processors);
+    }
+  }
+
+  public Map<String, String> getContractConfigs() {
+    return processors.values().stream()
+        .filter(processor -> processor.getContractAddress().isPresent())
+        .map(
+            processor ->
+                Map.entry(
+                    processor.getContractName().orElse(""),
+                    processor
+                        .getContractAddress()
+                        .map(BytesHolder::getBytes)
+                        .map(Bytes::toHexString)
+                        .orElse("")))
+        .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+  }
+}

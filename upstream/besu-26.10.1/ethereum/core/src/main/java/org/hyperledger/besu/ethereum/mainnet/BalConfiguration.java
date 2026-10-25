@@ -1,0 +1,71 @@
+/*
+ * Copyright contributors to Hyperledger Besu.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+ * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations under the License.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+package org.hyperledger.besu.ethereum.mainnet;
+
+import org.immutables.value.Value;
+
+/** Configuration options for Block Access List (BAL) processing. */
+@Value.Immutable
+public interface BalConfiguration {
+
+  BalConfiguration DEFAULT = ImmutableBalConfiguration.builder().build();
+
+  /** Configuration with BAL state root disabled (uses standard accumulator-based root). */
+  BalConfiguration DISABLED =
+      ImmutableBalConfiguration.builder().isBalStateRootEnabled(false).build();
+
+  /**
+   * Returns whether to use the BAL-based state root commit path when a BAL is available. When
+   * false, the synchronous trie path is used instead.
+   */
+  @Value.Default
+  default boolean isBalStateRootEnabled() {
+    return true;
+  }
+
+  /** Returns whether BAL perfect parallelization is enabled. */
+  @Value.Default
+  default boolean isPerfectParallelizationEnabled() {
+    return true;
+  }
+
+  /** Returns whether prefetching of state data based on BAL read operations is enabled. */
+  @Value.Default
+  default boolean isBalPreFetchReadingEnabled() {
+    return true;
+  }
+
+  /** Returns whether BAL sorting optimization should be enabled during prefetch. */
+  @Value.Default
+  default boolean isBalPreFetchSortingEnabled() {
+    return true;
+  }
+
+  /** Returns whether the BALs should be logged when a constructed and block's BALs mismatch. */
+  @Value.Default
+  default boolean shouldLogBalsOnMismatch() {
+    return false;
+  }
+
+  /**
+   * Returns the batch size for prefetch MultiGets. A value of 0 or negative means no batching (one
+   * MultiGet for accounts, one for storage). Default 256 keeps RocksDB locality without flooding
+   * tiny MultiGets on large BALs.
+   */
+  @Value.Default
+  default int getBalPreFetchBatchSize() {
+    return 256;
+  }
+}

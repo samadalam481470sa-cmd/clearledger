@@ -1,0 +1,264 @@
+/*
+ * Copyright contributors to Hyperledger Besu.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+ * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations under the License.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+plugins {
+  id 'java-platform'
+  id 'com.diffplug.spotless'
+}
+
+repositories {
+  mavenCentral()
+}
+
+javaPlatform {
+  allowDependencies()
+}
+
+dependencies {
+  api platform('com.fasterxml.jackson:jackson-bom:2.21.7')
+  api platform('io.grpc:grpc-bom:1.79.0')
+  api platform('io.netty:netty-bom:4.2.17.Final')
+  api platform('io.opentelemetry:opentelemetry-bom:1.62.0')
+  api platform('io.prometheus:prometheus-metrics-bom:1.5.0')
+  api platform('io.vertx:vertx-stack-depchain:5.1.6')
+  api platform('org.apache.logging.log4j:log4j-bom:2.25.5')
+  api platform('org.assertj:assertj-bom:3.27.7')
+  api platform('org.immutables:bom:2.12.1')
+  api platform('org.junit:junit-bom:5.14.4')
+  api platform('org.jetbrains.kotlin:kotlin-bom:2.4.0')
+  api platform('org.mockito:mockito-bom:5.21.0')
+  api platform('org.slf4j:slf4j-bom:2.0.17')
+
+  constraints {
+    api project(':acceptance-tests:dsl')
+    api project(':app')
+    api project(':config')
+    api project(':consensus:clique')
+    api project(':consensus:common')
+    api project(':consensus:ibft')
+    api project(':consensus:ibftlegacy')
+    api project(':consensus:merge')
+    api project(':consensus:qbft')
+    api project(':consensus:qbft-core')
+    api project(':crypto:algorithms')
+    api project(':crypto:plugin-api')
+    api project(':crypto:services')
+    api project(':datatypes')
+    api project(':ethereum:api')
+    api project(':ethereum:api:plugin-api')
+    api project(':ethereum:blockcreation')
+    api project(':ethereum:blockcreation:plugin-api')
+    api project(':ethereum:core')
+    api project(':ethereum:core:plugin-api-chain')
+    api project(':ethereum:core:plugin-api-execution')
+    api project(':ethereum:core:plugin-api-validation')
+    api project(':ethereum:core:plugin-api-worldstate')
+    api project(':ethereum:core:plugin-api-worldstate-backend')
+    api project(':ethereum:eth')
+    api project(':ethereum:eth:plugin-api-sync')
+    api project(':ethereum:eth:plugin-api-txpool')
+    api project(':ethereum:p2p')
+    api project(':ethereum:p2p:plugin-api')
+    api project(':ethereum:permissioning')
+    api project(':ethereum:permissioning:plugin-api')
+    api project(':ethereum:referencetests')
+    api project(':ethereum:rlp')
+    api project(':ethereum:trie')
+    api project(':evm')
+    api project(':metrics:core')
+    api project(':metrics:plugin-api')
+    api project(':plugin-api')
+    api project(':plugin-api:core')
+    api project(':services:kvstore')
+    api project(':services:kvstore:plugin-api')
+    api project(':services:pipeline')
+    api project(':services:tasks')
+    api project(':testutil')
+    api project(':util')
+
+    api 'com.github.ben-manes.caffeine:caffeine:3.2.3'
+
+    api 'com.github.oshi:oshi-core:6.10.0'
+
+    api 'com.google.auto.service:auto-service:1.1.1'
+
+    api 'com.google.dagger:dagger-compiler:2.59.2'
+    api 'com.google.dagger:dagger:2.59.2'
+
+    api 'com.google.guava:guava:33.5.0-jre'
+
+    api 'org.checkerframework:checker-qual:3.43.0'
+
+    api 'com.google.errorprone:error_prone_annotations:2.41.0'
+
+    api 'org.jspecify:jspecify:1.0.0'
+
+    api 'com.google.protobuf:protobuf-java:3.25.5'
+
+    api 'com.graphql-java:graphql-java:22.3'
+
+    api 'com.splunk.logging:splunk-library-javalogging:1.11.8'
+
+    api 'com.squareup.okhttp3:okhttp:4.12.0'
+
+    api 'com.github.seancfoley:ipaddress:5.6.1'
+
+    api 'commons-io:commons-io:2.22.0'
+
+    api 'dnsjava:dnsjava:3.6.4'
+
+    api 'info.picocli:picocli:4.7.7'
+    api 'info.picocli:picocli-codegen:4.7.7'
+
+    api 'io.opentelemetry.instrumentation:opentelemetry-okhttp-3.0:2.25.0-alpha'
+    api 'io.opentelemetry.proto:opentelemetry-proto:1.9.0-alpha'
+    api 'io.opentelemetry.semconv:opentelemetry-semconv:1.40.0'
+    api 'io.opentelemetry.semconv:opentelemetry-semconv-incubating:1.40.0-alpha'
+
+    api 'io.opentracing:opentracing-api:0.33.0'
+    api 'io.opentracing:opentracing-util:0.33.0'
+    api 'io.opentracing.contrib:opentracing-okhttp3:3.0.0'
+
+    api 'io.pkts:pkts-core:3.0.18'
+
+    api 'io.projectreactor:reactor-core:3.8.6'
+
+    api 'io.consensys.tuweni:tuweni-bytes:2.8.0'
+    api 'io.consensys.tuweni:tuweni-config:2.8.0'
+    api 'io.consensys.tuweni:tuweni-concurrent:2.8.0'
+    api 'io.consensys.tuweni:tuweni-crypto:2.8.0'
+    api 'io.consensys.tuweni:tuweni-io:2.8.0'
+    api 'io.consensys.tuweni:tuweni-net:2.8.0'
+    api 'io.consensys.tuweni:tuweni-rlp:2.8.0'
+    api 'io.consensys.tuweni:tuweni-toml:2.8.0'
+    api 'io.consensys.tuweni:tuweni-units:2.8.0'
+
+    api 'jakarta.validation:jakarta.validation-api:3.1.1'
+
+    api 'javax.inject:javax.inject:1'
+
+    api 'net.java.dev.jna:jna:5.18.1'
+
+    api 'org.antlr:antlr4:4.13.2'
+    api 'org.antlr:antlr4-runtime:4.13.2'
+
+    api 'org.apache.commons:commons-collections4:4.5.0'
+    api 'org.apache.commons:commons-compress:1.28.0'
+    api 'org.apache.commons:commons-lang3:3.20.0'
+    api 'org.apache.commons:commons-text:1.15.0'
+
+    api 'org.apache.maven:maven-artifact:3.9.15'
+
+    api 'org.awaitility:awaitility:4.3.0'
+
+    api 'org.bouncycastle:bcpkix-jdk18on:1.85'
+    api 'org.bouncycastle:bcprov-jdk18on:1.85'
+
+    api 'org.fusesource.jansi:jansi:2.4.2'
+
+    api 'org.hibernate.validator:hibernate-validator:8.0.2.Final'
+
+    api 'org.hyperledger.besu:besu-native-common:2.0.0'
+    api 'org.hyperledger.besu:arithmetic:2.0.0'
+    api 'org.hyperledger.besu:blake2bf:2.0.0'
+    api 'org.hyperledger.besu:gnark:2.0.0'
+    api 'org.hyperledger.besu:secp256k1:2.0.0'
+    api 'org.hyperledger.besu:secp256r1:2.0.0'
+    api 'org.hyperledger.besu:boringssl:2.0.0'
+    api 'org.hyperledger.besu:besu-errorprone-checks:1.2.0'
+    api 'com.google.errorprone:error_prone_core:2.36.0'
+    api 'com.uber.nullaway:nullaway:0.13.1'
+
+    api 'org.jacoco:org.jacoco.agent:0.8.14'
+    api 'org.jacoco:org.jacoco.core:0.8.14'
+
+    api 'org.jupnp:org.jupnp:3.0.4'
+    api 'org.jupnp:org.jupnp.support:3.0.4'
+
+    api 'org.openjdk.jmh:jmh-core:1.37'
+    api 'org.openjdk.jmh:jmh-generator-annprocess:1.37'
+
+    api 'org.openjdk.jol:jol-core:0.17'
+
+    api 'org.owasp.encoder:encoder:1.4.0'
+
+    api 'org.rocksdb:rocksdbjni:10.6.2'
+
+    api 'org.springframework.security:spring-security-crypto:6.4.9'
+
+    api 'org.web3j:abi:5.0.3'
+    api 'org.web3j:besu:5.0.3'
+    api 'org.web3j:core:5.0.3'
+    api 'org.web3j:crypto:5.0.3'
+
+    api 'org.xerial.snappy:snappy-java:1.1.10.7'
+
+    api 'io.consensys.protocols:jc-kzg-4844:2.1.8'
+
+    api 'io.consensys.protocols:discovery:26.8.0'
+  }
+}
+
+
+spotless {
+  // spotless check applied to build.gradle (groovy) files
+  groovyGradle {
+    target '*.gradle'
+    greclipse('4.31').configFile(rootProject.file('gradle/spotless/greclipse.properties'))
+    endWithNewline()
+  }
+}
+
+publishing {
+  publications {
+    mavenJavaPlatform(MavenPublication) {
+      from components.javaPlatform
+      groupId = "org.hyperledger.besu"
+      artifactId = 'bom'
+      version = calculateVersion()
+
+      pom {
+        name = "Besu BOM"
+        url = 'https://github.com/besu-eth/besu'
+        licenses {
+          license {
+            name = 'The Apache License, Version 2.0'
+            url = 'http://www.apache.org/licenses/LICENSE-2.0.txt'
+          }
+        }
+        scm {
+          connection = 'scm:git:git://github.com/besu-eth/besu.git'
+          developerConnection = 'scm:git:ssh://github.com/besu-eth/besu.git'
+          url = 'https://github.com/besu-eth/besu'
+        }
+        withXml {
+          // Workaround since Gradle does not natively support adding classifiers in BOM
+          // https://github.com/gradle/gradle/issues/8561#issuecomment-467456299
+
+          Node pomNode = asNode()
+          Node dependencies = pomNode.dependencyManagement.dependencies.get(0)
+          addDependency(dependencies, "org.hyperledger.besu.internal", "besu-ethereum-core", "test-support", calculateVersion())
+        }
+      }
+    }
+  }
+}
+
+def addDependency(parent, groupId, artifactId, classifier, version) {
+  parent.appendNode('dependency')
+    .appendNode('groupId', groupId).parent()
+    .appendNode('artifactId', artifactId).parent()
+    .appendNode('classifier', classifier).parent()
+    .appendNode('version', version)
+}

@@ -1,0 +1,312 @@
+/*
+ * Copyright ConsenSys AG.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+ * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations under the License.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+package org.hyperledger.besu.plugin.services.storage.rocksdb.configuration;
+
+import java.lang.management.ManagementFactory;
+import java.util.Optional;
+import java.util.function.Supplier;
+
+import com.google.common.base.MoreObjects;
+import com.google.common.base.Suppliers;
+import com.sun.management.OperatingSystemMXBean;
+import picocli.CommandLine;
+
+/** The RocksDb cli options. */
+public class RocksDBCLIOptions {
+
+  /** The constant DEFAULT_MAX_OPEN_FILES. */
+  public static final int DEFAULT_MAX_OPEN_FILES = 1024;
+
+  /** Number of bytes in one gibibyte (GiB), {@code 1024^3}. */
+  public static final long GIB = 1024L * 1024L * 1024L;
+
+  /** Minimum max-open-files value used when deriving from available memory. */
+  private static final int MIN_MAX_OPEN_FILES = 1024;
+
+  /** Maximum max-open-files value used when deriving from available memory. */
+  private static final int MAX_MAX_OPEN_FILES = 16384;
+
+  /**
+   * Scale factor used to derive max open files from available memory ({@code 512} files per GiB).
+   */
+  private static final int OPEN_FILES_PER_GIB = 512;
+
+  /** The constant DEFAULT_CACHE_CAPACITY. */
+  public static final long DEFAULT_CACHE_CAPACITY = 134217728;
+
+  /** The constant DEFAULT_BACKGROUND_THREAD_COUNT. */
+  public static final int DEFAULT_BACKGROUND_THREAD_COUNT = 4;
+
+  /** The constant DEFAULT_IS_HIGH_SPEC. */
+  public static final boolean DEFAULT_IS_HIGH_SPEC = false;
+
+  /** The default value indicating whether the startup table cache warm-up is enabled. */
+  public static final boolean DEFAULT_IS_TABLE_CACHE_WARMUP_ENABLED = true;
+
+  /** The constant MAX_OPEN_FILES_FLAG. */
+  public static final String MAX_OPEN_FILES_FLAG = "--Xplugin-rocksdb-max-open-files";
+
+  /** The constant CACHE_CAPACITY_FLAG. */
+  public static final String CACHE_CAPACITY_FLAG = "--Xplugin-rocksdb-cache-capacity";
+
+  /** The constant BACKGROUND_THREAD_COUNT_FLAG. */
+  public static final String BACKGROUND_THREAD_COUNT_FLAG =
+      "--Xplugin-rocksdb-background-thread-count";
+
+  /** The constant IS_HIGH_SPEC. */
+  public static final String IS_HIGH_SPEC = "--Xplugin-rocksdb-high-spec-enabled";
+
+  /** The constant TABLE_CACHE_WARMUP_ENABLED_FLAG. */
+  public static final String TABLE_CACHE_WARMUP_ENABLED_FLAG =
+      "--Xplugin-rocksdb-table-cache-warmup-enabled";
+
+  /** Key name for configuring blockchain_blob_garbage_collection_enabled */
+  public static final String BLOB_BLOCKCHAIN_GARBAGE_COLLECTION_ENABLED =
+      "--Xplugin-rocksdb-blockchain-blob-garbage-collection-enabled";
+
+  /** Key name for configuring blob_garbage_collection_age_cutoff */
+  public static final String BLOB_GARBAGE_COLLECTION_AGE_CUTOFF =
+      "--Xplugin-rocksdb-blob-garbage-collection-age-cutoff";
+
+  /** Key name for configuring blob_garbage_collection_force_threshold */
+  public static final String BLOB_GARBAGE_COLLECTION_FORCE_THRESHOLD =
+      "--Xplugin-rocksdb-blob-garbage-collection-force-threshold";
+
+  /** The Max open files. */
+  @CommandLine.Option(
+      names = {MAX_OPEN_FILES_FLAG},
+      hidden = true,
+      paramLabel = "<INTEGER>",
+      description =
+          "Max number of files RocksDB will open. If unset, derives a value from available memory.")
+  Optional<Integer> maxOpenFiles = Optional.empty();
+
+  /** The Cache capacity. */
+  @CommandLine.Option(
+      names = {CACHE_CAPACITY_FLAG},
+      hidden = true,
+      defaultValue = "134217728",
+      paramLabel = "<LONG>",
+      description = "Cache capacity of RocksDB (default: ${DEFAULT-VALUE})")
+  long cacheCapacity;
+
+  /** The Background thread count. */
+  @CommandLine.Option(
+      names = {BACKGROUND_THREAD_COUNT_FLAG},
+      hidden = true,
+      defaultValue = "4",
+      paramLabel = "<INTEGER>",
+      description = "Number of RocksDB background threads (default: ${DEFAULT-VALUE})")
+  int backgroundThreadCount;
+
+  /** The Is high spec. */
+  @CommandLine.Option(
+      names = {IS_HIGH_SPEC},
+      hidden = true,
+      paramLabel = "<BOOLEAN>",
+      description =
+          "Use this flag to boost Besu performance if you have a 16 GiB RAM hardware or more (default: ${DEFAULT-VALUE})")
+  boolean isHighSpec;
+
+  /** Enables the startup table cache warm-up. */
+  @CommandLine.Option(
+      names = {TABLE_CACHE_WARMUP_ENABLED_FLAG},
+      hidden = true,
+      paramLabel = "<BOOLEAN>",
+      description =
+          "At startup, open the table readers of all live SST files to populate the RocksDB table cache with their footers, indexes and filters (default: ${DEFAULT-VALUE})")
+  boolean isTableCacheWarmupEnabled = DEFAULT_IS_TABLE_CACHE_WARMUP_ENABLED;
+
+  /** The Blob blockchain garbage collection enabled. */
+  @CommandLine.Option(
+      names = {BLOB_BLOCKCHAIN_GARBAGE_COLLECTION_ENABLED},
+      hidden = true,
+      paramLabel = "<BOOLEAN>",
+      description =
+          "Enable garbage collection for the BLOCKCHAIN column family (default: ${DEFAULT-VALUE})")
+  boolean isBlockchainGarbageCollectionEnabled = false;
+
+  /**
+   * The Blob garbage collection age cutoff. The fraction of file age to be considered eligible for
+   * GC; e.g. 0.25 = oldest 25% of files eligible; e.g. 1 = all files eligible When unspecified, use
+   * RocksDB default
+   */
+  @CommandLine.Option(
+      names = {BLOB_GARBAGE_COLLECTION_AGE_CUTOFF},
+      hidden = true,
+      paramLabel = "<DOUBLE>",
+      description = "Blob garbage collection age cutoff (default: ${DEFAULT-VALUE})")
+  Optional<Double> blobGarbageCollectionAgeCutoff = Optional.empty();
+
+  /**
+   * The Blob garbage collection force threshold. The fraction of garbage inside eligible blob files
+   * to trigger GC; e.g. 1 = trigger when eligible file contains 100% garbage; e.g. 0 = trigger for
+   * all eligible files; When unspecified, use Rocksdb default
+   */
+  @CommandLine.Option(
+      names = {BLOB_GARBAGE_COLLECTION_FORCE_THRESHOLD},
+      hidden = true,
+      paramLabel = "<DOUBLE>",
+      description = "Blob garbage collection force threshold (default: ${DEFAULT-VALUE})")
+  Optional<Double> blobGarbageCollectionForceThreshold = Optional.empty();
+
+  private final Supplier<Integer> resolvedMaxOpenFilesSupplier =
+      Suppliers.memoize(
+          () -> maxOpenFiles.orElseGet(RocksDBCLIOptions::deriveMaxOpenFilesFromAvailableMemory));
+
+  private RocksDBCLIOptions() {}
+
+  /**
+   * Create RocksDb cli options.
+   *
+   * @return the RocksDb cli options
+   */
+  public static RocksDBCLIOptions create() {
+    return new RocksDBCLIOptions();
+  }
+
+  /**
+   * RocksDb cli options from config.
+   *
+   * @param config the config
+   * @return the RocksDb cli options
+   */
+  public static RocksDBCLIOptions fromConfig(final RocksDBConfiguration config) {
+    final RocksDBCLIOptions options = create();
+    options.maxOpenFiles = Optional.of(config.getMaxOpenFiles());
+    options.cacheCapacity = config.getCacheCapacity();
+    options.backgroundThreadCount = config.getBackgroundThreadCount();
+    options.isHighSpec = config.isHighSpec();
+    options.isTableCacheWarmupEnabled = config.isTableCacheWarmupEnabled();
+    options.isBlockchainGarbageCollectionEnabled = config.isBlockchainGarbageCollectionEnabled();
+    options.blobGarbageCollectionAgeCutoff = config.getBlobGarbageCollectionAgeCutoff();
+    options.blobGarbageCollectionForceThreshold = config.getBlobGarbageCollectionForceThreshold();
+    return options;
+  }
+
+  /**
+   * To domain object rocks db factory configuration.
+   *
+   * @return the rocks db factory configuration
+   */
+  public RocksDBFactoryConfiguration toDomainObject() {
+    return new RocksDBFactoryConfiguration(
+        resolveMaxOpenFiles(),
+        backgroundThreadCount,
+        cacheCapacity,
+        isHighSpec,
+        isTableCacheWarmupEnabled,
+        isBlockchainGarbageCollectionEnabled,
+        blobGarbageCollectionAgeCutoff,
+        blobGarbageCollectionForceThreshold);
+  }
+
+  private int resolveMaxOpenFiles() {
+    return resolvedMaxOpenFilesSupplier.get();
+  }
+
+  /**
+   * Is high spec.
+   *
+   * @return the boolean
+   */
+  public boolean isHighSpec() {
+    return isHighSpec;
+  }
+
+  /**
+   * Returns the max open files value that will be used, either explicitly set or derived from
+   * available memory.
+   *
+   * @return the resolved max open files value
+   */
+  public int getResolvedMaxOpenFiles() {
+    return resolveMaxOpenFiles();
+  }
+
+  /**
+   * Returns whether max open files was explicitly set via CLI.
+   *
+   * @return true if max open files was set via CLI, false if derived from available memory
+   */
+  public boolean isMaxOpenFilesExplicitlySet() {
+    return maxOpenFiles.isPresent();
+  }
+
+  /**
+   * Derives max open files from the host's available memory.
+   *
+   * @return the max open files value for the current machine, or {@link #DEFAULT_MAX_OPEN_FILES} if
+   *     memory information is unavailable
+   */
+  public static int deriveMaxOpenFilesFromAvailableMemory() {
+    final java.lang.management.OperatingSystemMXBean osBean =
+        ManagementFactory.getOperatingSystemMXBean();
+    if (osBean instanceof OperatingSystemMXBean operatingSystemMXBean) {
+      return calculateMaxOpenFiles(operatingSystemMXBean.getFreeMemorySize());
+    }
+    return DEFAULT_MAX_OPEN_FILES;
+  }
+
+  /**
+   * Calculates max open files for the given available memory using a continuous scale of 512 files
+   * per GiB, clamped between 1024 and 16384.
+   *
+   * @param availableMemoryBytes the available memory in bytes
+   * @return the derived max open files value
+   */
+  public static int calculateMaxOpenFiles(final long availableMemoryBytes) {
+    final long computed = (availableMemoryBytes * OPEN_FILES_PER_GIB) / GIB;
+    return (int) Math.min(MAX_MAX_OPEN_FILES, Math.max(MIN_MAX_OPEN_FILES, computed));
+  }
+
+  /**
+   * Gets blob db settings.
+   *
+   * @return the blob db settings
+   */
+  public BlobDBSettings getBlobDBSettings() {
+    return new BlobDBSettings(
+        isBlockchainGarbageCollectionEnabled,
+        blobGarbageCollectionAgeCutoff,
+        blobGarbageCollectionForceThreshold);
+  }
+
+  @Override
+  public String toString() {
+    return MoreObjects.toStringHelper(this)
+        .add("maxOpenFiles", maxOpenFiles)
+        .add("cacheCapacity", cacheCapacity)
+        .add("backgroundThreadCount", backgroundThreadCount)
+        .add("isHighSpec", isHighSpec)
+        .add("isTableCacheWarmupEnabled", isTableCacheWarmupEnabled)
+        .add("isBlockchainGarbageCollectionEnabled", isBlockchainGarbageCollectionEnabled)
+        .add("blobGarbageCollectionAgeCutoff", blobGarbageCollectionAgeCutoff)
+        .add("blobGarbageCollectionForceThreshold", blobGarbageCollectionForceThreshold)
+        .toString();
+  }
+
+  /**
+   * A container type BlobDBSettings
+   *
+   * @param isBlockchainGarbageCollectionEnabled the is blockchain garbage collection enabled
+   * @param blobGarbageCollectionAgeCutoff the blob garbage collection age cutoff
+   * @param blobGarbageCollectionForceThreshold the blob garbage collection force threshold
+   */
+  public record BlobDBSettings(
+      boolean isBlockchainGarbageCollectionEnabled,
+      Optional<Double> blobGarbageCollectionAgeCutoff,
+      Optional<Double> blobGarbageCollectionForceThreshold) {}
+}

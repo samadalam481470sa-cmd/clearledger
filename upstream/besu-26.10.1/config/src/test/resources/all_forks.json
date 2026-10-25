@@ -1,0 +1,31 @@
+{
+  "config": {
+    "homesteadBlock": 1,
+    "daoForkBlock": 2,
+    "eip150Block": 3,
+    "eip158Block": 4,
+    "byzantiumBlock": 5,
+    "constantinopleBlock": 6,
+    "petersburgBlock": 7,
+    "istanbulBlock": 8,
+    "muirGlacierBlock": 9,
+    "berlinBlock": 10,
+    "londonBlock": 11,
+    "arrowGlacierBlock": 12,
+    "grayGlacierBlock": 13,
+    "mergeNetSplitBlock": 14,
+    "shanghaiTime": 15,
+    "cancunTime": 16,
+    "pragueTime": 17,
+    "osakaTime": 18,
+    "bpo1Time": 19,
+    "bpo2Time": 20,
+    "bpo3Time": 21,
+    "bpo4Time": 22,
+    "bpo5Time": 23,
+    "amsterdamTime": 24,
+    "bogotaTime": 25,
+    "futureEipsTime": 98,
+    "experimentalEipsTime": 99
+  }
+}

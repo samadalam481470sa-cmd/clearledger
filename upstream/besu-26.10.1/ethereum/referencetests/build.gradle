@@ -1,0 +1,706 @@
+/*
+ * Copyright ConsenSys AG.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+ * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations under the License.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+apply plugin: 'java-library'
+
+jar {
+  archiveBaseName = calculateArtifactId(project)
+  manifest {
+    attributes(
+      'Specification-Title': archiveBaseName,
+      'Specification-Version': project.version,
+      'Implementation-Title': archiveBaseName,
+      'Implementation-Version': calculateVersion(),
+      'Commit-Hash': getGitCommitDetails(40).hash
+      )
+  }
+}
+
+def blockchainReferenceTests = tasks.register("blockchainReferenceTests")  {
+  final referenceTestsPath = 'src/reference-test/external-resources/BlockchainTests'
+  final generatedTestsPath = "$buildDir/generated/sources/reference-test/$name/java"
+  inputs.files fileTree(referenceTestsPath),
+    fileTree(generatedTestsPath)
+  outputs.files generatedTestsPath
+  generateTestFiles(
+    fileTree(referenceTestsPath),
+    file("src/reference-test/templates/BlockchainReferenceTest.java.template"),
+    "BlockchainTests",
+    "$generatedTestsPath/org/hyperledger/besu/ethereum/vm/blockchain",
+    "BlockchainReferenceTest",
+    "org.hyperledger.besu.ethereum.vm.blockchain",
+    ("BlockchainTests/InvalidBlocks/bcExpectSection") // exclude test for test filling tool
+    )
+}
+
+def eipBlockchainReferenceTests = tasks.register("eipBlockchainReferenceTests")  {
+  final referenceTestsPath = 'src/reference-test/external-resources/EIPTests/BlockchainTests'
+  final generatedTestsPath = "$buildDir/generated/sources/reference-test/$name/java"
+  inputs.files fileTree(referenceTestsPath),
+    fileTree(generatedTestsPath)
+  outputs.files generatedTestsPath
+  generateTestFiles(
+    fileTree(referenceTestsPath),
+    file("src/reference-test/templates/BlockchainReferenceTest.java.template"),
+    "EIPTests${File.separatorChar}BlockchainTests",
+    "$generatedTestsPath/org/hyperledger/besu/ethereum/vm/eip",
+    "EIPBlockchainReferenceTest",
+    "org.hyperledger.besu.ethereum.vm.eip",
+    "EIPTests${File.separatorChar}BlockchainTests${File.separatorChar}StateTests${File.separatorChar}stEOF" // exclude EOF tests
+    )
+}
+
+def eipStateReferenceTests = tasks.register("eipStateReferenceTests")  {
+  final referenceTestsPath = 'src/reference-test/external-resources/EIPTests/StateTests'
+  final generatedTestsPath = "$buildDir/generated/sources/reference-test/$name/java"
+  inputs.files fileTree(referenceTestsPath),
+    fileTree(generatedTestsPath)
+  outputs.files generatedTestsPath
+  generateTestFiles(
+    fileTree(referenceTestsPath),
+    file("src/reference-test/templates/GeneralStateReferenceTest.java.template"),
+    "EIPTests${File.separatorChar}StateTests",
+    "$generatedTestsPath/org/hyperledger/besu/ethereum/vm/eip",
+    "EIPStateReferenceTest",
+    "org.hyperledger.besu.ethereum.vm.eip",
+    "EIPTests${File.separatorChar}StateTests${File.separatorChar}stEOF" // exclude EOF tests
+    )
+}
+
+// Stable and devnet fixtures both come from the execution-specs module, so they are told apart by
+// their release tag: stable releases are tagged `tests@vX.Y.Z`, devnet ones `tests-<devnet>@vX.Y.Z`.
+def stableFixtureTarball = { file -> file.name.startsWith('execution-specs-tests@') }
+def devnetFixtureTarball = { file -> file.name.startsWith('execution-specs-tests-') }
+
+// An unpacked fixture tree is several GB. By default it lives in this project's build directory, so
+// every checkout and worktree holds its own copy. Setting the Gradle property
+// besu.referenceTests.fixturesDir (e.g. in ~/.gradle/gradle.properties) unpacks each fixture
+// version once into that directory instead, where all checkouts share it.
+def sharedFixturesRoot = providers.gradleProperty('besu.referenceTests.fixturesDir')
+// Shared fixture versions that no build has used for this long are deleted.
+def sharedFixturesMaxIdleDays = 30
+
+// Where the fixtures declared in the given configuration are unpacked. The shared location is named
+// after the declared dependency (the tarball name without its extension) rather than the resolved
+// file, so that asking for the directory never triggers a download.
+def fixturesDirFor = { String buildDirName, String tarConfigurationName, String moduleName ->
+  if (!sharedFixturesRoot.isPresent()) {
+    return layout.buildDirectory.dir(buildDirName)
+  }
+  return layout.dir(provider {
+    def fixtures = configurations.getByName(tarConfigurationName).allDependencies
+      .find { it.group == 'ethereum' && it.name == moduleName }
+    new File(rootProject.file(sharedFixturesRoot.get()),
+      "${fixtures.name}-${fixtures.version}-${fixtures.artifacts.first().classifier}")
+  })
+}
+
+def registerFixtureExtraction = { String taskName, Provider<Directory> fixturesDir, Closure<File> tarball, String cacheCleanTask ->
+  if (!sharedFixturesRoot.isPresent()) {
+    return tasks.register(taskName, Sync) {
+      from {
+        tarTree(tarball())
+      }
+      into fixturesDir
+      finalizedBy(cacheCleanTask)
+    }
+  }
+  // The shared directory is read by builds in other checkouts, possibly while this one runs, so a
+  // version is unpacked once and never modified afterwards. No outputs are declared: Gradle would
+  // create a declared output directory up front, and the directory existing is what marks a
+  // version as unpacked.
+  //
+  // The tarball cache is not cleaned here: with several checkouts in play, the versions this one
+  // does not declare are the ones another is using. Gradle expires unused cache entries itself.
+  return tasks.register(taskName) {
+    doLast {
+      def target = fixturesDir.get().asFile
+      def sharedRoot = target.parentFile
+      if (!target.exists()) {
+        // Unpack next to the target and rename, so that other builds only ever see a complete tree.
+        def staging = new File(sharedRoot, ".${target.name}.${UUID.randomUUID()}.tmp")
+        copy {
+          from tarTree(tarball())
+          into staging
+        }
+        try {
+          java.nio.file.Files.move(staging.toPath(), target.toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE)
+        } catch (IOException e) {
+          if (!target.exists()) {
+            throw e
+          }
+          // A concurrent build unpacked the same version first.
+          delete staging
+        }
+      }
+      // The directory's modification time records when the version was last used.
+      target.setLastModified(System.currentTimeMillis())
+      def cutoff = System.currentTimeMillis() - java.util.concurrent.TimeUnit.DAYS.toMillis(sharedFixturesMaxIdleDays)
+      sharedRoot.listFiles()?.each { sibling ->
+        if (sibling.isDirectory() && sibling.name ==~ /\.?execution-specs-.*/ && sibling.lastModified() < cutoff) {
+          logger.lifecycle("Deleting fixtures unused for ${sharedFixturesMaxIdleDays} days: ${sibling}")
+          delete sibling
+        }
+      }
+    }
+  }
+}
+
+def stableFixturesDir = fixturesDirFor("execution-spec-tests", "tarConfig", 'execution-specs')
+// Read by :ethereum:evmtool, whose hive-equivalent tasks replay the same fixtures.
+ext.stableFixturesDir = stableFixturesDir
+def extractStableFixtures = registerFixtureExtraction(
+  "extractStableFixtures",
+  stableFixturesDir,
+  { configurations.tarConfig.files.find(stableFixtureTarball) },
+  "cleanReferenceTestCache")
+
+def executionSpecTests = tasks.register("executionSpecTests") {
+  dependsOn extractStableFixtures
+  final referenceTestsDir = stableFixturesDir
+  final generatedTestsDir = layout.buildDirectory.dir("generated/sources/reference-test/$name/java")
+
+  inputs.dir referenceTestsDir
+  inputs.files fileTree("src/reference-test/templates")
+  outputs.dir generatedTestsDir
+  doFirst {
+    delete generatedTestsDir
+  }
+  doLast {
+    // generate blockchain_tests grouped by hardfork/EIP:
+    generateTestFilesGroupedByDirectory(
+      referenceTestsDir.get().asFile,
+      file("src/reference-test/templates/BlockchainReferenceTest.java.template"),
+      "fixtures",
+      "blockchain_tests",
+      generatedTestsDir.get().dir("org/hyperledger/besu/ethereum/vm/executionspec").asFile.path,
+      "ExecutionSpecBlockchainTest",
+      "org.hyperledger.besu.ethereum.vm.executionspec",
+      )
+
+    // generate state_tests grouped by hardfork/EIP:
+    generateTestFilesGroupedByDirectory(
+      referenceTestsDir.get().asFile,
+      file("src/reference-test/templates/GeneralStateReferenceTest.java.template"),
+      "fixtures",
+      "state_tests",
+      generatedTestsDir.get().dir("org/hyperledger/besu/ethereum/vm/executionspec").asFile.path,
+      "ExecutionSpecStateTest",
+      "org.hyperledger.besu.ethereum.vm.executionspec",
+      )
+  }
+}
+
+def devnetFixturesDir = fixturesDirFor("execution-spec-devnet-tests", "devnetTarConfig", 'execution-specs')
+// Read by :ethereum:evmtool, whose hive-equivalent tasks replay the same fixtures.
+ext.devnetFixturesDir = devnetFixturesDir
+def extractDevnetFixtures = registerFixtureExtraction(
+  "extractDevnetFixtures",
+  devnetFixturesDir,
+  { configurations.devnetTarConfig.files.find(devnetFixtureTarball) },
+  "cleanReferenceTestCache")
+
+// Removes stale execution-specs fixture tarballs from the Gradle dependency cache,
+// keeping only the versions currently declared in this build.
+tasks.register("cleanReferenceTestCache") {
+  description = "Deletes cached execution-specs fixture tarballs other than the currently declared versions."
+  doLast {
+    // Stable and devnet fixtures share the ethereum/execution-specs module directory, so both
+    // declared versions have to be collected before anything is deleted.
+    def keptVersionDirs = [
+      configurations.tarConfig.files.find(stableFixtureTarball),
+      configurations.devnetTarConfig.files.find(devnetFixtureTarball)
+      // Cache layout: <module>/<version>/<hash>/<file>.tar.gz
+    ].findAll { it != null }.collect { it.parentFile.parentFile }
+
+    keptVersionDirs.collect { it.parentFile }.unique().each { moduleDir ->
+      moduleDir.listFiles()?.each { sibling ->
+        if (sibling.isDirectory() && !keptVersionDirs.any { it.absolutePath == sibling.absolutePath }) {
+          logger.lifecycle("Deleting stale fixture cache: ${sibling}")
+          delete sibling
+        }
+      }
+    }
+  }
+}
+
+// Kept separate from cleanReferenceTestCache: the zkevm fixture tarball is ~586MB, so this must
+// only ever run (and resolve configurations.zkevmTarConfig) as part of the zkevm path, never as a
+// side effect of a plain stable/devnet reference-test run. zkevm is declared under its own module
+// (execution-specs-zkevm), so its cache directory is never shared with the other fixture flavours.
+tasks.register("cleanZkevmFixtureCache") {
+  description = "Deletes cached zkevm execution-specs fixture tarballs other than the currently declared version."
+  doLast {
+    def keptVersionDir =
+      configurations.zkevmTarConfig.files.find { it.name.startsWith('execution-spec') }
+      ?.parentFile?.parentFile
+    if (keptVersionDir == null) return
+      keptVersionDir.parentFile.listFiles()?.each { sibling ->
+        if (sibling.isDirectory() && sibling.absolutePath != keptVersionDir.absolutePath) {
+          logger.lifecycle("Deleting stale fixture cache: ${sibling}")
+          delete sibling
+        }
+      }
+  }
+}
+
+def zkevmFixturesDir = fixturesDirFor("execution-spec-zkevm-tests", "zkevmTarConfig", 'execution-specs-zkevm')
+def extractZkevmFixtures = registerFixtureExtraction(
+  "extractZkevmFixtures",
+  zkevmFixturesDir, {
+    configurations.zkevmTarConfig.files.find {
+      it.name.startsWith('execution-spec')
+    }
+  },
+  "cleanZkevmFixtureCache")
+
+def zkevmExecutionWitnessTests = tasks.register("zkevmExecutionWitnessTests") {
+  dependsOn extractZkevmFixtures
+  final referenceTestsDir = zkevmFixturesDir
+  final generatedTestsDir = layout.buildDirectory.dir("generated/sources/reference-test/$name/java")
+
+  inputs.dir referenceTestsDir
+  inputs.files fileTree("src/reference-test/templates")
+  outputs.dir generatedTestsDir
+  doFirst {
+    delete generatedTestsDir
+  }
+  doLast {
+    generateTestFilesGroupedByDirectory(
+      referenceTestsDir.get().asFile,
+      file("src/reference-test/templates/ZkevmExecutionWitnessTest.java.template"),
+      "fixtures",
+      "blockchain_tests",
+      generatedTestsDir.get().dir("org/hyperledger/besu/ethereum/vm/zkevm").asFile.path,
+      "ZkevmExecutionWitnessTest",
+      "org.hyperledger.besu.ethereum.vm.zkevm",
+      )
+  }
+}
+
+def executionSpecDevnetTests = tasks.register("executionSpecDevnetTests") {
+  dependsOn extractDevnetFixtures
+  final referenceTestsDir = devnetFixturesDir
+  final generatedTestsDir = layout.buildDirectory.dir("generated/sources/reference-test/$name/java")
+
+  inputs.dir referenceTestsDir
+  inputs.files fileTree("src/reference-test/templates")
+  outputs.dir generatedTestsDir
+  doFirst {
+    delete generatedTestsDir
+  }
+  doLast {
+    generateTestFilesGroupedByDirectory(
+      referenceTestsDir.get().asFile,
+      file("src/reference-test/templates/BlockchainReferenceTest.java.template"),
+      "fixtures",
+      "blockchain_tests",
+      generatedTestsDir.get().dir("org/hyperledger/besu/ethereum/vm/executionspecdevnet").asFile.path,
+      "ExecutionSpecDevnetBlockchainTest",
+      "org.hyperledger.besu.ethereum.vm.executionspecdevnet",
+      )
+
+    generateTestFilesGroupedByDirectory(
+      referenceTestsDir.get().asFile,
+      file("src/reference-test/templates/GeneralStateReferenceTest.java.template"),
+      "fixtures",
+      "state_tests",
+      generatedTestsDir.get().dir("org/hyperledger/besu/ethereum/vm/executionspecdevnet").asFile.path,
+      "ExecutionSpecDevnetStateTest",
+      "org.hyperledger.besu.ethereum.vm.executionspecdevnet",
+      )
+  }
+}
+
+def generalstateReferenceTests = tasks.register("generalstateReferenceTests")  {
+  final referenceTestsPath = "src/reference-test/external-resources/GeneralStateTests"
+  final generatedTestsPath = "$buildDir/generated/sources/reference-test/$name/java"
+  inputs.files fileTree(referenceTestsPath),
+    fileTree(generatedTestsPath)
+  outputs.files generatedTestsPath
+  generateTestFiles(
+    fileTree(referenceTestsPath),
+    file("src/reference-test/templates/GeneralStateReferenceTest.java.template"),
+    "GeneralStateTests",
+    "$generatedTestsPath/org/hyperledger/besu/ethereum/vm/generalstate",
+    "GeneralStateReferenceTest",
+    "org.hyperledger.besu.ethereum.vm.generalstate",
+    )
+}
+
+def generalstateRegressionReferenceTests = tasks.register("generalstateRegressionReferenceTests") {
+  final referenceTestsPath = "src/reference-test/resources/regressions/generalstate"
+  final generatedTestsPath = "$buildDir/generated/sources/reference-test/$name/java"
+  inputs.files fileTree(referenceTestsPath),
+    fileTree(generatedTestsPath)
+  outputs.files generatedTestsPath
+  generateTestFiles(
+    fileTree(referenceTestsPath),
+    file("src/reference-test/templates/GeneralStateReferenceTest.java.template"),
+    "regressions",
+    "$generatedTestsPath/org/hyperledger/besu/ethereum/vm/generalstate",
+    "GeneralStateRegressionReferenceTest",
+    "org.hyperledger.besu.ethereum.vm.generalstate"
+    )
+}
+
+def customBlockchainReferenceTests = tasks.register("customBlockchainReferenceTests") {
+  final referenceTestsPath = "src/reference-test/resources/custom"
+  final generatedTestsPath = "$buildDir/generated/sources/reference-test/$name/java"
+
+  inputs.files fileTree(referenceTestsPath),
+    fileTree(generatedTestsPath)
+  outputs.files generatedTestsPath
+
+  generateTestFiles(
+    fileTree(referenceTestsPath),
+    file("src/reference-test/templates/BlockchainReferenceTest.java.template"),
+    "custom",
+    "$generatedTestsPath/org/hyperledger/besu/ethereum/vm/custom",
+    "CustomBlockchainReferenceTest",
+    "org.hyperledger.besu.ethereum.vm.custom"
+    )
+}
+
+sourceSets {
+  referenceTest {
+    java {
+      compileClasspath += main.output
+      runtimeClasspath += main.output
+      srcDirs "src/reference-test/java",
+        blockchainReferenceTests,
+        eipBlockchainReferenceTests,
+        eipStateReferenceTests,
+        executionSpecTests,
+        generalstateReferenceTests,
+        generalstateRegressionReferenceTests,
+        customBlockchainReferenceTests
+    }
+    resources {
+      srcDirs 'src/reference-test/resources',
+        'src/reference-test/external-resources',
+        'src/reference-test/templates',
+        'src/reference-test/resources/custom'
+    }
+  }
+  referenceTestDevnet {
+    java {
+      compileClasspath += main.output + referenceTest.output
+      runtimeClasspath += main.output + referenceTest.output
+      srcDirs executionSpecDevnetTests
+    }
+  }
+  referenceTestZkevm {
+    java {
+      compileClasspath += main.output + referenceTest.output
+      runtimeClasspath += main.output + referenceTest.output
+      srcDirs zkevmExecutionWitnessTests
+    }
+  }
+}
+
+// The test classes load fixtures off the classpath, so the unpacked fixture trees are put on it
+// directly rather than declared as resources: processResources would keep a second copy of
+// several GB of JSON under build/resources.
+def stableFixtures = files(stableFixturesDir) { builtBy extractStableFixtures }
+def devnetFixtures = files(devnetFixturesDir) { builtBy extractDevnetFixtures }
+def zkevmFixtures = files(zkevmFixturesDir) { builtBy extractZkevmFixtures }
+
+configurations {
+  referenceTestAnnotationProcessor.extendsFrom testAnnotationProcessor
+  referenceTestDevnetAnnotationProcessor.extendsFrom testAnnotationProcessor
+  referenceTestDevnetImplementation.extendsFrom referenceTestImplementation
+  referenceTestDevnetRuntimeOnly.extendsFrom referenceTestRuntimeOnly
+  referenceTestZkevmAnnotationProcessor.extendsFrom testAnnotationProcessor
+  referenceTestZkevmImplementation.extendsFrom referenceTestImplementation
+  referenceTestZkevmRuntimeOnly.extendsFrom referenceTestRuntimeOnly
+  // we need this because referenceTestImplementation defaults to 'canBeResolved=false'.
+  tarConfig.extendsFrom referenceTestImplementation
+  tarConfig {
+    canBeResolved = true
+    canBeConsumed = false
+  }
+  devnetTarConfig {
+    canBeResolved = true
+    canBeConsumed = false
+  }
+  zkevmTarConfig {
+    canBeResolved = true
+    canBeConsumed = false
+  }
+}
+
+dependencies {
+  compileOnly 'org.jspecify:jspecify'
+
+  implementation project(':config')
+  implementation project(':crypto:algorithms')
+  implementation project(':datatypes')
+  implementation project(':ethereum:core')
+  implementation project(':ethereum:eth')
+  implementation project(':ethereum:blockcreation')
+  implementation project(':consensus:merge')
+  implementation project(':metrics:core')
+  implementation project(':util')
+  implementation project(path: ':ethereum:core', configuration: 'testSupportArtifacts')
+  implementation project(':ethereum:rlp')
+  implementation project(':evm')
+  implementation project(':services:kvstore')
+
+  implementation 'io.consensys.tuweni:tuweni-rlp'
+  implementation 'com.fasterxml.jackson.core:jackson-databind'
+  implementation 'com.google.guava:guava'
+  implementation 'com.google.dagger:dagger'
+  annotationProcessor 'com.google.dagger:dagger-compiler'
+
+  referenceTestImplementation project(path: ':config')
+  referenceTestImplementation project(path: ':datatypes')
+  referenceTestImplementation project(path: ':ethereum:core')
+  referenceTestImplementation project(path: ':ethereum:eth')
+  referenceTestImplementation project(path: ':ethereum:blockcreation')
+  referenceTestImplementation project(path: ':consensus:merge')
+  referenceTestImplementation project(path: ':metrics:core')
+  referenceTestImplementation project(path: ':ethereum:core', configuration: 'testSupportArtifacts')
+  referenceTestImplementation project(path: ':ethereum:rlp')
+  referenceTestImplementation project(path: ':ethereum:rlp', configuration: 'testSupportArtifacts')
+  referenceTestImplementation project(path: ':ethereum:trie')
+  referenceTestImplementation project(path: ':evm')
+  referenceTestImplementation project(path: ':plugin-api')
+  referenceTestImplementation project(path: ':testutil')
+  referenceTestImplementation project(path: ':util')
+  // the following will be resolved via custom ivy repository declared in root build.gradle
+  referenceTestImplementation(
+    group: 'ethereum', name: 'execution-specs',
+    version: 'tests@v21.0.1', classifier: 'fixtures', ext: 'tar.gz'
+    )
+  devnetTarConfig(
+    group: 'ethereum', name: 'execution-specs',
+    version: 'tests-glamsterdam-devnet@v8.1.4', classifier: 'fixtures_glamsterdam-devnet', ext: 'tar.gz'
+    )
+  zkevmTarConfig(
+    group: 'ethereum', name: 'execution-specs-zkevm',
+    version: 'tests-zkevm@v21.0.0', classifier: 'fixtures_zkevm', ext: 'tar.gz'
+    )
+  referenceTestImplementation 'com.fasterxml.jackson.core:jackson-databind'
+  referenceTestImplementation 'com.google.guava:guava'
+  referenceTestImplementation 'io.consensys.tuweni:tuweni-bytes'
+  referenceTestImplementation 'io.consensys.tuweni:tuweni-units'
+  referenceTestImplementation 'org.assertj:assertj-core'
+  referenceTestImplementation 'org.junit.jupiter:junit-jupiter-api'
+  referenceTestImplementation 'org.junit.jupiter:junit-jupiter-params'
+
+  referenceTestRuntimeOnly 'org.junit.jupiter:junit-jupiter'
+  referenceTestRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+// A reference test worker parses every fixture of every test class it is handed, and the
+// execution-specs fixture set no longer fits in Gradle's default 512m test worker heap: the worker
+// dies mid-run, taking the test classes it had not reached yet with it, and Gradle reports that as
+// "Could not complete execution for Gradle Test Executor N" rather than as a test failure.
+tasks.withType(Test).configureEach {
+  maxHeapSize = '2g'
+}
+
+tasks.register('referenceTests', Test) {
+  useJUnitPlatform()
+  doFirst {
+    if (!file("src/reference-test/external-resources/README.md").exists()) {
+      throw new GradleException("ethereum/referencetest/src/reference-test/external-resources/README.md missing: please clone submodules (git submodule update --init --recursive)")
+    }
+  }
+  description = 'Runs ETH reference tests.'
+  testClassesDirs = sourceSets.referenceTest.output.classesDirs
+  classpath = sourceSets.referenceTest.runtimeClasspath + stableFixtures
+}
+
+tasks.register('referenceTestsDevnet', Test) {
+  useJUnitPlatform()
+  description = 'Runs execution-spec-tests pre-release (devnet) reference tests.'
+  testClassesDirs = sourceSets.referenceTestDevnet.output.classesDirs
+  classpath = sourceSets.referenceTestDevnet.runtimeClasspath + devnetFixtures
+}
+
+tasks.register('referenceTestsCustom', Test) {
+  useJUnitPlatform()
+  filter {
+    includeTestsMatching 'org.hyperledger.besu.ethereum.vm.custom.*'
+  }
+  description = 'Runs custom blockchain reference tests.'
+  testClassesDirs = sourceSets.referenceTest.output.classesDirs
+  classpath = sourceSets.referenceTest.runtimeClasspath
+}
+
+tasks.register('referenceTestsZkevm', Test) {
+  useJUnitPlatform()
+  description = 'Runs zkevm execution-spec-tests and validates debug_executionWitness output.'
+  testClassesDirs = sourceSets.referenceTestZkevm.output.classesDirs
+  classpath = sourceSets.referenceTestZkevm.runtimeClasspath + zkevmFixtures
+  outputs.upToDateWhen { false }
+  outputs.cacheIf { false }
+}
+
+tasks.register('validateReferenceTestSubmodule') {
+  description = "Checks that the reference tests submodule is not accidentally changed"
+  doLast {
+    def result = new ByteArrayOutputStream()
+    def expectedHash = '9201075490807f58811078e9bb5ec895b4ac01a5'
+    def submodulePath = java.nio.file.Path.of("${rootProject.projectDir}", "ethereum/referencetests/src/reference-test/external-resources").toAbsolutePath()
+    try {
+      exec {
+        commandLine 'git', 'submodule', 'status', submodulePath
+        standardOutput = result
+        errorOutput = result
+      }
+    } catch (Exception ignore) {
+      // Ignore it.  We want to fail in a friendly fashion if they don't have git installed.
+      // The CI servers have git and that is the only critical place for this failure
+      expectedHash = ''
+    }
+
+    if (!result.toString().contains(expectedHash)) {
+      throw new GradleException("""For the Ethereum Reference Tests the git commit did not match what was expected.
+
+If this is a deliberate change where you are updating the reference tests
+then update "expectedHash" in `ethereum/referencetests/build.gradle` as the
+commit hash for this task.
+Expected hash   :  ${expectedHash}
+Full git output : ${result}
+
+If this is accidental you can correct the reference test versions with the
+following commands:
+    pushd ${submodulePath}
+    git fetch
+    git checkout ${expectedHash}
+    cd ..
+    git add ${submodulePath}
+    popd""")
+    }
+  }
+}
+processResources.dependsOn('validateReferenceTestSubmodule')
+
+def generateTestFiles(
+  FileTree jsonPath,
+  File templateFile,
+  String pathstrip,
+  String destination,
+  String namePrefix,
+  String packageString,
+  String ... excludedPath) {
+  mkdir(destination)
+  def referenceTestTemplate = templateFile.text
+
+  def paths = []
+  jsonPath.getFiles().forEach { testJsonFile ->
+    def parentFile = testJsonFile.getParentFile()
+    def parentPathFile = parentFile.getPath().substring(parentFile.getPath().indexOf(pathstrip))
+    def isExcluded = excludedPath.any { excluded -> parentPathFile.startsWith(excluded) }
+    if (!testJsonFile.getName().toString().startsWith(".") && !isExcluded) {
+      def pathFile = testJsonFile.getPath()
+      paths << pathFile.substring(pathFile.indexOf(pathstrip))
+    }
+  }
+
+  paths.collate(5).eachWithIndex { tests, idx ->
+    def testFile = file(destination + "/" + namePrefix + "_" + idx + ".java")
+
+    def allPaths = '"' + tests.join('",\n        "') + '"'
+
+    def testFileContents = referenceTestTemplate
+      .replaceAll("%%TESTS_FILE%%", allPaths)
+      .replaceAll("%%TESTS_NAME%%", namePrefix + "_" + idx)
+      .replaceAll("%%PACKAGE_NAME%%", packageString)
+    testFile.newWriter().withWriter { w -> w << testFileContents }
+  }
+}
+
+def generateTestFilesGroupedByDirectory(
+  File fixturesRoot,
+  File templateFile,
+  String pathstrip,
+  String groupBaseDir,
+  String destination,
+  String namePrefix,
+  String packageString,
+  String ... excludedPath) {
+  mkdir(destination)
+  def referenceTestTemplate = templateFile.text
+
+  // Collect paths and group by hardfork/EIP directory
+  def groups = [:] as TreeMap // sorted for deterministic output
+
+  // Paths are taken relative to fixturesRoot rather than found by searching the absolute path for
+  // pathstrip: the fixtures can be unpacked anywhere, and a directory above them may carry that
+  // name too.
+  def rootPath = fixturesRoot.toPath()
+  fileTree(new File(fixturesRoot, "${pathstrip}/${groupBaseDir}")).getFiles().forEach { testJsonFile ->
+    def parentPathFile = rootPath.relativize(testJsonFile.getParentFile().toPath()).toString()
+    def isExcluded = excludedPath.any { excluded -> parentPathFile.startsWith(excluded) }
+    if (!testJsonFile.getName().toString().startsWith(".") && !isExcluded) {
+      def relativePath = rootPath.relativize(testJsonFile.toPath()).toString()
+
+      // Extract the part after groupBaseDir to get hardfork/eip/file structure
+      def groupBaseDirIndex = relativePath.indexOf(groupBaseDir)
+      def afterGroupBase = relativePath.substring(groupBaseDirIndex + groupBaseDir.length() + 1)
+      def parts = afterGroupBase.split("[/\\\\]")
+
+      // Extract group key from directory structure (e.g. "prague_eip7702_set_code_tx")
+      def groupKey = extractGroupKey(parts)
+
+      if (!groups.containsKey(groupKey)) {
+        groups[groupKey] = []
+      }
+      groups[groupKey] << relativePath
+    }
+  }
+
+  // Generate test files for each group, batched in groups of 5
+  groups.each { groupKey, paths ->
+    paths.collate(5).eachWithIndex { tests, idx ->
+      def className = namePrefix + "_" + groupKey + "_" + idx
+      def testFile = file(destination + "/" + className + ".java")
+      def allPaths = '"' + tests.join('",\n        "') + '"'
+      def testFileContents = referenceTestTemplate
+        .replaceAll("%%TESTS_FILE%%", allPaths)
+        .replaceAll("%%TESTS_NAME%%", className)
+        .replaceAll("%%PACKAGE_NAME%%", packageString)
+      testFile.newWriter().withWriter { w -> w << testFileContents }
+    }
+  }
+}
+
+// Extract a group key from path segments for hardfork/EIP-based test grouping.
+// Supports both old layout (hardfork/eip/file.json) and new per-fork layout (for_fork/hardfork/eip/file.json).
+def extractGroupKey(String[] parts) {
+  def groupKey
+  // Strip leading for_{fork}/ directory if present (new per-fork fixture layout)
+  def effectiveParts = parts
+  if (parts.length >= 2 && parts[0].startsWith("for_")) {
+    effectiveParts = parts[1..parts.length - 1] as String[]
+  }
+  if (effectiveParts.length >= 3 && effectiveParts[0] == "static") {
+    // static dirs have deeper nesting: static/state_tests/stCreate2/file.json → static_stCreate2
+    groupKey = "static_" + effectiveParts[effectiveParts.length - 2]
+  } else if (effectiveParts.length >= 3) {
+    // Normal: hardfork/eip/file.json → hardfork_eip
+    groupKey = effectiveParts[0] + "_" + effectiveParts[1]
+  } else if (effectiveParts.length == 2) {
+    // File directly under hardfork dir: hardfork/file.json → hardfork
+    groupKey = effectiveParts[0]
+  } else {
+    groupKey = "unknown"
+  }
+  return groupKey.replaceAll("[^a-zA-Z0-9_]", "_")
+}

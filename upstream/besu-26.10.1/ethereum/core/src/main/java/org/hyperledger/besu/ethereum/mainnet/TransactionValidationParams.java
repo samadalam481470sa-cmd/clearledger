@@ -1,0 +1,205 @@
+/*
+ * Copyright ConsenSys AG.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+ * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations under the License.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+package org.hyperledger.besu.ethereum.mainnet;
+
+import org.immutables.value.Value;
+
+@Value.Immutable
+@Value.Style(allParameters = true)
+public interface TransactionValidationParams {
+
+  TransactionValidationParams processingBlockParams =
+      ImmutableTransactionValidationParams.of(
+          false, false, false, true, false, false, false, false, false);
+
+  TransactionValidationParams transactionPoolParams =
+      ImmutableTransactionValidationParams.of(
+          true, false, true, true, true, false, false, false, true);
+
+  TransactionValidationParams miningParams =
+      ImmutableTransactionValidationParams.of(
+          false, false, false, true, true, false, false, false, false);
+
+  TransactionValidationParams blockReplayParams =
+      ImmutableTransactionValidationParams.of(
+          false, false, false, false, false, false, false, false, false);
+
+  TransactionValidationParams transactionSimulatorParams =
+      ImmutableTransactionValidationParams.of(
+          false, false, false, false, false, true, true, false, false);
+
+  TransactionValidationParams transactionSimulatorParamsAllowFutureNonce =
+      ImmutableTransactionValidationParams.of(
+          true, false, false, false, false, true, true, false, false);
+
+  TransactionValidationParams transactionSimulatorAllowUnderpricedAndFutureNonceParams =
+      ImmutableTransactionValidationParams.of(
+          true, false, true, false, false, true, true, false, false);
+
+  TransactionValidationParams transactionSimulatorAllowExceedingBalanceParams =
+      ImmutableTransactionValidationParams.of(
+          false, true, false, false, false, true, true, false, false);
+
+  TransactionValidationParams transactionSimulatorAllowExceedingBalanceAndFutureNonceParams =
+      ImmutableTransactionValidationParams.of(
+          true, true, false, false, false, true, true, false, false);
+
+  // eth_simulateV1 non-strict: allows exceeding balance and future nonces, and preserves
+  // caller-provided gas pricing so that gas fees are actually charged during simulation.
+  TransactionValidationParams blockSimulatorNonStrictParams =
+      ImmutableTransactionValidationParams.of(
+          true, true, false, false, false, true, true, true, false);
+
+  // eth_simulateV1 strict: enforces economic rules (balance, nonce, base fee) against the
+  // caller's literal values, but does NOT enforce consensus-level transaction caps
+  // (EIP-7825, EIP-8037). Those caps govern mempool/block-building for real transactions
+  // and are not applicable to simulation.
+  TransactionValidationParams blockSimulatorStrictParams =
+      ImmutableTransactionValidationParams.of(
+          false, false, false, false, false, true, true, true, false);
+
+  // Block-building simulation strict: same economic rules as blockSimulatorStrictParams, but
+  // also enforces consensus-level transaction caps (EIP-7825, EIP-8037) because this path
+  // is used to simulate real block production where those caps must apply.
+  TransactionValidationParams blockSimulatorConsensusStrictParams =
+      ImmutableTransactionValidationParams.of(
+          false, false, false, false, false, true, false, true, false);
+
+  @Value.Default
+  default boolean isAllowFutureNonce() {
+    return false;
+  }
+
+  @Value.Default
+  default boolean isAllowExceedingBalance() {
+    return false;
+  }
+
+  /**
+   * When true, the sender is allowed to have an account balance insufficient to cover the
+   * transaction's gas fees: the upfront-gas-cost-vs-balance check is skipped, and the value
+   * transfer (if any) is validated against the full account balance instead of the balance net of
+   * gas costs. This does not allow the value transfer itself to exceed the sender's balance; that
+   * is still rejected, as {@code INSUFFICIENT_FUNDS_FOR_TRANSFER}, either at this validation step
+   * or, if gas costs end up consuming more of the balance than expected, when the transfer is
+   * attempted during simulation.
+   *
+   * @return false by default
+   */
+  @Value.Default
+  default boolean allowUnderpricedGas() {
+    return false;
+  }
+
+  @Value.Default
+  default boolean checkOnchainPermissions() {
+    return false;
+  }
+
+  @Value.Default
+  default boolean checkLocalPermissions() {
+    return true;
+  }
+
+  @Value.Default
+  default boolean isAllowContractAddressAsSender() {
+    return false;
+  }
+
+  @Value.Default
+  default boolean isAllowExceedingGasLimit() {
+    return false;
+  }
+
+  /**
+   * When true, caller-provided gas pricing is preserved during transaction simulation instead of
+   * being zeroed out. This is used by eth_simulateV1 so that gas fees are actually charged from the
+   * sender's balance, producing the correct stateRoot and block hash. eth_call leaves this false so
+   * that gas pricing is zeroed (callers don't need sufficient balance for gas).
+   */
+  @Value.Default
+  default boolean isPreserveCallerGasPricing() {
+    return false;
+  }
+
+  @Value.Default
+  default boolean allowIncompleteBlob() {
+    return false;
+  }
+
+  static TransactionValidationParams transactionSimulator() {
+    return transactionSimulatorParams;
+  }
+
+  static TransactionValidationParams transactionSimulatorAllowFutureNonce() {
+    return transactionSimulatorParamsAllowFutureNonce;
+  }
+
+  static TransactionValidationParams transactionSimulatorAllowUnderpricedAndFutureNonce() {
+    return transactionSimulatorAllowUnderpricedAndFutureNonceParams;
+  }
+
+  static TransactionValidationParams transactionSimulatorAllowExceedingBalance() {
+    return transactionSimulatorAllowExceedingBalanceParams;
+  }
+
+  static TransactionValidationParams transactionSimulatorAllowExceedingBalanceAndFutureNonce() {
+    return transactionSimulatorAllowExceedingBalanceAndFutureNonceParams;
+  }
+
+  /**
+   * Returns validation params for eth_simulateV1 strict mode. Enforces economic rules (balance,
+   * nonce, base fee) against the caller's literal values, but does not enforce consensus-level
+   * transaction caps (EIP-7825, EIP-8037), which govern mempool/block-building for real
+   * transactions and are not applicable to RPC simulation.
+   */
+  static TransactionValidationParams blockSimulatorStrict() {
+    return blockSimulatorStrictParams;
+  }
+
+  /**
+   * Returns validation params for block-building simulation strict mode. Same economic rules as
+   * {@link #blockSimulatorStrict()}, but also enforces consensus-level transaction caps (EIP-7825,
+   * EIP-8037) because this path simulates real block production where those caps must apply.
+   */
+  static TransactionValidationParams blockSimulatorConsensusStrict() {
+    return blockSimulatorConsensusStrictParams;
+  }
+
+  /**
+   * Returns validation params for eth_simulateV1 non-strict mode. Allows exceeding balance and
+   * future nonces, and preserves caller-provided gas pricing so that gas fees are charged during
+   * simulation.
+   */
+  static TransactionValidationParams blockSimulatorNonStrict() {
+    return blockSimulatorNonStrictParams;
+  }
+
+  static TransactionValidationParams processingBlock() {
+    return processingBlockParams;
+  }
+
+  static TransactionValidationParams transactionPool() {
+    return transactionPoolParams;
+  }
+
+  static TransactionValidationParams mining() {
+    return miningParams;
+  }
+
+  static TransactionValidationParams blockReplay() {
+    return blockReplayParams;
+  }
+}

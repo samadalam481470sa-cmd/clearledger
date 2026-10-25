@@ -1,0 +1,72 @@
+name: clearledger-dev
+x-validator: &validator
+  image: hyperledger/besu:26.10.1
+  restart: unless-stopped
+  user: "0:0"
+  command:
+    - --data-path=/data
+    - --genesis-file=/config/genesis.json
+    - --node-private-key-file=/config/key
+    - --static-nodes-file=/config/static-nodes.json
+    - --permissions-nodes-config-file-enabled=true
+    - --permissions-nodes-config-file=/config/permissions_config.toml
+    - --discovery-enabled=false
+    - --rpc-http-enabled=true
+    - --rpc-http-host=0.0.0.0
+    - --rpc-http-api=ETH,NET,WEB3,QBFT
+    - --host-allowlist=localhost,127.0.0.1,validator1,validator2,validator3,validator4
+    - --min-gas-price=0
+    - --logging=INFO
+services:
+  validator1:
+    <<: *validator
+    hostname: validator1
+    ports: ["127.0.0.1:8545:8545"]
+    volumes:
+      - ./generated/genesis.json:/config/genesis.json:ro
+      - ./generated/validator1:/config:ro
+      - validator1-data:/data
+    networks:
+      settlement:
+        ipv4_address: 172.28.77.11
+  validator2:
+    <<: *validator
+    hostname: validator2
+    volumes:
+      - ./generated/genesis.json:/config/genesis.json:ro
+      - ./generated/validator2:/config:ro
+      - validator2-data:/data
+    networks:
+      settlement:
+        ipv4_address: 172.28.77.12
+  validator3:
+    <<: *validator
+    hostname: validator3
+    volumes:
+      - ./generated/genesis.json:/config/genesis.json:ro
+      - ./generated/validator3:/config:ro
+      - validator3-data:/data
+    networks:
+      settlement:
+        ipv4_address: 172.28.77.13
+  validator4:
+    <<: *validator
+    hostname: validator4
+    volumes:
+      - ./generated/genesis.json:/config/genesis.json:ro
+      - ./generated/validator4:/config:ro
+      - validator4-data:/data
+    networks:
+      settlement:
+        ipv4_address: 172.28.77.14
+networks:
+  settlement:
+    internal: true
+    ipam:
+      config: [{subnet: 172.28.77.0/24}]
+volumes:
+  validator1-data:
+  validator2-data:
+  validator3-data:
+  validator4-data:
+

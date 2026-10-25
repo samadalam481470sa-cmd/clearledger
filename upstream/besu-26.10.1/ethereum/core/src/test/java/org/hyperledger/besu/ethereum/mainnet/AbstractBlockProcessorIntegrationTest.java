@@ -1,0 +1,1644 @@
+/*
+ * Copyright contributors to Hyperledger Besu.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+ * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations under the License.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+package org.hyperledger.besu.ethereum.mainnet;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.spy;
+
+import org.hyperledger.besu.config.GenesisConfig;
+import org.hyperledger.besu.crypto.KeyPair;
+import org.hyperledger.besu.crypto.SECPPrivateKey;
+import org.hyperledger.besu.crypto.SignatureAlgorithm;
+import org.hyperledger.besu.crypto.SignatureAlgorithmFactory;
+import org.hyperledger.besu.datatypes.Address;
+import org.hyperledger.besu.datatypes.Hash;
+import org.hyperledger.besu.datatypes.TransactionType;
+import org.hyperledger.besu.datatypes.Wei;
+import org.hyperledger.besu.ethereum.BlockProcessingResult;
+import org.hyperledger.besu.ethereum.ProtocolContext;
+import org.hyperledger.besu.ethereum.chain.DefaultBlockchain;
+import org.hyperledger.besu.ethereum.core.Block;
+import org.hyperledger.besu.ethereum.core.BlockBody;
+import org.hyperledger.besu.ethereum.core.BlockHeader;
+import org.hyperledger.besu.ethereum.core.BlockHeaderTestFixture;
+import org.hyperledger.besu.ethereum.core.ExecutionContextTestFixture;
+import org.hyperledger.besu.ethereum.core.Transaction;
+import org.hyperledger.besu.ethereum.mainnet.AbstractBlockProcessor.TransactionReceiptFactory;
+import org.hyperledger.besu.ethereum.mainnet.block.access.list.BlockAccessList;
+import org.hyperledger.besu.ethereum.mainnet.block.access.list.BlockAccessListAccountLookup;
+import org.hyperledger.besu.ethereum.mainnet.parallelization.MainnetParallelBlockProcessor;
+import org.hyperledger.besu.ethereum.mainnet.parallelization.OptimisticConcurrentTransactionProcessor;
+import org.hyperledger.besu.ethereum.mainnet.parallelization.ParallelBlockTransactionProcessor;
+import org.hyperledger.besu.ethereum.mainnet.staterootcommitter.BalStateRootCommitter;
+import org.hyperledger.besu.ethereum.processing.TransactionProcessingResult;
+import org.hyperledger.besu.ethereum.trie.pathbased.bonsai.account.BonsaiAccount;
+import org.hyperledger.besu.ethereum.trie.pathbased.bonsai.worldview.BonsaiWorldState;
+import org.hyperledger.besu.ethereum.worldstate.WorldStateArchive;
+import org.hyperledger.besu.ethereum.worldstate.WorldStateQueryParams;
+import org.hyperledger.besu.evm.blockhash.BlockHashLookup;
+import org.hyperledger.besu.metrics.noop.NoOpMetricsSystem;
+import org.hyperledger.besu.plugin.services.metrics.Counter;
+import org.hyperledger.besu.plugin.services.storage.DataStorageFormat;
+import org.hyperledger.besu.plugin.services.worldstate.MutableWorldState;
+import org.hyperledger.besu.plugin.services.worldstate.StateRootComputation;
+
+import java.math.BigInteger;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Stream;
+
+import org.apache.tuweni.bytes.Bytes;
+import org.apache.tuweni.bytes.Bytes32;
+import org.apache.tuweni.units.bigints.UInt256;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.web3j.abi.FunctionEncoder;
+import org.web3j.abi.datatypes.Function;
+import org.web3j.abi.datatypes.Type;
+import org.web3j.abi.datatypes.generated.Uint256;
+
+@SuppressWarnings("rawtypes")
+class AbstractBlockProcessorIntegrationTest {
+
+  private static final String ACCOUNT_GENESIS_1 = "0x627306090abab3a6e1400e9345bc60c78a8bef57";
+  private static final String ACCOUNT_GENESIS_2 = "0x7f2d653f56ea8de6ffa554c7a0cd4e03af79f3eb";
+
+  private static final String ACCOUNT_2 = "0x0000000000000000000000000000000000000002";
+  private static final String ACCOUNT_3 = "0x0000000000000000000000000000000000000003";
+  private static final String ACCOUNT_4 = "0x0000000000000000000000000000000000000004";
+  private static final String ACCOUNT_5 = "0x0000000000000000000000000000000000000005";
+  private static final String ACCOUNT_6 = "0x0000000000000000000000000000000000000006";
+  private static final String CONTRACT_ADDRESS = "0x00000000000000000000000000000000000fffff";
+
+  private static final Address WITHDRAWAL_CONTRACT =
+      Address.fromHexString("0x00a3ca265ebcb825b45f985a16cefb49958ce017");
+  private static final Address CONSOLIDATION_CONTRACT =
+      Address.fromHexString("0x00b42dbf2194e931e80326d950320f7d9dbeac02");
+  // EIP-8282 builder request predeploys: the Amsterdam requests processor invokes an empty-data
+  // system call on every block, so both appear in every block's access list.
+  private static final Address BUILDER_DEPOSIT_CONTRACT =
+      Address.fromHexString("0x0000bff46984e3725691fa540a8c7589300d8282");
+  private static final Address BUILDER_EXIT_CONTRACT =
+      Address.fromHexString("0x000064d678505ad48f8ccb093bc65613800e8282");
+  // EIP-2935 history contract. It is not deployed in this test genesis, but the pre-execution
+  // system call still reads the account, so EIP-7928 lists it in every block's access list.
+  private static final Address HISTORY_STORAGE_CONTRACT =
+      Address.fromHexString("0x0000f90827f1c53a10cb7a02335b175320002935");
+
+  private static final KeyPair ACCOUNT_GENESIS_1_KEYPAIR =
+      generateKeyPair("c87509a1c067bbde78beb793e6fa76530b6382a4c0241e5e4a9ec0a0f44dc0d3");
+
+  private static final KeyPair ACCOUNT_GENESIS_2_KEYPAIR =
+      generateKeyPair("fc5141e75bf622179f8eedada7fab3e2e6b3e3da8eb9df4f46d84df22df7430e");
+
+  private static final Wei COINBASE_REWARD = Wei.of(2_000_000_000_000_000L);
+
+  private ProtocolContext protocolContext;
+  private WorldStateArchive worldStateArchive;
+  private DefaultBlockchain blockchain;
+  private Address coinbase;
+
+  private static final String GENESIS_RESOURCE =
+      "/org/hyperledger/besu/ethereum/mainnet/genesis-bp-it.json";
+
+  // Deterministic requests hash produced by the Prague system-contract predeploys for the blocks
+  // built in this test (no test transaction enqueues execution requests).
+  private static final Hash BLOCK_REQUESTS_HASH =
+      Hash.fromHexString("0x5f7606bf4b9eb2a8414aaa53f4c84062ec8789d24c604453563dc26e4ae65837");
+
+  @BeforeEach
+  public void setUp() {
+    final ExecutionContextTestFixture contextTestFixture =
+        ExecutionContextTestFixture.builder(GenesisConfig.fromResource(GENESIS_RESOURCE))
+            .dataStorageFormat(DataStorageFormat.BONSAI)
+            .build();
+    final BlockHeader blockHeader = new BlockHeaderTestFixture().number(0L).buildHeader();
+    coinbase = blockHeader.getCoinbase();
+    worldStateArchive = contextTestFixture.getStateArchive();
+    protocolContext = contextTestFixture.getProtocolContext();
+    blockchain = (DefaultBlockchain) contextTestFixture.getBlockchain();
+  }
+
+  private static Stream<Arguments> blockProcessors(
+      final BlockRewardProcessor blockRewardProcessor) {
+    final ExecutionContextTestFixture contextTestFixture =
+        ExecutionContextTestFixture.builder(GenesisConfig.fromResource(GENESIS_RESOURCE))
+            .dataStorageFormat(DataStorageFormat.BONSAI)
+            .build();
+
+    final ProtocolSchedule protocolSchedule =
+        withBlockRewards(contextTestFixture.getProtocolSchedule(), blockRewardProcessor);
+    final var protocolSpec =
+        protocolSchedule.getByBlockHeader(new BlockHeaderTestFixture().number(0L).buildHeader());
+
+    final MainnetTransactionProcessor transactionProcessor = protocolSpec.getTransactionProcessor();
+    final var receiptFactory = protocolSpec.getTransactionReceiptFactory();
+
+    final BlockProcessor sequentialBlockProcessor =
+        new MainnetBlockProcessor(
+            transactionProcessor,
+            receiptFactory,
+            BlockHeader::getCoinbase,
+            protocolSchedule,
+            BalConfiguration.DEFAULT);
+
+    final BlockProcessor parallelBlockProcessor =
+        new MainnetParallelBlockProcessor(
+            transactionProcessor,
+            receiptFactory,
+            BlockHeader::getCoinbase,
+            protocolSchedule,
+            BalConfiguration.DEFAULT,
+            new NoOpMetricsSystem(),
+            Runnable::run,
+            Optional.empty());
+
+    return Stream.of(
+        Arguments.of("sequential", sequentialBlockProcessor),
+        Arguments.of("parallel", parallelBlockProcessor));
+  }
+
+  /**
+   * Returns {@code protocolSchedule} with every spec paying rewards through {@code
+   * blockRewardProcessor}. The test genesis is proof of stake, whose specs pay no rewards.
+   */
+  private static ProtocolSchedule withBlockRewards(
+      final ProtocolSchedule protocolSchedule, final BlockRewardProcessor blockRewardProcessor) {
+    final Map<ProtocolSpec, ProtocolSpec> specs = new ConcurrentHashMap<>();
+    final ProtocolSchedule schedule = spy(protocolSchedule);
+    doAnswer(
+            invocation ->
+                specs.computeIfAbsent(
+                    (ProtocolSpec) invocation.callRealMethod(),
+                    spec -> {
+                      final ProtocolSpec rewarding = spy(spec);
+                      doReturn(blockRewardProcessor).when(rewarding).getBlockRewardProcessor();
+                      return rewarding;
+                    }))
+        .when(schedule)
+        .getByBlockHeader(any());
+    return schedule;
+  }
+
+  private static Stream<Arguments> blockProcessorProvider() {
+    return blockProcessors(new MainnetBlockRewardProcessor(COINBASE_REWARD));
+  }
+
+  private static Stream<Arguments> blockProcessorProviderWithoutRewards() {
+    return blockProcessors(BlockRewardProcessor.NO_REWARDS);
+  }
+
+  @ParameterizedTest(name = "{index}: {0}")
+  @MethodSource("blockProcessorProvider")
+  void testBlockProcessingWithTransfers(
+      final String ignoredName, final BlockProcessor blockProcessor) {
+    processSimpleTransfers(blockProcessor);
+  }
+
+  @ParameterizedTest(name = "{index}: {0}")
+  @MethodSource("blockProcessorProvider")
+  void testProcessConflictedSimpleTransfersSameSender(
+      final String ignoredName, final BlockProcessor blockProcessor) {
+    processConflictedSimpleTransfersSameSender(blockProcessor);
+  }
+
+  @ParameterizedTest(name = "{index}: {0}")
+  @MethodSource("blockProcessorProvider")
+  void testProcessConflictedSimpleTransfersSameAddressReceiverAndSender(
+      final String ignoredName, final BlockProcessor blockProcessor) {
+    processConflictedSimpleTransfersSameAddressReceiverAndSender(blockProcessor);
+  }
+
+  @ParameterizedTest(name = "{index}: {0}")
+  @MethodSource("blockProcessorProvider")
+  void testProcessConflictedSimpleTransfersWithCoinbase(
+      final String ignoredName, final BlockProcessor blockProcessor) {
+    processConflictedSimpleTransfersWithCoinbase(blockProcessor);
+  }
+
+  @ParameterizedTest(name = "{index}: {0}")
+  @MethodSource("blockProcessorProvider")
+  void testProcessContractSlotUpdateThenReadTx(
+      final String ignoredName, final BlockProcessor blockProcessor) {
+    processContractSlotUpdateThenReadTx(blockProcessor);
+  }
+
+  @ParameterizedTest(name = "{index}: {0}")
+  @MethodSource("blockProcessorProvider")
+  void testProcessSlotReadThenUpdateTx(
+      final String ignoredName, final BlockProcessor blockProcessor) {
+    processSlotReadThenUpdateTx(blockProcessor);
+  }
+
+  @ParameterizedTest(name = "{index}: {0}")
+  @MethodSource("blockProcessorProviderWithoutRewards")
+  void blockAccessListStateRootMatchesAccumulatorForSimpleTransfers(
+      final String ignoredName, final BlockProcessor blockProcessor) {
+    Transaction transactionTransfer1 =
+        createTransferTransaction(
+            0, 1_000_000_000_000_000_000L, 300000L, 0L, 5L, ACCOUNT_2, ACCOUNT_GENESIS_1_KEYPAIR);
+    Transaction transactionTransfer2 =
+        createTransferTransaction(
+            0, 2_000_000_000_000_000_000L, 300000L, 0L, 5L, ACCOUNT_3, ACCOUNT_GENESIS_2_KEYPAIR);
+
+    MutableWorldState worldState = worldStateArchive.getWorldState();
+    Block blockWithTransactions =
+        createBlockWithTransactions(
+            "0x2a1d8095d148b89d28a5e7b03b205116eb228c30ae9d86b2d113e81e96e57b65",
+            Wei.of(5),
+            transactionTransfer1,
+            transactionTransfer2);
+
+    BlockProcessingResult blockProcessingResult =
+        blockProcessor.processBlock(
+            BlockExecutionContext.builder()
+                .protocolContext(protocolContext)
+                .worldState(worldState)
+                .block(blockWithTransactions)
+                .blockAccessList(Optional.empty())
+                .build());
+
+    assertTrue(blockProcessingResult.isSuccessful());
+    assertBalComputesHeaderRoot(blockWithTransactions, blockProcessingResult);
+  }
+
+  @ParameterizedTest(name = "{index}: {0}")
+  @MethodSource("blockProcessorProviderWithoutRewards")
+  void blockAccessListStateRootMatchesAccumulatorForStorageAndReads(
+      final String ignoredName, final BlockProcessor blockProcessor) {
+    Address contractAddress = Address.fromHexStringStrict(CONTRACT_ADDRESS);
+
+    Transaction setSlot1Transaction =
+        createContractUpdateSlotTransaction(
+            0, contractAddress, "setSlot1", ACCOUNT_GENESIS_1_KEYPAIR, Optional.of(100));
+    Transaction getSlot1Transaction =
+        createContractUpdateSlotTransaction(
+            0, contractAddress, "getSlot1", ACCOUNT_GENESIS_2_KEYPAIR, Optional.empty());
+    Transaction setSlot3Transaction =
+        createContractUpdateSlotTransaction(
+            1, contractAddress, "setSlot2", ACCOUNT_GENESIS_1_KEYPAIR, Optional.of(200));
+    Transaction setSlot4Transaction =
+        createContractUpdateSlotTransaction(
+            2, contractAddress, "setSlot3", ACCOUNT_GENESIS_1_KEYPAIR, Optional.of(300));
+
+    MutableWorldState worldState = worldStateArchive.getWorldState();
+    Block blockWithTransactions =
+        createBlockWithTransactions(
+            "0xbc68b632221f19f22fff7c5883755fe9610be5bbe8722cb6cdb6e8cbf9814a50",
+            Wei.of(5),
+            setSlot1Transaction,
+            getSlot1Transaction,
+            setSlot3Transaction,
+            setSlot4Transaction);
+
+    BlockProcessingResult blockProcessingResult =
+        blockProcessor.processBlock(
+            BlockExecutionContext.builder()
+                .protocolContext(protocolContext)
+                .worldState(worldState)
+                .block(blockWithTransactions)
+                .blockAccessList(Optional.empty())
+                .build());
+
+    assertTrue(blockProcessingResult.isSuccessful());
+    assertBalComputesHeaderRoot(blockWithTransactions, blockProcessingResult);
+  }
+
+  @ParameterizedTest(name = "{index}: {0}")
+  @MethodSource("blockProcessorProvider")
+  void testProcessAccountReadThenUpdateTx(
+      final String ignoredName, final BlockProcessor blockProcessor) {
+    processAccountReadThenUpdateTx(blockProcessor);
+  }
+
+  @ParameterizedTest(name = "{index}: {0}")
+  @MethodSource("blockProcessorProvider")
+  void testProcessAccountUpdateThenReadTx(
+      final String ignoredName, final BlockProcessor blockProcessor) {
+    processAccountUpdateThenReadTx(blockProcessor);
+  }
+
+  @ParameterizedTest(name = "{index}: {0}")
+  @MethodSource("blockProcessorProvider")
+  void testProcessAccountReadThenUpdateTxWithTwoAccounts(
+      final String ignoredName, final BlockProcessor blockProcessor) {
+    processAccountReadThenUpdateTxWithTwoAccounts(blockProcessor);
+  }
+
+  @ParameterizedTest(name = "{index}: {0}")
+  @MethodSource("blockProcessorProvider")
+  void testProcessAccountUpdateThenReadTeTxWithTwoAccounts(
+      final String ignoredName, final BlockProcessor blockProcessor) {
+    processAccountUpdateThenReadTxWithTwoAccounts(blockProcessor);
+  }
+
+  @Test
+  void parallelFailureIsRerunOnSequentialFallback() {
+    final ProtocolSchedule protocolSchedule = protocolSchedule();
+    final Block block = createBlockWithTwoTransfers();
+
+    final BlockProcessingResult result =
+        new FailingAtSecondTransaction(
+                protocolSchedule, Optional.of(sequentialBlockProcessor(protocolSchedule)))
+            .processBlock(
+                BlockExecutionContext.builder()
+                    .protocolContext(protocolContext)
+                    .worldState(worldStateArchive.getWorldState())
+                    .block(block)
+                    .blockAccessList(Optional.empty())
+                    .build());
+
+    // The parallel attempt applied the first transfer before failing. The rerun only succeeds if
+    // the world state was reset first; otherwise the first transfer fails on its nonce.
+    assertThat(result.isSuccessful()).isTrue();
+  }
+
+  @Test
+  void parallelFailureIsReturnedWithoutSequentialFallback() {
+    final Block block = createBlockWithTwoTransfers();
+
+    final BlockProcessingResult result =
+        new FailingAtSecondTransaction(protocolSchedule(), Optional.empty())
+            .processBlock(
+                BlockExecutionContext.builder()
+                    .protocolContext(protocolContext)
+                    .worldState(worldStateArchive.getWorldState())
+                    .block(block)
+                    .blockAccessList(Optional.empty())
+                    .build());
+
+    assertThat(result.isFailed()).isTrue();
+  }
+
+  private Block createBlockWithTwoTransfers() {
+    return createBlockWithTransactions(
+        "0x8d9a8161b2c255f8f514cd92e5364624a775e274739dc9379cf938efd7d45ebc",
+        Wei.ZERO,
+        createTransferTransaction(
+            0, 1_000_000_000_000_000_000L, 300000L, 0L, 0L, ACCOUNT_2, ACCOUNT_GENESIS_1_KEYPAIR),
+        createTransferTransaction(
+            0, 2_000_000_000_000_000_000L, 300000L, 0L, 0L, ACCOUNT_3, ACCOUNT_GENESIS_2_KEYPAIR));
+  }
+
+  private static ProtocolSchedule protocolSchedule() {
+    return ExecutionContextTestFixture.builder(GenesisConfig.fromResource(GENESIS_RESOURCE))
+        .dataStorageFormat(DataStorageFormat.BONSAI)
+        .build()
+        .getProtocolSchedule();
+  }
+
+  private static ProtocolSpec genesisSpec(final ProtocolSchedule protocolSchedule) {
+    return protocolSchedule.getByBlockHeader(new BlockHeaderTestFixture().number(0L).buildHeader());
+  }
+
+  private static BlockProcessor sequentialBlockProcessor(final ProtocolSchedule protocolSchedule) {
+    final ProtocolSpec spec = genesisSpec(protocolSchedule);
+    return new MainnetBlockProcessor(
+        spec.getTransactionProcessor(),
+        spec.getTransactionReceiptFactory(),
+        BlockHeader::getCoinbase,
+        protocolSchedule,
+        BalConfiguration.DEFAULT);
+  }
+
+  /**
+   * Fails the block only when processed in parallel: the first transaction is processed
+   * sequentially and changes the world state, then the second gets a result that uses more gas than
+   * the block allows. That failure path does not reset the world state, so only the fallback's
+   * reset makes the sequential rerun succeed.
+   */
+  private static final class FailingAtSecondTransaction extends MainnetParallelBlockProcessor {
+
+    FailingAtSecondTransaction(
+        final ProtocolSchedule protocolSchedule,
+        final Optional<BlockProcessor> sequentialBlockProcessor) {
+      this(genesisSpec(protocolSchedule), protocolSchedule, sequentialBlockProcessor);
+    }
+
+    private FailingAtSecondTransaction(
+        final ProtocolSpec spec,
+        final ProtocolSchedule protocolSchedule,
+        final Optional<BlockProcessor> sequentialBlockProcessor) {
+      super(
+          spec.getTransactionProcessor(),
+          spec.getTransactionReceiptFactory(),
+          BlockHeader::getCoinbase,
+          protocolSchedule,
+          BalConfiguration.DEFAULT,
+          new NoOpMetricsSystem(),
+          Runnable::run,
+          sequentialBlockProcessor);
+    }
+
+    @Override
+    protected Optional<ParallelBlockTransactionProcessor> startParallelExecution(
+        final ProtocolContext protocolContext,
+        final BlockHeader blockHeader,
+        final List<Transaction> transactions,
+        final Address miningBeneficiary,
+        final BlockHashLookup blockHashLookup,
+        final Wei blobGasPrice,
+        final Optional<BlockAccessList.BlockAccessListBuilder> blockAccessListBuilder,
+        final Optional<BlockAccessList> blockAccessList,
+        final Optional<BlockHeader> maybeParentHeader) {
+      return Optional.of(
+          new OverBudgetSecondTransaction(transactionProcessor, blockHeader.getGasLimit() + 1));
+    }
+  }
+
+  /**
+   * Has no result for the first transaction, so it is processed sequentially, and a result for the
+   * second that uses {@code gasUsed}.
+   */
+  private static final class OverBudgetSecondTransaction
+      extends OptimisticConcurrentTransactionProcessor {
+
+    private final long gasUsed;
+
+    OverBudgetSecondTransaction(
+        final MainnetTransactionProcessor transactionProcessor, final long gasUsed) {
+      super(transactionProcessor);
+      this.gasUsed = gasUsed;
+    }
+
+    @Override
+    public Optional<TransactionProcessingResult> getProcessingResult(
+        final MutableWorldState worldState,
+        final Address miningBeneficiary,
+        final Transaction transaction,
+        final int location,
+        final Optional<Counter> confirmedParallelizedTransactionCounter,
+        final Optional<Counter> conflictingButCachedTransactionCounter) {
+      if (location == 0) {
+        return Optional.empty();
+      }
+      // gasLimit - gasRemaining (pre-Amsterdam) and gasUsed (Amsterdam) both come to gasUsed.
+      return Optional.of(
+          TransactionProcessingResult.successful(
+              List.of(),
+              gasUsed,
+              transaction.getGasLimit() - gasUsed,
+              Bytes.EMPTY,
+              Optional.empty(),
+              ValidationResult.valid()));
+    }
+  }
+
+  @Test
+  void testProcessBlockZeroReward() {
+    ExecutionContextTestFixture contextTestFixture =
+        ExecutionContextTestFixture.builder(
+                GenesisConfig.fromResource(
+                    "/org/hyperledger/besu/ethereum/mainnet/genesis-bp-it.json"))
+            .dataStorageFormat(DataStorageFormat.BONSAI)
+            .build();
+
+    MutableWorldState worldStateSequential = worldStateArchive.getWorldState();
+    MutableWorldState worldStateParallel = contextTestFixture.getStateArchive().getWorldState();
+
+    Transaction[] transactions = {
+      createTransferTransaction(
+          0, 1_000_000_000_000_000_000L, 300000L, 0L, 0L, ACCOUNT_2, ACCOUNT_GENESIS_1_KEYPAIR),
+      createTransferTransaction(
+          0, 2_000_000_000_000_000_000L, 300000L, 0L, 0L, ACCOUNT_3, ACCOUNT_GENESIS_2_KEYPAIR)
+    };
+
+    Block block =
+        createBlockWithTransactions(
+            "0x8d9a8161b2c255f8f514cd92e5364624a775e274739dc9379cf938efd7d45ebc",
+            Wei.ZERO,
+            transactions);
+
+    ProtocolSchedule protocolSchedule = contextTestFixture.getProtocolSchedule();
+
+    MainnetTransactionProcessor transactionProcessor =
+        protocolSchedule.getByBlockHeader(block.getHeader()).getTransactionProcessor();
+    TransactionReceiptFactory receiptFactory =
+        protocolSchedule.getByBlockHeader(block.getHeader()).getTransactionReceiptFactory();
+
+    MainnetBlockProcessor blockProcessor =
+        new MainnetBlockProcessor(
+            transactionProcessor,
+            receiptFactory,
+            BlockHeader::getCoinbase,
+            protocolSchedule,
+            BalConfiguration.DEFAULT);
+
+    // No block-level fallback, so a parallel failure is not masked by a sequential rerun.
+    BlockProcessor parallelBlockProcessor =
+        new MainnetParallelBlockProcessor(
+            transactionProcessor,
+            receiptFactory,
+            BlockHeader::getCoinbase,
+            protocolSchedule,
+            BalConfiguration.DEFAULT,
+            new NoOpMetricsSystem(),
+            Runnable::run,
+            Optional.empty());
+
+    BlockProcessingResult parallelResult =
+        parallelBlockProcessor.processBlock(
+            BlockExecutionContext.builder()
+                .protocolContext(protocolContext)
+                .worldState(worldStateParallel)
+                .block(block)
+                .blockAccessList(Optional.empty())
+                .build());
+
+    BlockProcessingResult sequentialResult =
+        blockProcessor.processBlock(
+            BlockExecutionContext.builder()
+                .protocolContext(protocolContext)
+                .worldState(worldStateSequential)
+                .block(block)
+                .blockAccessList(Optional.empty())
+                .build());
+
+    assertTrue(sequentialResult.isSuccessful());
+    assertTrue(parallelResult.isSuccessful());
+
+    assertBalComputesHeaderRoot(block, sequentialResult);
+    assertBalComputesHeaderRoot(block, parallelResult);
+
+    assertThat(worldStateSequential.rootHash()).isEqualTo(worldStateParallel.rootHash());
+
+    assertBlockAccessListAddresses(
+        sequentialResult,
+        coinbase,
+        Address.fromHexStringStrict(ACCOUNT_2),
+        Address.fromHexStringStrict(ACCOUNT_3),
+        Address.fromHexStringStrict(ACCOUNT_GENESIS_1),
+        Address.fromHexStringStrict(ACCOUNT_GENESIS_2),
+        WITHDRAWAL_CONTRACT,
+        CONSOLIDATION_CONTRACT,
+        BUILDER_DEPOSIT_CONTRACT,
+        BUILDER_EXIT_CONTRACT,
+        HISTORY_STORAGE_CONTRACT);
+
+    assertBalanceMatchesWorldState(sequentialResult, Address.fromHexStringStrict(ACCOUNT_2));
+    assertBalanceMatchesWorldState(sequentialResult, Address.fromHexStringStrict(ACCOUNT_3));
+    assertBalanceMatchesWorldState(
+        sequentialResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_1));
+    assertBalanceMatchesWorldState(
+        sequentialResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_2));
+    // coinbase balance unchanged with zero reward
+
+    assertNonceChange(sequentialResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_1), 1L);
+    assertNonceChange(sequentialResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_2), 1L);
+
+    assertBlockAccessListAddresses(
+        parallelResult,
+        coinbase,
+        Address.fromHexStringStrict(ACCOUNT_2),
+        Address.fromHexStringStrict(ACCOUNT_3),
+        Address.fromHexStringStrict(ACCOUNT_GENESIS_1),
+        Address.fromHexStringStrict(ACCOUNT_GENESIS_2),
+        WITHDRAWAL_CONTRACT,
+        CONSOLIDATION_CONTRACT,
+        BUILDER_DEPOSIT_CONTRACT,
+        BUILDER_EXIT_CONTRACT,
+        HISTORY_STORAGE_CONTRACT);
+
+    assertBalanceMatchesWorldState(parallelResult, Address.fromHexStringStrict(ACCOUNT_2));
+    assertBalanceMatchesWorldState(parallelResult, Address.fromHexStringStrict(ACCOUNT_3));
+    assertBalanceMatchesWorldState(parallelResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_1));
+    assertBalanceMatchesWorldState(parallelResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_2));
+    // coinbase balance unchanged with zero reward
+
+    assertNonceChange(parallelResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_1), 1L);
+    assertNonceChange(parallelResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_2), 1L);
+  }
+
+  private void processSimpleTransfers(final BlockProcessor blockProcessor) {
+    // Create two non conflicted transactions
+    Transaction transactionTransfer1 = // ACCOUNT_GENESIS_1 -> ACCOUNT_2
+        createTransferTransaction(
+            0, 1_000_000_000_000_000_000L, 300000L, 5L, 7L, ACCOUNT_2, ACCOUNT_GENESIS_1_KEYPAIR);
+    Transaction transactionTransfer2 = // ACCOUNT_GENESIS_2 -> ACCOUNT_3
+        createTransferTransaction(
+            0, 2_000_000_000_000_000_000L, 300000L, 5L, 7L, ACCOUNT_3, ACCOUNT_GENESIS_2_KEYPAIR);
+
+    MutableWorldState worldState = worldStateArchive.getWorldState();
+    BonsaiAccount senderAccount1 = (BonsaiAccount) worldState.get(transactionTransfer1.getSender());
+    BonsaiAccount senderAccount2 = (BonsaiAccount) worldState.get(transactionTransfer2.getSender());
+
+    Block blockWithTransactions =
+        createBlockWithTransactions(
+            "0x38119f4725a9ed2fe968d067c7e1a391c9dc4074f2757c5cacb837a021f53cf9",
+            Wei.of(5),
+            transactionTransfer1,
+            transactionTransfer2);
+
+    BlockProcessingResult blockProcessingResult =
+        blockProcessor.processBlock(
+            BlockExecutionContext.builder()
+                .protocolContext(protocolContext)
+                .worldState(worldState)
+                .block(blockWithTransactions)
+                .blockAccessList(Optional.empty())
+                .build());
+
+    BonsaiAccount updatedSenderAccount1 =
+        (BonsaiAccount) worldState.get(transactionTransfer1.getSender());
+    BonsaiAccount updatedSenderAccount2 =
+        (BonsaiAccount) worldState.get(transactionTransfer2.getSender());
+
+    BonsaiAccount updatedAccount0x2 =
+        (BonsaiAccount) worldState.get(Address.fromHexStringStrict(ACCOUNT_2));
+    BonsaiAccount updatedAccount0x3 =
+        (BonsaiAccount) worldState.get(Address.fromHexStringStrict(ACCOUNT_3));
+
+    assertTrue(blockProcessingResult.isSuccessful());
+    assertThat(updatedAccount0x2.getBalance()).isEqualTo(Wei.of(1_000_000_000_000_000_000L));
+    assertThat(updatedAccount0x3.getBalance()).isEqualTo(Wei.of(2_000_000_000_000_000_000L));
+    assertThat(updatedSenderAccount1.getBalance()).isLessThan(senderAccount1.getBalance());
+    assertThat(updatedSenderAccount2.getBalance()).isLessThan(senderAccount2.getBalance());
+
+    assertBlockAccessListAddresses(
+        blockProcessingResult,
+        Address.fromHexStringStrict(ACCOUNT_2),
+        Address.fromHexStringStrict(ACCOUNT_3),
+        Address.fromHexStringStrict(ACCOUNT_GENESIS_1),
+        Address.fromHexStringStrict(ACCOUNT_GENESIS_2),
+        WITHDRAWAL_CONTRACT,
+        CONSOLIDATION_CONTRACT,
+        BUILDER_DEPOSIT_CONTRACT,
+        BUILDER_EXIT_CONTRACT,
+        HISTORY_STORAGE_CONTRACT,
+        coinbase);
+
+    assertBalanceMatchesWorldState(blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_2));
+    assertBalanceMatchesWorldState(blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_3));
+    assertBalanceMatchesWorldState(blockProcessingResult, transactionTransfer1.getSender());
+    assertBalanceMatchesWorldState(blockProcessingResult, transactionTransfer2.getSender());
+    assertBalanceMatchesWorldState(blockProcessingResult, coinbase);
+
+    assertNonceChange(blockProcessingResult, transactionTransfer1.getSender(), 1L);
+    assertNonceChange(blockProcessingResult, transactionTransfer2.getSender(), 1L);
+  }
+
+  private void processConflictedSimpleTransfersSameSender(final BlockProcessor blockProcessor) {
+    // Create three transactions with the same sender
+    Transaction transferTransaction1 = // ACCOUNT_GENESIS_1 -> ACCOUNT_4
+        createTransferTransaction(
+            0, 1_000_000_000_000_000_000L, 300000L, 5L, 7L, ACCOUNT_4, ACCOUNT_GENESIS_1_KEYPAIR);
+    Transaction transferTransaction2 = // ACCOUNT_GENESIS_1 -> ACCOUNT_5
+        createTransferTransaction(
+            1, 2_000_000_000_000_000_000L, 300000L, 5L, 7L, ACCOUNT_5, ACCOUNT_GENESIS_1_KEYPAIR);
+    Transaction transferTransaction3 = // ACCOUNT_GENESIS_1 -> ACCOUNT_6
+        createTransferTransaction(
+            2, 3_000_000_000_000_000_000L, 300000L, 5L, 7L, ACCOUNT_6, ACCOUNT_GENESIS_1_KEYPAIR);
+
+    MutableWorldState worldState = worldStateArchive.getWorldState();
+    BonsaiAccount senderAccount = (BonsaiAccount) worldState.get(transferTransaction1.getSender());
+
+    Block blockWithTransactions =
+        createBlockWithTransactions(
+            "0x9cb3ab2482e8c14c26caf12a9f7b804367aa00d7f61c9640882d9db26599de3f",
+            Wei.of(5),
+            transferTransaction1,
+            transferTransaction2,
+            transferTransaction3);
+
+    BlockProcessingResult blockProcessingResult =
+        blockProcessor.processBlock(
+            BlockExecutionContext.builder()
+                .protocolContext(protocolContext)
+                .worldState(worldState)
+                .block(blockWithTransactions)
+                .blockAccessList(Optional.empty())
+                .build());
+
+    BonsaiAccount updatedSenderAccount =
+        (BonsaiAccount) worldState.get(transferTransaction1.getSender());
+
+    BonsaiAccount updatedAccount0x4 =
+        (BonsaiAccount) worldState.get(Address.fromHexStringStrict(ACCOUNT_4));
+    BonsaiAccount updatedAccount0x5 =
+        (BonsaiAccount) worldState.get(Address.fromHexStringStrict(ACCOUNT_5));
+    BonsaiAccount updatedAccount0x6 =
+        (BonsaiAccount) worldState.get(Address.fromHexStringStrict(ACCOUNT_6));
+
+    assertTrue(blockProcessingResult.isSuccessful());
+    assertThat(updatedAccount0x4.getBalance()).isEqualTo(Wei.of(1_000_000_000_000_000_000L));
+    assertThat(updatedAccount0x5.getBalance()).isEqualTo(Wei.of(2_000_000_000_000_000_000L));
+    assertThat(updatedAccount0x6.getBalance()).isEqualTo(Wei.of(3_000_000_000_000_000_000L));
+
+    assertThat(updatedSenderAccount.getBalance()).isLessThan(senderAccount.getBalance());
+
+    assertBlockAccessListAddresses(
+        blockProcessingResult,
+        Address.fromHexStringStrict(ACCOUNT_4),
+        Address.fromHexStringStrict(ACCOUNT_5),
+        Address.fromHexStringStrict(ACCOUNT_6),
+        WITHDRAWAL_CONTRACT,
+        CONSOLIDATION_CONTRACT,
+        BUILDER_DEPOSIT_CONTRACT,
+        BUILDER_EXIT_CONTRACT,
+        HISTORY_STORAGE_CONTRACT,
+        Address.fromHexStringStrict(ACCOUNT_GENESIS_1),
+        coinbase);
+
+    assertBalanceMatchesWorldState(blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_4));
+    assertBalanceMatchesWorldState(blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_5));
+    assertBalanceMatchesWorldState(blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_6));
+    assertBalanceMatchesWorldState(blockProcessingResult, transferTransaction1.getSender());
+    assertBalanceMatchesWorldState(blockProcessingResult, coinbase);
+
+    assertNonceChange(blockProcessingResult, transferTransaction1.getSender(), 3L);
+  }
+
+  private void processConflictedSimpleTransfersSameAddressReceiverAndSender(
+      final BlockProcessor blockProcessor) {
+    // Create conflicted transfer transactions
+    Transaction transferTransaction1 =
+        createTransferTransaction(
+            0,
+            1_000_000_000_000_000_000L,
+            300000L,
+            5L,
+            7L,
+            ACCOUNT_GENESIS_2,
+            ACCOUNT_GENESIS_1_KEYPAIR); // ACCOUNT_GENESIS_1 -> ACCOUNT_GENESIS_2
+    Transaction transferTransaction2 =
+        createTransferTransaction(
+            0,
+            2_000_000_000_000_000_000L,
+            300000L,
+            5L,
+            7L,
+            ACCOUNT_2,
+            ACCOUNT_GENESIS_2_KEYPAIR); // ACCOUNT_GENESIS_2 -> ACCOUNT_2
+
+    MutableWorldState worldState = worldStateArchive.getWorldState();
+    BonsaiAccount transferTransaction1Sender =
+        (BonsaiAccount) worldState.get(transferTransaction1.getSender());
+
+    Block blockWithTransactions =
+        createBlockWithTransactions(
+            "0xc592c108785d1277b0575c3062ba9032c7d2b1ed1c714ceb5c22a4340d7c090c",
+            Wei.of(5),
+            transferTransaction1,
+            transferTransaction2);
+
+    BlockProcessingResult blockProcessingResult =
+        blockProcessor.processBlock(
+            BlockExecutionContext.builder()
+                .protocolContext(protocolContext)
+                .worldState(worldState)
+                .block(blockWithTransactions)
+                .blockAccessList(Optional.empty())
+                .build());
+
+    BonsaiAccount updatedSenderAccount1 =
+        (BonsaiAccount) worldState.get(transferTransaction1.getSender());
+    BonsaiAccount updatedGenesisAccount1 =
+        (BonsaiAccount) worldState.get(Address.fromHexStringStrict(ACCOUNT_GENESIS_1));
+    BonsaiAccount updatedGenesisAccount2 =
+        (BonsaiAccount) worldState.get(Address.fromHexStringStrict(ACCOUNT_GENESIS_2));
+    BonsaiAccount updatedAccount0x2 =
+        (BonsaiAccount) worldState.get(Address.fromHexStringStrict(ACCOUNT_2));
+
+    assertTrue(blockProcessingResult.isSuccessful());
+    assertThat(updatedGenesisAccount1.getBalance())
+        .isEqualTo(
+            Wei.of(
+                UInt256.fromHexString(
+                    ("0x00000000000000000000000000000000000000000000003627e8f7123739c1c8"))));
+    assertThat(updatedGenesisAccount2.getBalance())
+        .isEqualTo(
+            Wei.of(
+                UInt256.fromHexString(
+                    ("0x00000000000000000000000000000000000000000000003627e8f712372623d4"))));
+    assertThat(updatedAccount0x2.getBalance()).isEqualTo(Wei.of(2_000_000_000_000_000_000L));
+    assertThat(updatedSenderAccount1.getBalance())
+        .isLessThan(transferTransaction1Sender.getBalance());
+
+    assertBlockAccessListAddresses(
+        blockProcessingResult,
+        Address.fromHexStringStrict(ACCOUNT_2),
+        Address.fromHexStringStrict(ACCOUNT_GENESIS_1),
+        Address.fromHexStringStrict(ACCOUNT_GENESIS_2),
+        WITHDRAWAL_CONTRACT,
+        CONSOLIDATION_CONTRACT,
+        BUILDER_DEPOSIT_CONTRACT,
+        BUILDER_EXIT_CONTRACT,
+        HISTORY_STORAGE_CONTRACT,
+        coinbase);
+
+    assertBalanceMatchesWorldState(blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_2));
+    assertBalanceMatchesWorldState(
+        blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_1));
+    assertBalanceMatchesWorldState(
+        blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_2));
+    assertBalanceMatchesWorldState(blockProcessingResult, coinbase);
+
+    assertNonceChange(blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_1), 1L);
+    assertNonceChange(blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_2), 1L);
+  }
+
+  private void processConflictedSimpleTransfersWithCoinbase(final BlockProcessor blockProcessor) {
+    // Create conflicted transactions using coinbase
+    Transaction transferTransaction1 =
+        createTransferTransaction(
+            0,
+            1_000_000_000_000_000_000L,
+            300000L,
+            5L,
+            7L,
+            ACCOUNT_2,
+            ACCOUNT_GENESIS_1_KEYPAIR); // ACCOUNT_GENESIS_1 -> ACCOUNT_2
+    Transaction transferTransaction2 =
+        createTransferTransaction(
+            0,
+            2_000_000_000_000_000_000L,
+            300000L,
+            5L,
+            7L,
+            coinbase.getBytes().toHexString(),
+            ACCOUNT_GENESIS_2_KEYPAIR); // ACCOUNT_GENESIS_2 -> COINBASE
+
+    MutableWorldState worldState = worldStateArchive.getWorldState();
+    BonsaiAccount transferTransaction1Sender =
+        (BonsaiAccount) worldState.get(transferTransaction1.getSender());
+    Block blockWithTransactions =
+        createBlockWithTransactions(
+            "0x85be71c7eb00ae86d5fc859085a14d76d55579ec64e033d588e3d69fc29bacea",
+            Wei.of(5),
+            transferTransaction1,
+            transferTransaction2);
+
+    BlockProcessingResult blockProcessingResult =
+        blockProcessor.processBlock(
+            BlockExecutionContext.builder()
+                .protocolContext(protocolContext)
+                .worldState(worldState)
+                .block(blockWithTransactions)
+                .blockAccessList(Optional.empty())
+                .build());
+
+    BonsaiAccount updatedSenderAccount1 =
+        (BonsaiAccount) worldState.get(transferTransaction1.getSender());
+
+    BonsaiAccount updatedAccount0x2 =
+        (BonsaiAccount) worldState.get(Address.fromHexStringStrict(ACCOUNT_2));
+
+    BonsaiAccount updatedCoinbase = (BonsaiAccount) worldState.get(coinbase);
+
+    assertTrue(blockProcessingResult.isSuccessful());
+    assertThat(updatedAccount0x2.getBalance()).isEqualTo(Wei.of(1_000_000_000_000_000_000L));
+    assertThat(updatedCoinbase.getBalance())
+        .isEqualTo(
+            Wei.of(
+                UInt256.fromHexString(
+                    ("0x0000000000000000000000000000000000000000000000001bc88864985bfa68"))));
+
+    assertThat(updatedSenderAccount1.getBalance())
+        .isLessThan(transferTransaction1Sender.getBalance());
+
+    assertBlockAccessListAddresses(
+        blockProcessingResult,
+        Address.fromHexStringStrict(ACCOUNT_2),
+        Address.fromHexStringStrict(ACCOUNT_GENESIS_1),
+        Address.fromHexStringStrict(ACCOUNT_GENESIS_2),
+        WITHDRAWAL_CONTRACT,
+        CONSOLIDATION_CONTRACT,
+        BUILDER_DEPOSIT_CONTRACT,
+        BUILDER_EXIT_CONTRACT,
+        HISTORY_STORAGE_CONTRACT,
+        coinbase);
+
+    assertBalanceMatchesWorldState(blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_2));
+    assertBalanceMatchesWorldState(
+        blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_1));
+    assertBalanceMatchesWorldState(
+        blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_2));
+    assertBalanceMatchesWorldState(blockProcessingResult, coinbase);
+
+    assertNonceChange(blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_1), 1L);
+    assertNonceChange(blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_2), 1L);
+  }
+
+  void processContractSlotUpdateThenReadTx(final BlockProcessor blockProcessor) {
+    Address contractAddress = Address.fromHexStringStrict(CONTRACT_ADDRESS);
+
+    // create conflicted transactions on the same slot (update then read)
+    Transaction setSlot1Transaction =
+        createContractUpdateSlotTransaction(
+            0, contractAddress, "setSlot1", ACCOUNT_GENESIS_1_KEYPAIR, Optional.of(100));
+    Transaction getSlot1Transaction =
+        createContractUpdateSlotTransaction(
+            0, contractAddress, "getSlot1", ACCOUNT_GENESIS_2_KEYPAIR, Optional.empty());
+    Transaction setSlot3Transaction =
+        createContractUpdateSlotTransaction(
+            1, contractAddress, "setSlot2", ACCOUNT_GENESIS_1_KEYPAIR, Optional.of(200));
+    Transaction setSlot4Transaction =
+        createContractUpdateSlotTransaction(
+            2, contractAddress, "setSlot3", ACCOUNT_GENESIS_1_KEYPAIR, Optional.of(300));
+
+    Block blockWithTransactions =
+        createBlockWithTransactions(
+            "0x85af922b9234c2137cf2bd030036ac011f5753aa5aec4fa46ab96c284acff4bb",
+            Wei.of(5),
+            setSlot1Transaction,
+            getSlot1Transaction,
+            setSlot3Transaction,
+            setSlot4Transaction);
+
+    MutableWorldState worldState = worldStateArchive.getWorldState();
+    BlockProcessingResult blockProcessingResult =
+        blockProcessor.processBlock(
+            BlockExecutionContext.builder()
+                .protocolContext(protocolContext)
+                .worldState(worldState)
+                .block(blockWithTransactions)
+                .blockAccessList(Optional.empty())
+                .build());
+
+    assertTrue(blockProcessingResult.isSuccessful());
+
+    // Verify the state
+    assertContractStorage(worldState, contractAddress, 0, 100);
+    assertContractStorage(worldState, contractAddress, 1, 200);
+    assertContractStorage(worldState, contractAddress, 2, 300);
+
+    assertBlockAccessListAddresses(
+        blockProcessingResult,
+        Address.fromHexStringStrict(CONTRACT_ADDRESS),
+        Address.fromHexStringStrict(ACCOUNT_GENESIS_1),
+        Address.fromHexStringStrict(ACCOUNT_GENESIS_2),
+        WITHDRAWAL_CONTRACT,
+        CONSOLIDATION_CONTRACT,
+        BUILDER_DEPOSIT_CONTRACT,
+        BUILDER_EXIT_CONTRACT,
+        HISTORY_STORAGE_CONTRACT,
+        coinbase);
+
+    // contract balance is unchanged so no balance changes recorded
+    assertBalanceMatchesWorldState(
+        blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_1));
+    assertBalanceMatchesWorldState(
+        blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_2));
+    assertBalanceMatchesWorldState(blockProcessingResult, coinbase);
+
+    assertNonceChange(blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_1), 3L);
+    assertNonceChange(blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_2), 1L);
+
+    assertStorageWrite(blockProcessingResult, contractAddress, 0, 0, 100);
+    assertStorageWrite(blockProcessingResult, contractAddress, 1, 2, 200);
+    assertStorageWrite(blockProcessingResult, contractAddress, 2, 3, 300);
+  }
+
+  void processSlotReadThenUpdateTx(final BlockProcessor blockProcessor) {
+    Address contractAddress = Address.fromHexStringStrict(CONTRACT_ADDRESS);
+
+    Transaction getSlot1Transaction =
+        createContractUpdateSlotTransaction(
+            0, contractAddress, "getSlot1", ACCOUNT_GENESIS_1_KEYPAIR, Optional.empty());
+    Transaction setSlot1Transaction =
+        createContractUpdateSlotTransaction(
+            0, contractAddress, "setSlot1", ACCOUNT_GENESIS_2_KEYPAIR, Optional.of(1000));
+    Transaction setSlo2Transaction =
+        createContractUpdateSlotTransaction(
+            1, contractAddress, "setSlot2", ACCOUNT_GENESIS_1_KEYPAIR, Optional.of(2000));
+    Transaction setSlot3Transaction =
+        createContractUpdateSlotTransaction(
+            2, contractAddress, "setSlot3", ACCOUNT_GENESIS_1_KEYPAIR, Optional.of(3000));
+
+    Block blockWithTransactions =
+        createBlockWithTransactions(
+            "0xaf3d69d49cf2f4a00b81c634bb9b89371827870c6410e6beb48b901bda5bd2a5",
+            Wei.of(5),
+            getSlot1Transaction,
+            setSlot1Transaction,
+            setSlo2Transaction,
+            setSlot3Transaction);
+    MutableWorldState worldState = worldStateArchive.getWorldState();
+
+    BlockProcessingResult blockProcessingResult =
+        blockProcessor.processBlock(
+            BlockExecutionContext.builder()
+                .protocolContext(protocolContext)
+                .worldState(worldState)
+                .block(blockWithTransactions)
+                .blockAccessList(Optional.empty())
+                .build());
+
+    assertTrue(blockProcessingResult.isSuccessful());
+
+    // Verify the state
+    assertContractStorage(worldState, contractAddress, 0, 1000);
+    assertContractStorage(worldState, contractAddress, 1, 2000);
+    assertContractStorage(worldState, contractAddress, 2, 3000);
+
+    assertBlockAccessListAddresses(
+        blockProcessingResult,
+        Address.fromHexStringStrict(CONTRACT_ADDRESS),
+        Address.fromHexStringStrict(ACCOUNT_GENESIS_1),
+        Address.fromHexStringStrict(ACCOUNT_GENESIS_2),
+        WITHDRAWAL_CONTRACT,
+        CONSOLIDATION_CONTRACT,
+        BUILDER_DEPOSIT_CONTRACT,
+        BUILDER_EXIT_CONTRACT,
+        HISTORY_STORAGE_CONTRACT,
+        coinbase);
+
+    // contract balance is unchanged so no balance changes recorded
+    assertBalanceMatchesWorldState(
+        blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_1));
+    assertBalanceMatchesWorldState(
+        blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_2));
+    assertBalanceMatchesWorldState(blockProcessingResult, coinbase);
+
+    assertNonceChange(blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_1), 3L);
+    assertNonceChange(blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_2), 1L);
+
+    assertStorageWrite(blockProcessingResult, contractAddress, 0, 1, 1000);
+    assertStorageWrite(blockProcessingResult, contractAddress, 1, 2, 2000);
+    assertStorageWrite(blockProcessingResult, contractAddress, 2, 3, 3000);
+  }
+
+  void processAccountReadThenUpdateTx(final BlockProcessor blockProcessor) {
+    Address contractAddress = Address.fromHexStringStrict(CONTRACT_ADDRESS);
+    Transaction transactionTransfer = // ACCOUNT_GENESIS_1 -> CONTRACT_ADDRESS
+        createTransferTransaction(
+            0,
+            1_000_000_000_000_000_000L,
+            300000L,
+            5L,
+            7L,
+            CONTRACT_ADDRESS,
+            ACCOUNT_GENESIS_1_KEYPAIR);
+    Transaction getcontractBalanceTransaction =
+        createContractReadAccountTransaction(
+            1, contractAddress, "getBalance", ACCOUNT_GENESIS_1_KEYPAIR, ACCOUNT_2);
+
+    Transaction sendEthFromContractTransaction =
+        createContractUpdateAccountTransaction(
+            0,
+            contractAddress,
+            "transferTo",
+            ACCOUNT_GENESIS_2_KEYPAIR,
+            ACCOUNT_2,
+            500_000_000_000_000_000L);
+
+    Block blockWithTransactions =
+        createBlockWithTransactions(
+            "0xece29b75b27056f5794e428c553fcaf2e4e281ff4a7b2c4627b82def314188d4",
+            Wei.of(5),
+            transactionTransfer,
+            getcontractBalanceTransaction,
+            sendEthFromContractTransaction);
+    MutableWorldState worldState = worldStateArchive.getWorldState();
+
+    BlockProcessingResult blockProcessingResult =
+        blockProcessor.processBlock(
+            BlockExecutionContext.builder()
+                .protocolContext(protocolContext)
+                .worldState(worldState)
+                .block(blockWithTransactions)
+                .blockAccessList(Optional.empty())
+                .build());
+
+    assertTrue(blockProcessingResult.isSuccessful());
+
+    // Verify the state
+    BonsaiAccount contractAccount = (BonsaiAccount) worldState.get(contractAddress);
+    BonsaiAccount updatedAccount0x2 =
+        (BonsaiAccount) worldState.get(Address.fromHexStringStrict(ACCOUNT_2));
+    assertThat(contractAccount.getBalance()).isEqualTo(Wei.of(500_000_000_000_000_000L));
+    assertThat(updatedAccount0x2.getBalance()).isEqualTo(Wei.of(500_000_000_000_000_000L));
+
+    assertBlockAccessListAddresses(
+        blockProcessingResult,
+        Address.fromHexStringStrict(CONTRACT_ADDRESS),
+        Address.fromHexStringStrict(ACCOUNT_2),
+        Address.fromHexStringStrict(ACCOUNT_GENESIS_1),
+        Address.fromHexStringStrict(ACCOUNT_GENESIS_2),
+        WITHDRAWAL_CONTRACT,
+        CONSOLIDATION_CONTRACT,
+        BUILDER_DEPOSIT_CONTRACT,
+        BUILDER_EXIT_CONTRACT,
+        HISTORY_STORAGE_CONTRACT,
+        coinbase);
+
+    assertBalanceMatchesWorldState(blockProcessingResult, contractAddress);
+    assertBalanceMatchesWorldState(blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_2));
+    assertBalanceMatchesWorldState(
+        blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_1));
+    assertBalanceMatchesWorldState(
+        blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_2));
+    assertBalanceMatchesWorldState(blockProcessingResult, coinbase);
+
+    assertNonceChange(blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_1), 2L);
+    assertNonceChange(blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_2), 1L);
+  }
+
+  void processAccountUpdateThenReadTx(final BlockProcessor blockProcessor) {
+    Address contractAddress = Address.fromHexStringStrict(CONTRACT_ADDRESS);
+    Transaction transactionTransfer =
+        createTransferTransaction(
+            0,
+            1_000_000_000_000_000_000L,
+            300000L,
+            5L,
+            7L,
+            CONTRACT_ADDRESS,
+            ACCOUNT_GENESIS_1_KEYPAIR);
+
+    Transaction sendEthFromContractTransaction =
+        createContractUpdateAccountTransaction(
+            1,
+            contractAddress,
+            "transferTo",
+            ACCOUNT_GENESIS_1_KEYPAIR,
+            ACCOUNT_2,
+            500_000_000_000_000_000L);
+
+    Transaction getcontractBalanceTransaction =
+        createContractReadAccountTransaction(
+            0, contractAddress, "getBalance", ACCOUNT_GENESIS_2_KEYPAIR, ACCOUNT_2);
+
+    Block blockWithTransactions =
+        createBlockWithTransactions(
+            "0xfd9cc32aad4462bf112f8c6b35f24fe5fe3ef190dff017ffec1f1938c19bda0c",
+            Wei.of(5),
+            transactionTransfer,
+            sendEthFromContractTransaction,
+            getcontractBalanceTransaction);
+    MutableWorldState worldState = worldStateArchive.getWorldState();
+
+    BlockProcessingResult blockProcessingResult =
+        blockProcessor.processBlock(
+            BlockExecutionContext.builder()
+                .protocolContext(protocolContext)
+                .worldState(worldState)
+                .block(blockWithTransactions)
+                .blockAccessList(Optional.empty())
+                .build());
+    assertTrue(blockProcessingResult.isSuccessful());
+
+    // Verify the state
+    BonsaiAccount contractAccount = (BonsaiAccount) worldState.get(contractAddress);
+    BonsaiAccount updatedAccount0x2 =
+        (BonsaiAccount) worldState.get(Address.fromHexStringStrict(ACCOUNT_2));
+
+    assertThat(contractAccount.getBalance()).isEqualTo(Wei.of(500_000_000_000_000_000L));
+    assertThat(updatedAccount0x2.getBalance()).isEqualTo(Wei.of(500_000_000_000_000_000L));
+
+    assertBlockAccessListAddresses(
+        blockProcessingResult,
+        Address.fromHexStringStrict(CONTRACT_ADDRESS),
+        Address.fromHexStringStrict(ACCOUNT_2),
+        Address.fromHexStringStrict(ACCOUNT_GENESIS_1),
+        Address.fromHexStringStrict(ACCOUNT_GENESIS_2),
+        WITHDRAWAL_CONTRACT,
+        CONSOLIDATION_CONTRACT,
+        BUILDER_DEPOSIT_CONTRACT,
+        BUILDER_EXIT_CONTRACT,
+        HISTORY_STORAGE_CONTRACT,
+        coinbase);
+
+    assertBalanceMatchesWorldState(blockProcessingResult, contractAddress);
+    assertBalanceMatchesWorldState(blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_2));
+    assertBalanceMatchesWorldState(
+        blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_1));
+    assertBalanceMatchesWorldState(
+        blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_2));
+    assertBalanceMatchesWorldState(blockProcessingResult, coinbase);
+
+    assertNonceChange(blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_1), 2L);
+    assertNonceChange(blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_2), 1L);
+  }
+
+  void processAccountReadThenUpdateTxWithTwoAccounts(final BlockProcessor blockProcessor) {
+    Address contractAddress = Address.fromHexStringStrict(CONTRACT_ADDRESS);
+    Transaction transactionTransfer = // ACCOUNT_GENESIS_1 -> CONTRACT_ADDRESS
+        createTransferTransaction(
+            0,
+            1_000_000_000_000_000_000L,
+            300000L,
+            5L,
+            7L,
+            CONTRACT_ADDRESS,
+            ACCOUNT_GENESIS_1_KEYPAIR);
+    Transaction getcontractBalanceTransaction =
+        createContractReadAccountTransaction(
+            1, contractAddress, "getBalance", ACCOUNT_GENESIS_1_KEYPAIR, ACCOUNT_2);
+
+    Transaction sendEthFromContractTransaction =
+        createContractUpdateAccountTransaction(
+            0,
+            contractAddress,
+            "transferTo",
+            ACCOUNT_GENESIS_2_KEYPAIR,
+            ACCOUNT_3,
+            500_000_000_000_000_000L);
+
+    Block blockWithTransactions =
+        createBlockWithTransactions(
+            "0xe7baefd8e65f1205bc45089d0b67d8caf169323ba0a859f319c871e043884a68",
+            Wei.of(5),
+            transactionTransfer,
+            getcontractBalanceTransaction,
+            sendEthFromContractTransaction);
+    MutableWorldState worldState = worldStateArchive.getWorldState();
+
+    BlockProcessingResult blockProcessingResult =
+        blockProcessor.processBlock(
+            BlockExecutionContext.builder()
+                .protocolContext(protocolContext)
+                .worldState(worldState)
+                .block(blockWithTransactions)
+                .blockAccessList(Optional.empty())
+                .build());
+
+    assertTrue(blockProcessingResult.isSuccessful());
+
+    // Verify the state
+    BonsaiAccount contractAccount = (BonsaiAccount) worldState.get(contractAddress);
+    BonsaiAccount updatedAccount0x3 =
+        (BonsaiAccount) worldState.get(Address.fromHexStringStrict(ACCOUNT_3));
+    assertThat(contractAccount.getBalance()).isEqualTo(Wei.of(500_000_000_000_000_000L));
+    assertThat(updatedAccount0x3.getBalance()).isEqualTo(Wei.of(500_000_000_000_000_000L));
+
+    assertBlockAccessListAddresses(
+        blockProcessingResult,
+        Address.fromHexStringStrict(ACCOUNT_2),
+        Address.fromHexStringStrict(ACCOUNT_3),
+        Address.fromHexStringStrict(CONTRACT_ADDRESS),
+        Address.fromHexStringStrict(ACCOUNT_GENESIS_1),
+        Address.fromHexStringStrict(ACCOUNT_GENESIS_2),
+        WITHDRAWAL_CONTRACT,
+        CONSOLIDATION_CONTRACT,
+        BUILDER_DEPOSIT_CONTRACT,
+        BUILDER_EXIT_CONTRACT,
+        HISTORY_STORAGE_CONTRACT,
+        coinbase);
+
+    assertBalanceMatchesWorldState(blockProcessingResult, contractAddress);
+    assertBalanceMatchesWorldState(blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_3));
+    assertBalanceMatchesWorldState(
+        blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_1));
+    assertBalanceMatchesWorldState(
+        blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_2));
+    assertBalanceMatchesWorldState(blockProcessingResult, coinbase);
+
+    assertNonceChange(blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_1), 2L);
+    assertNonceChange(blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_2), 1L);
+  }
+
+  void processAccountUpdateThenReadTxWithTwoAccounts(final BlockProcessor blockProcessor) {
+    Address contractAddress = Address.fromHexStringStrict(CONTRACT_ADDRESS);
+    Transaction transactionTransfer = // ACCOUNT_GENESIS_1 -> CONTRACT_ADDRESS
+        createTransferTransaction(
+            0,
+            1_000_000_000_000_000_000L,
+            300000L,
+            5L,
+            7L,
+            CONTRACT_ADDRESS,
+            ACCOUNT_GENESIS_1_KEYPAIR);
+
+    Transaction sendEthFromContractTransaction =
+        createContractUpdateAccountTransaction(
+            0,
+            contractAddress,
+            "transferTo",
+            ACCOUNT_GENESIS_2_KEYPAIR,
+            ACCOUNT_3,
+            500_000_000_000_000_000L);
+
+    Transaction getcontractBalanceTransaction =
+        createContractReadAccountTransaction(
+            1, contractAddress, "getBalance", ACCOUNT_GENESIS_1_KEYPAIR, ACCOUNT_2);
+
+    Block blockWithTransactions =
+        createBlockWithTransactions(
+            "0xe7baefd8e65f1205bc45089d0b67d8caf169323ba0a859f319c871e043884a68",
+            Wei.of(5),
+            transactionTransfer,
+            sendEthFromContractTransaction,
+            getcontractBalanceTransaction);
+    MutableWorldState worldState = worldStateArchive.getWorldState();
+
+    BlockProcessingResult blockProcessingResult =
+        blockProcessor.processBlock(
+            BlockExecutionContext.builder()
+                .protocolContext(protocolContext)
+                .worldState(worldState)
+                .block(blockWithTransactions)
+                .blockAccessList(Optional.empty())
+                .build());
+
+    assertTrue(blockProcessingResult.isSuccessful());
+
+    // Verify the state
+    BonsaiAccount contractAccount = (BonsaiAccount) worldState.get(contractAddress);
+    BonsaiAccount updatedAccount0x3 =
+        (BonsaiAccount) worldState.get(Address.fromHexStringStrict(ACCOUNT_3));
+    assertThat(contractAccount.getBalance()).isEqualTo(Wei.of(500_000_000_000_000_000L));
+    assertThat(updatedAccount0x3.getBalance()).isEqualTo(Wei.of(500_000_000_000_000_000L));
+
+    assertBlockAccessListAddresses(
+        blockProcessingResult,
+        Address.fromHexStringStrict(ACCOUNT_2),
+        Address.fromHexStringStrict(ACCOUNT_3),
+        Address.fromHexStringStrict(CONTRACT_ADDRESS),
+        Address.fromHexStringStrict(ACCOUNT_GENESIS_1),
+        Address.fromHexStringStrict(ACCOUNT_GENESIS_2),
+        WITHDRAWAL_CONTRACT,
+        CONSOLIDATION_CONTRACT,
+        BUILDER_DEPOSIT_CONTRACT,
+        BUILDER_EXIT_CONTRACT,
+        HISTORY_STORAGE_CONTRACT,
+        coinbase);
+
+    assertBalanceMatchesWorldState(blockProcessingResult, contractAddress);
+    assertBalanceMatchesWorldState(blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_3));
+    assertBalanceMatchesWorldState(
+        blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_1));
+    assertBalanceMatchesWorldState(
+        blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_2));
+    assertBalanceMatchesWorldState(blockProcessingResult, coinbase);
+
+    assertNonceChange(blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_1), 2L);
+    assertNonceChange(blockProcessingResult, Address.fromHexStringStrict(ACCOUNT_GENESIS_2), 1L);
+  }
+
+  private static KeyPair generateKeyPair(final String privateKeyHex) {
+    final KeyPair keyPair =
+        SignatureAlgorithmFactory.getInstance()
+            .createKeyPair(
+                SECPPrivateKey.create(
+                    Bytes32.fromHexString(privateKeyHex), SignatureAlgorithm.ALGORITHM));
+    return keyPair;
+  }
+
+  private Transaction createContractUpdateSlotTransaction(
+      final int nonce,
+      final Address contractAddress,
+      final String methodSignature,
+      final KeyPair keyPair,
+      final Optional<Integer> value) {
+    Bytes payload = encodeFunctionCall(methodSignature, value);
+    return Transaction.builder()
+        .type(TransactionType.EIP1559)
+        .nonce(nonce)
+        .maxPriorityFeePerGas(Wei.of(5))
+        .maxFeePerGas(Wei.of(7))
+        .gasLimit(3000000L)
+        .to(contractAddress)
+        .value(Wei.ZERO)
+        .payload(payload)
+        .chainId(BigInteger.valueOf(42))
+        .signAndBuild(keyPair);
+  }
+
+  private Transaction createContractReadAccountTransaction(
+      final int nonce,
+      final Address contractAddress,
+      final String methodSignature,
+      final KeyPair keyPair,
+      final String address) {
+    Bytes payload = encodeFunctionCall(methodSignature, address);
+    return Transaction.builder()
+        .type(TransactionType.EIP1559)
+        .nonce(nonce)
+        .maxPriorityFeePerGas(Wei.of(5))
+        .maxFeePerGas(Wei.of(7))
+        .gasLimit(3000000L)
+        .to(contractAddress)
+        .value(Wei.ZERO)
+        .payload(payload)
+        .chainId(BigInteger.valueOf(42))
+        .signAndBuild(keyPair);
+  }
+
+  private Transaction createContractUpdateAccountTransaction(
+      final int nonce,
+      final Address contractAddress,
+      final String methodSignature,
+      final KeyPair keyPair,
+      final String address,
+      final long value) {
+    Bytes payload = encodeFunctionCall(methodSignature, address, value);
+    return Transaction.builder()
+        .type(TransactionType.EIP1559)
+        .nonce(nonce)
+        .maxPriorityFeePerGas(Wei.of(5))
+        .maxFeePerGas(Wei.of(7))
+        .gasLimit(3000000L)
+        .to(contractAddress)
+        .value(Wei.ZERO)
+        .payload(payload)
+        .chainId(BigInteger.valueOf(42))
+        .signAndBuild(keyPair);
+  }
+
+  private Bytes encodeFunctionCall(final String methodSignature, final Optional<Integer> value) {
+    List<Type> inputParameters =
+        value.isPresent() ? Arrays.<Type>asList(new Uint256(value.get())) : List.of();
+    Function function = new Function(methodSignature, inputParameters, List.of());
+    return Bytes.fromHexString(FunctionEncoder.encode(function));
+  }
+
+  private Bytes encodeFunctionCall(final String methodSignature, final String address) {
+    List<Type> inputParameters = Arrays.<Type>asList(new org.web3j.abi.datatypes.Address(address));
+    Function function = new Function(methodSignature, inputParameters, List.of());
+    return Bytes.fromHexString(FunctionEncoder.encode(function));
+  }
+
+  private Bytes encodeFunctionCall(
+      final String methodSignature, final String address, final long value) {
+    List<Type> inputParameters =
+        Arrays.<Type>asList(new org.web3j.abi.datatypes.Address(address), new Uint256(value));
+    Function function = new Function(methodSignature, inputParameters, List.of());
+    return Bytes.fromHexString(FunctionEncoder.encode(function));
+  }
+
+  private Block createBlockWithTransactions(
+      final String stateRoot, final Wei baseFeePerGas, final Transaction... transactions) {
+    final BlockHeader parentHeader = blockchain.getChainHeadHeader();
+    BlockHeader blockHeader =
+        new BlockHeaderTestFixture()
+            .number(parentHeader.getNumber() + 1L)
+            .parentHash(parentHeader.getHash())
+            .stateRoot(Hash.fromHexString(stateRoot))
+            .gasLimit(30_000_000L)
+            .baseFeePerGas(baseFeePerGas)
+            // Prague is active at genesis here, so the mandatory requestsHash field must be
+            // present. The system-contract predeploys deterministically yield this requests hash
+            // for these blocks (none of the test transactions enqueue new requests).
+            .requestsHash(BLOCK_REQUESTS_HASH)
+            .buildHeader();
+    BlockBody blockBody =
+        new BlockBody(Arrays.asList(transactions), Collections.emptyList(), Optional.empty());
+    return new Block(blockHeader, blockBody);
+  }
+
+  private void assertBlockAccessListAddresses(
+      final BlockProcessingResult result, final Address... expectedAddresses) {
+    final List<Address> expected =
+        Arrays.stream(expectedAddresses)
+            .sorted(Comparator.comparing(addr -> addr.getBytes().toHexString()))
+            .toList();
+
+    final BlockAccessList blockAccessList =
+        result.getYield().orElseThrow().getBlockAccessList().orElseThrow();
+
+    final List<Address> actual =
+        blockAccessList.accountChanges().stream()
+            .map(BlockAccessList.AccountChanges::address)
+            .toList();
+
+    assertThat(actual).containsExactlyElementsOf(expected);
+  }
+
+  private void assertContractStorage(
+      final MutableWorldState worldState,
+      final Address contractAddress,
+      final int slot,
+      final int expectedValue) {
+    BonsaiAccount contractAccount = (BonsaiAccount) worldState.get(contractAddress);
+    UInt256 actualValue = contractAccount.getStorageValue(UInt256.valueOf(slot));
+    assertThat(actualValue).isEqualTo(UInt256.valueOf(expectedValue));
+  }
+
+  private Transaction createTransferTransaction(
+      final long nonce,
+      final long value,
+      final long gasLimit,
+      final long maxPriorityFeePerGas,
+      final long maxFeePerGas,
+      final String hexAddress,
+      final KeyPair keyPair) {
+    return Transaction.builder()
+        .type(TransactionType.EIP1559)
+        .nonce(nonce)
+        .maxPriorityFeePerGas(Wei.of(maxPriorityFeePerGas))
+        .maxFeePerGas(Wei.of(maxFeePerGas))
+        .gasLimit(gasLimit)
+        .to(Address.fromHexStringStrict(hexAddress))
+        .value(Wei.of(value))
+        .payload(Bytes.EMPTY)
+        .chainId(BigInteger.valueOf(42))
+        .signAndBuild(keyPair);
+  }
+
+  private BlockAccessList.AccountChanges getAccountChanges(
+      final BlockProcessingResult result, final Address address) {
+    final BlockAccessList blockAccessList =
+        result.getYield().orElseThrow().getBlockAccessList().orElseThrow();
+
+    return blockAccessList.accountChanges().stream()
+        .filter(ac -> ac.address().equals(address))
+        .findFirst()
+        .orElseThrow();
+  }
+
+  private void assertBalanceMatchesWorldState(
+      final BlockProcessingResult result, final Address address) {
+    final BlockAccessList.AccountChanges accountChanges = getAccountChanges(result, address);
+    assertThat(accountChanges.balanceChanges()).isNotEmpty();
+
+    final BlockAccessList.BalanceChange lastChange = accountChanges.balanceChanges().getLast();
+    final Wei balanceFromAccessList = Wei.fromHexString(lastChange.postBalance().toHexString());
+
+    final MutableWorldState worldState = worldStateArchive.getWorldState();
+    final Wei actualBalance = ((BonsaiAccount) worldState.get(address)).getBalance();
+
+    if (address.equals(coinbase)) {
+      final Wei delta = actualBalance.subtract(balanceFromAccessList);
+      // TODO: Should REALLY BALs contain coinbase reward?
+      assertThat(delta.isZero() || delta.equals(COINBASE_REWARD)).isTrue();
+    } else {
+      assertThat(actualBalance).isEqualTo(balanceFromAccessList);
+    }
+  }
+
+  private void assertNonceChange(
+      final BlockProcessingResult result, final Address address, final long nonce) {
+    final BlockAccessList.AccountChanges accountChanges = getAccountChanges(result, address);
+    assertThat(accountChanges.nonceChanges()).isNotEmpty();
+    assertThat(accountChanges.nonceChanges().getLast().newNonce()).isEqualTo(nonce);
+  }
+
+  private void assertStorageWrite(
+      final BlockProcessingResult result,
+      final Address address,
+      final int slot,
+      final int txIndex,
+      final int newValue) {
+    final BlockAccessList.AccountChanges accountChanges = getAccountChanges(result, address);
+    final UInt256 slotKey = UInt256.valueOf(slot);
+
+    final BlockAccessList.SlotChanges slotChanges =
+        accountChanges.storageChanges().stream()
+            .filter(sc -> sc.slot().getSlotKey().orElseThrow().equals(slotKey))
+            .findFirst()
+            .orElseThrow();
+
+    assertThat(slotChanges.changes()).isNotEmpty();
+    final BlockAccessList.StorageChange last = slotChanges.changes().getLast();
+    assertThat(last.txIndex()).isEqualTo(txIndex + 1);
+    assertThat(last.newValue()).isEqualTo(UInt256.valueOf(newValue));
+  }
+
+  private void assertBalComputesHeaderRoot(final Block block, final BlockProcessingResult result) {
+    final Hash expectedRoot = block.getHeader().getStateRoot();
+
+    final BlockAccessList blockAccessList =
+        result.getYield().orElseThrow().getBlockAccessList().orElseThrow();
+
+    final BalStateRootCommitter committer =
+        new BalStateRootCommitter(
+                protocolContext,
+                block.getHeader(),
+                BlockAccessListAccountLookup.of(blockAccessList),
+                false)
+            .start();
+
+    final BlockHeader parentHeader =
+        protocolContext
+            .getBlockchain()
+            .getBlockHeader(block.getHeader().getParentHash())
+            .orElseThrow();
+
+    try (BonsaiWorldState worldState =
+        (BonsaiWorldState)
+            protocolContext
+                .getWorldStateArchive()
+                .getWorldState(
+                    WorldStateQueryParams.withBlockHeaderAndNoUpdateNodeHead(parentHeader))
+                .orElseThrow()) {
+      final StateRootComputation computation =
+          committer.compute(worldState, block.getHeader(), worldState.updater());
+      assertThat(computation.root()).isEqualTo(expectedRoot);
+    }
+  }
+}

@@ -1,0 +1,1633 @@
+/*
+ * Copyright contributors to Hyperledger Besu.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+ * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations under the License.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+package org.hyperledger.besu.consensus.merge.blockcreation;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.fail;
+import static org.hyperledger.besu.ethereum.core.InMemoryKeyValueStorageProvider.createInMemoryBlockchain;
+import static org.hyperledger.besu.ethereum.core.InMemoryKeyValueStorageProvider.createInMemoryWorldStateArchive;
+import static org.hyperledger.besu.ethereum.eth.transactions.PendingTransaction.MAX_SCORE;
+import static org.hyperledger.besu.ethereum.worldstate.WorldStateQueryParams.withBlockHeaderAndUpdateNodeHead;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeast;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doCallRealMethod;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import org.hyperledger.besu.config.MergeConfiguration;
+import org.hyperledger.besu.consensus.merge.MergeContext;
+import org.hyperledger.besu.consensus.merge.PayloadWrapper;
+import org.hyperledger.besu.consensus.merge.blockcreation.MergeMiningCoordinator.ForkchoiceResult;
+import org.hyperledger.besu.crypto.KeyPair;
+import org.hyperledger.besu.crypto.SECPPrivateKey;
+import org.hyperledger.besu.crypto.SignatureAlgorithm;
+import org.hyperledger.besu.crypto.SignatureAlgorithmFactory;
+import org.hyperledger.besu.datatypes.Address;
+import org.hyperledger.besu.datatypes.Hash;
+import org.hyperledger.besu.datatypes.Wei;
+import org.hyperledger.besu.ethereum.ProtocolContext;
+import org.hyperledger.besu.ethereum.chain.BadBlockCause;
+import org.hyperledger.besu.ethereum.chain.BadBlockManager;
+import org.hyperledger.besu.ethereum.chain.BlockAddedEvent;
+import org.hyperledger.besu.ethereum.chain.BlockAddedObserver;
+import org.hyperledger.besu.ethereum.chain.GenesisState;
+import org.hyperledger.besu.ethereum.chain.MutableBlockchain;
+import org.hyperledger.besu.ethereum.core.Block;
+import org.hyperledger.besu.ethereum.core.BlockBody;
+import org.hyperledger.besu.ethereum.core.BlockHeader;
+import org.hyperledger.besu.ethereum.core.BlockHeaderTestFixture;
+import org.hyperledger.besu.ethereum.core.Difficulty;
+import org.hyperledger.besu.ethereum.core.ImmutableMiningConfiguration;
+import org.hyperledger.besu.ethereum.core.ImmutableMiningConfiguration.MutableInitValues;
+import org.hyperledger.besu.ethereum.core.ImmutableMiningConfiguration.Unstable;
+import org.hyperledger.besu.ethereum.core.MiningConfiguration;
+import org.hyperledger.besu.ethereum.core.TransactionTestFixture;
+import org.hyperledger.besu.ethereum.eth.manager.EthContext;
+import org.hyperledger.besu.ethereum.eth.manager.EthScheduler;
+import org.hyperledger.besu.ethereum.eth.sync.backwardsync.BackwardChain;
+import org.hyperledger.besu.ethereum.eth.sync.backwardsync.BackwardSyncContext;
+import org.hyperledger.besu.ethereum.eth.transactions.BlobCache;
+import org.hyperledger.besu.ethereum.eth.transactions.ImmutableTransactionPoolConfiguration;
+import org.hyperledger.besu.ethereum.eth.transactions.PendingTransaction;
+import org.hyperledger.besu.ethereum.eth.transactions.TransactionBroadcaster;
+import org.hyperledger.besu.ethereum.eth.transactions.TransactionPool;
+import org.hyperledger.besu.ethereum.eth.transactions.TransactionPoolConfiguration;
+import org.hyperledger.besu.ethereum.eth.transactions.TransactionPoolMetrics;
+import org.hyperledger.besu.ethereum.eth.transactions.sorter.BaseFeePendingTransactionsSorter;
+import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
+import org.hyperledger.besu.ethereum.mainnet.feemarket.BaseFeeMarket;
+import org.hyperledger.besu.ethereum.mainnet.feemarket.FeeMarket;
+import org.hyperledger.besu.ethereum.trie.MerkleTrieException;
+import org.hyperledger.besu.ethereum.trie.pathbased.bonsai.code.BonsaiCodeCache;
+import org.hyperledger.besu.ethereum.worldstate.WorldStateArchive;
+import org.hyperledger.besu.metrics.StubMetricsSystem;
+import org.hyperledger.besu.plugin.data.AddedBlockContext.EventType;
+import org.hyperledger.besu.plugin.services.worldstate.MutableWorldState;
+import org.hyperledger.besu.testutil.TestClock;
+import org.hyperledger.besu.util.number.Fraction;
+
+import java.math.BigInteger;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import java.util.OptionalLong;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Stream;
+
+import org.apache.tuweni.bytes.Bytes;
+import org.apache.tuweni.bytes.Bytes32;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.aggregator.ArgumentsAccessor;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.mockito.Answers;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+public class MergeCoordinatorTest implements MergeGenesisConfigHelper {
+
+  private static final SignatureAlgorithm SIGNATURE_ALGORITHM =
+      SignatureAlgorithmFactory.getInstance();
+
+  private static final Logger LOG = LoggerFactory.getLogger(MergeCoordinatorTest.class);
+  private static final SECPPrivateKey PRIVATE_KEY1 =
+      SIGNATURE_ALGORITHM.createPrivateKey(
+          Bytes32.fromHexString(
+              "ae6ae8e5ccbfb04590405997ee2d52d2b330726137b875053c36d94e974d162f"));
+  private static final KeyPair KEYS1 =
+      new KeyPair(PRIVATE_KEY1, SIGNATURE_ALGORITHM.createPublicKey(PRIVATE_KEY1));
+
+  private static final long REPETITION_MIN_DURATION = 100;
+
+  private static final BigInteger CHAIN_ID_MAINNET = BigInteger.ONE;
+  private static final BigInteger CHAIN_ID_HOODI = BigInteger.valueOf(560048);
+  private static final long DEFAULT_TARGET_GAS_LIMIT = 60_000_000L;
+  private static final long DEFAULT_TARGET_GAS_LIMIT_TESTNET = 60_000_000L;
+
+  @Mock MergeContext mergeContext;
+  @Mock BackwardSyncContext backwardSyncContext;
+
+  @Mock(answer = Answers.RETURNS_DEEP_STUBS)
+  EthContext ethContext;
+
+  @Mock EthScheduler ethScheduler;
+
+  private final Address coinbase = genesisAllocations(getPosGenesisConfig()).findFirst().get();
+
+  private MiningConfiguration miningConfiguration =
+      ImmutableMiningConfiguration.builder()
+          .mutableInitValues(MutableInitValues.builder().coinbase(coinbase).build())
+          .unstable(
+              Unstable.builder()
+                  .posBlockCreationRepetitionMinDuration(REPETITION_MIN_DURATION)
+                  .build())
+          .build();
+
+  private MergeCoordinator coordinator;
+  private ProtocolContext protocolContext;
+
+  private final ProtocolSchedule protocolSchedule = spy(getMergeProtocolSchedule());
+  private final GenesisState genesisState =
+      GenesisState.fromConfig(getPosGenesisConfig(), protocolSchedule, new BonsaiCodeCache());
+
+  private final WorldStateArchive worldStateArchive = createInMemoryWorldStateArchive();
+
+  private final MutableBlockchain blockchain =
+      spy(createInMemoryBlockchain(genesisState.getBlock()));
+
+  private final Address suggestedFeeRecipient = Address.ZERO;
+  private final BlockHeaderTestFixture headerGenerator = new BlockHeaderTestFixture();
+  private final BaseFeeMarket feeMarket =
+      FeeMarket.london(0, genesisState.getBlock().getHeader().getBaseFee());
+
+  private final org.hyperledger.besu.metrics.StubMetricsSystem metricsSystem =
+      new StubMetricsSystem();
+
+  private final TransactionPoolConfiguration poolConf =
+      ImmutableTransactionPoolConfiguration.builder()
+          .txPoolMaxSize(10)
+          .txPoolLimitByAccountPercentage(Fraction.fromPercentage(100))
+          .build();
+  private final BaseFeePendingTransactionsSorter transactions =
+      new BaseFeePendingTransactionsSorter(
+          poolConf,
+          TestClock.system(ZoneId.systemDefault()),
+          metricsSystem,
+          MergeCoordinatorTest::mockBlockHeader);
+
+  private TransactionPool transactionPool;
+
+  CompletableFuture<Void> blockCreationTask = CompletableFuture.completedFuture(null);
+
+  private final BadBlockManager badBlockManager = spy(new BadBlockManager());
+
+  @BeforeEach
+  public void setUp() {
+    when(mergeContext.as(MergeContext.class)).thenReturn(mergeContext);
+    when(mergeContext.getTerminalTotalDifficulty())
+        .thenReturn(genesisState.getBlock().getHeader().getDifficulty().plus(1L));
+    protocolContext =
+        new ProtocolContext.Builder()
+            .withBlockchain(blockchain)
+            .withWorldStateArchive(worldStateArchive)
+            .withConsensusContext(mergeContext)
+            .withBadBlockManager(badBlockManager)
+            .build();
+    var mutable = worldStateArchive.getWorldState();
+    genesisState.writeStateTo(mutable);
+    mutable.persist(null);
+
+    when(ethScheduler.scheduleBlockCreationTask(anyLong(), any()))
+        .thenAnswer(
+            invocation -> {
+              final Runnable runnable = invocation.getArgument(1);
+              if (!invocation.toString().contains("MergeCoordinator")) {
+                return CompletableFuture.runAsync(runnable);
+              }
+              blockCreationTask = CompletableFuture.runAsync(runnable);
+              return blockCreationTask;
+            });
+
+    MergeConfiguration.setMergeEnabled(true);
+
+    when(ethContext.getEthPeers().subscribeConnect(any())).thenReturn(1L);
+    this.transactionPool =
+        new TransactionPool(
+            () -> transactions,
+            protocolSchedule,
+            protocolContext,
+            mock(TransactionBroadcaster.class),
+            ethContext,
+            new TransactionPoolMetrics(metricsSystem),
+            poolConf,
+            new BlobCache());
+
+    this.transactionPool.setEnabled();
+
+    this.coordinator =
+        new MergeCoordinator(
+            protocolContext,
+            protocolSchedule,
+            ethScheduler,
+            transactionPool,
+            miningConfiguration,
+            backwardSyncContext);
+  }
+
+  @Test
+  public void coinbaseShouldMatchSuggestedFeeRecipient() {
+    doAnswer(
+            invocation -> {
+              coordinator.finalizeProposalById(
+                  invocation.getArgument(0, PayloadWrapper.class).payloadIdentifier());
+              return null;
+            })
+        .when(mergeContext)
+        .putPayloadById(any());
+
+    var payloadId =
+        coordinator.preparePayload(
+            new PreparePayloadArgsBuilder()
+                .parentHeader(genesisState.getBlock().getHeader())
+                .timestamp(System.currentTimeMillis() / 1000)
+                .prevRandao(Bytes32.ZERO)
+                .feeRecipient(suggestedFeeRecipient)
+                .build());
+
+    ArgumentCaptor<PayloadWrapper> payloadWrapper = ArgumentCaptor.forClass(PayloadWrapper.class);
+
+    verify(mergeContext, atLeastOnce()).putPayloadById(payloadWrapper.capture());
+
+    assertThat(payloadWrapper.getValue().payloadIdentifier()).isEqualTo(payloadId);
+    assertThat(payloadWrapper.getValue().blockWithReceipts().getHeader().getCoinbase())
+        .isEqualTo(suggestedFeeRecipient);
+  }
+
+  @Test
+  public void exceptionDuringBuildingBlockShouldNotBeInvalid()
+      throws ExecutionException, InterruptedException {
+
+    final int txPerBlock = 7;
+
+    MergeCoordinator.MergeBlockCreatorFactory mergeBlockCreatorFactory =
+        (parentHeader, address) -> {
+          MergeBlockCreator beingSpiedOn =
+              spy(
+                  new MergeBlockCreator(
+                      miningConfiguration,
+                      parent -> Bytes.EMPTY,
+                      transactionPool,
+                      protocolContext,
+                      protocolSchedule,
+                      parentHeader,
+                      ethScheduler));
+
+          doCallRealMethod()
+              .doCallRealMethod()
+              .doThrow(new MerkleTrieException("missing leaf"))
+              .doCallRealMethod()
+              .when(beingSpiedOn)
+              .createBlock(
+                  any(),
+                  any(Bytes32.class),
+                  anyLong(),
+                  eq(Optional.empty()),
+                  eq(Optional.empty()),
+                  eq(Optional.empty()),
+                  eq(Optional.empty()),
+                  any());
+          return beingSpiedOn;
+        };
+
+    MergeCoordinator willThrow =
+        spy(
+            new MergeCoordinator(
+                protocolContext,
+                protocolSchedule,
+                ethScheduler,
+                miningConfiguration,
+                backwardSyncContext,
+                mergeBlockCreatorFactory));
+
+    final AtomicLong retries = new AtomicLong(0);
+    doAnswer(
+            invocation -> {
+              if (retries.getAndIncrement() < txPerBlock) {
+                // a new transaction every time a block is built
+                transactions.addTransaction(
+                    createLocalTransaction(retries.get() - 1), Optional.empty());
+              } else {
+                // when we have 5 transactions finalize block creation
+                willThrow.finalizeProposalById(
+                    invocation.getArgument(0, PayloadWrapper.class).payloadIdentifier());
+              }
+              return null;
+            })
+        .when(mergeContext)
+        .putPayloadById(any());
+
+    var payloadId =
+        willThrow.preparePayload(
+            new PreparePayloadArgsBuilder()
+                .parentHeader(genesisState.getBlock().getHeader())
+                .timestamp(System.currentTimeMillis() / 1000)
+                .prevRandao(Bytes32.random())
+                .feeRecipient(suggestedFeeRecipient)
+                .build());
+
+    blockCreationTask.get();
+
+    ArgumentCaptor<PayloadWrapper> payloadWrapper = ArgumentCaptor.forClass(PayloadWrapper.class);
+
+    verify(mergeContext, times(txPerBlock + 1))
+        .putPayloadById(payloadWrapper.capture()); // +1 for the empty
+    assertThat(payloadWrapper.getValue().payloadIdentifier()).isEqualTo(payloadId);
+    assertThat(
+            payloadWrapper
+                .getValue()
+                .blockWithReceipts()
+                .getBlock()
+                .getBody()
+                .getTransactions()
+                .size())
+        .isEqualTo(txPerBlock);
+    // this only verifies that adding the bad block didn't happen through the mergeCoordinator, it
+    // still may be called directly.
+    verify(badBlockManager, never()).addBadBlock(any(), any());
+  }
+
+  /**
+   * Verifies that a Throwable thrown inside retryBlockCreationUntilUseful, at a point where
+   * isBlockCreationCancelled is already true, is handled gracefully and does not propagate out of
+   * the background task. The scenario: createBlock for the empty block (synchronous in
+   * preparePayload) succeeds normally; then inside the retry loop the second createBlock call first
+   * cancels block creation via finalizeProposalById, then throws a RuntimeException simulating a
+   * race-condition error. The catch (Throwable) block in retryBlockCreationUntilUseful sees
+   * isBlockCreationCancelled == true and logs at INFO instead of propagating the exception.
+   */
+  @Test
+  public void exceptionThrownAfterBlockCreationCancellationIsHandledGracefully()
+      throws ExecutionException, InterruptedException {
+
+    final AtomicReference<MergeCoordinator> coordinatorRef = new AtomicReference<>();
+    // Capture the payloadIdentifier from the empty-block putPayloadById call so the retry-loop
+    // spy can call finalizeProposalById with it.
+    final AtomicReference<PayloadIdentifier> payloadIdRef = new AtomicReference<>();
+
+    MergeCoordinator.MergeBlockCreatorFactory mergeBlockCreatorFactory =
+        (parentHeader, address) -> {
+          MergeBlockCreator beingSpiedOn =
+              spy(
+                  new MergeBlockCreator(
+                      miningConfiguration,
+                      parent -> Bytes.EMPTY,
+                      transactionPool,
+                      protocolContext,
+                      protocolSchedule,
+                      parentHeader,
+                      ethScheduler));
+
+          // First call (empty block, synchronous in preparePayload): run normally so that
+          // preparePayload completes and the retry loop is started.
+          // Second call (inside the retry loop): cancel block creation first so that
+          // isBlockCreationCancelled is true when the RuntimeException reaches the catch block.
+          doCallRealMethod()
+              .doAnswer(
+                  inv -> {
+                    PayloadIdentifier pid = payloadIdRef.get();
+                    if (pid != null) {
+                      coordinatorRef.get().finalizeProposalById(pid);
+                    }
+                    throw new RuntimeException(
+                        "simulated concurrency error after block creation was cancelled");
+                  })
+              .when(beingSpiedOn)
+              .createBlock(
+                  any(),
+                  any(Bytes32.class),
+                  anyLong(),
+                  eq(Optional.empty()),
+                  eq(Optional.empty()),
+                  eq(Optional.empty()),
+                  eq(Optional.empty()),
+                  any());
+          return beingSpiedOn;
+        };
+
+    MergeCoordinator coordinatorUnderTest =
+        spy(
+            new MergeCoordinator(
+                protocolContext,
+                protocolSchedule,
+                ethScheduler,
+                miningConfiguration,
+                backwardSyncContext,
+                mergeBlockCreatorFactory));
+    coordinatorRef.set(coordinatorUnderTest);
+
+    // Capture payloadId from the empty-block putPayloadById; do NOT finalize here so the
+    // retry loop gets a chance to start and exercise the Throwable catch path.
+    doAnswer(
+            invocation -> {
+              payloadIdRef.compareAndSet(
+                  null, invocation.getArgument(0, PayloadWrapper.class).payloadIdentifier());
+              return null;
+            })
+        .when(mergeContext)
+        .putPayloadById(any());
+
+    coordinatorUnderTest.preparePayload(
+        new PreparePayloadArgsBuilder()
+            .parentHeader(genesisState.getBlock().getHeader())
+            .timestamp(System.currentTimeMillis() / 1000)
+            .prevRandao(Bytes32.ZERO)
+            .feeRecipient(suggestedFeeRecipient)
+            .build());
+
+    // The RuntimeException must not be propagated: the catch (Throwable) block should handle it
+    // gracefully (logging at INFO since isBlockCreationCancelled is true) and return null.
+    blockCreationTask.get();
+  }
+
+  @Test
+  public void shouldNotRecordProposedBadBlockToBadBlockManager()
+      throws ExecutionException, InterruptedException {
+    // set up invalid parent to simulate one of the many conditions that can cause a block
+    // validation to fail
+    final BlockHeader invalidParentHeader = new BlockHeaderTestFixture().buildHeader();
+
+    blockCreationTask.get();
+
+    coordinator.preparePayload(
+        new PreparePayloadArgsBuilder()
+            .parentHeader(invalidParentHeader)
+            .timestamp(System.currentTimeMillis() / 1000)
+            .prevRandao(Bytes32.ZERO)
+            .feeRecipient(suggestedFeeRecipient)
+            .build());
+
+    verify(badBlockManager, never()).addBadBlock(any(), any());
+    assertThat(badBlockManager.getBadBlocks().size()).isEqualTo(0);
+  }
+
+  @Test
+  public void shouldContinueBuildingBlocksUntilFinalizeIsCalled()
+      throws InterruptedException, ExecutionException {
+    final AtomicLong retries = new AtomicLong(0);
+    doAnswer(
+            invocation -> {
+              if (retries.getAndIncrement() < 5) {
+                // a new transaction every time a block is built
+                transactions.addTransaction(
+                    createLocalTransaction(retries.get() - 1), Optional.empty());
+              } else {
+                // when we have 5 transactions finalize block creation
+                coordinator.finalizeProposalById(
+                    invocation.getArgument(0, PayloadWrapper.class).payloadIdentifier());
+              }
+              return null;
+            })
+        .when(mergeContext)
+        .putPayloadById(any());
+
+    var payloadId =
+        coordinator.preparePayload(
+            new PreparePayloadArgsBuilder()
+                .parentHeader(genesisState.getBlock().getHeader())
+                .timestamp(System.currentTimeMillis() / 1000)
+                .prevRandao(Bytes32.ZERO)
+                .feeRecipient(suggestedFeeRecipient)
+                .build());
+
+    blockCreationTask.get();
+
+    ArgumentCaptor<PayloadWrapper> payloadWrapper = ArgumentCaptor.forClass(PayloadWrapper.class);
+
+    verify(mergeContext, times(retries.intValue())).putPayloadById(payloadWrapper.capture());
+
+    assertThat(payloadWrapper.getValue().payloadIdentifier()).isEqualTo(payloadId);
+    assertThat(payloadWrapper.getAllValues().size()).isEqualTo(retries.intValue());
+    for (int i = 0; i < retries.intValue(); i++) {
+      assertThat(
+              payloadWrapper
+                  .getAllValues()
+                  .get(i)
+                  .blockWithReceipts()
+                  .getBlock()
+                  .getBody()
+                  .getTransactions())
+          .hasSize(i);
+    }
+  }
+
+  @Test
+  public void blockCreationRepetitionShouldTakeNotLessThanRepetitionMinDuration()
+      throws InterruptedException, ExecutionException {
+    final AtomicLong retries = new AtomicLong(0);
+    final AtomicLong lastPutAt = new AtomicLong();
+    final List<Long> repetitionDurations = new ArrayList<>();
+
+    doAnswer(
+            invocation -> {
+              final long r = retries.getAndIncrement();
+              if (r == 0) {
+                // ignore first one, that is the empty block
+              } else if (r < 5) {
+                if (lastPutAt.get() > 0) {
+                  // each repetition should take >= REPETITION_MIN_DURATION
+                  repetitionDurations.add(System.currentTimeMillis() - lastPutAt.get());
+                }
+                lastPutAt.set(System.currentTimeMillis());
+              } else {
+                // finalize after 5 repetitions
+                coordinator.finalizeProposalById(
+                    invocation.getArgument(0, PayloadWrapper.class).payloadIdentifier());
+              }
+              return null;
+            })
+        .when(mergeContext)
+        .putPayloadById(any());
+
+    var payloadId =
+        coordinator.preparePayload(
+            new PreparePayloadArgsBuilder()
+                .parentHeader(genesisState.getBlock().getHeader())
+                .timestamp(System.currentTimeMillis() / 1000)
+                .prevRandao(Bytes32.ZERO)
+                .feeRecipient(suggestedFeeRecipient)
+                .build());
+
+    blockCreationTask.get();
+
+    ArgumentCaptor<PayloadWrapper> payloadWrapper = ArgumentCaptor.forClass(PayloadWrapper.class);
+
+    verify(mergeContext, times(retries.intValue())).putPayloadById(payloadWrapper.capture());
+    assertThat(payloadWrapper.getValue().payloadIdentifier()).isEqualTo(payloadId);
+
+    // check with a tolerance
+    assertThat(repetitionDurations)
+        .allSatisfy(d -> assertThat(d).isGreaterThanOrEqualTo(REPETITION_MIN_DURATION - 10));
+  }
+
+  @Test
+  public void shouldRetryBlockCreationOnRecoverableError()
+      throws InterruptedException, ExecutionException {
+    doAnswer(
+            invocation -> {
+              if (invocation
+                  .getArgument(0, PayloadWrapper.class)
+                  .blockWithReceipts()
+                  .getBlock()
+                  .getBody()
+                  .getTransactions()
+                  .isEmpty()) {
+                // this is called by the first empty block
+                doCallRealMethod() // first work
+                    .doThrow(new MerkleTrieException("lock")) // second fail
+                    .doCallRealMethod() // then work
+                    .when(blockchain)
+                    .getBlockHeader(any());
+              } else {
+                // stop block creation loop when we see a not empty block
+                coordinator.finalizeProposalById(
+                    invocation.getArgument(0, PayloadWrapper.class).payloadIdentifier());
+              }
+              return null;
+            })
+        .when(mergeContext)
+        .putPayloadById(any());
+
+    transactions.addTransaction(createLocalTransaction(0), Optional.empty());
+
+    var payloadId =
+        coordinator.preparePayload(
+            new PreparePayloadArgsBuilder()
+                .parentHeader(genesisState.getBlock().getHeader())
+                .timestamp(System.currentTimeMillis() / 1000)
+                .prevRandao(Bytes32.ZERO)
+                .feeRecipient(suggestedFeeRecipient)
+                .build());
+
+    blockCreationTask.get();
+
+    ArgumentCaptor<PayloadWrapper> payloadWrapper = ArgumentCaptor.forClass(PayloadWrapper.class);
+
+    verify(mergeContext, times(2)).putPayloadById(payloadWrapper.capture());
+    assertThat(payloadWrapper.getValue().payloadIdentifier()).isEqualTo(payloadId);
+
+    assertThat(payloadWrapper.getAllValues().size()).isEqualTo(2);
+    assertThat(
+            payloadWrapper
+                .getAllValues()
+                .get(0)
+                .blockWithReceipts()
+                .getBlock()
+                .getBody()
+                .getTransactions())
+        .hasSize(0);
+    assertThat(
+            payloadWrapper
+                .getAllValues()
+                .get(1)
+                .blockWithReceipts()
+                .getBlock()
+                .getBody()
+                .getTransactions())
+        .hasSize(1);
+  }
+
+  @Test
+  public void shouldStopRetryBlockCreationIfTimeExpired() throws InterruptedException {
+    final AtomicLong retries = new AtomicLong(0);
+    miningConfiguration =
+        ImmutableMiningConfiguration.builder()
+            .from(miningConfiguration)
+            .unstable(Unstable.builder().posBlockCreationMaxTime(100).build())
+            .build();
+    doAnswer(
+            invocation -> {
+              retries.incrementAndGet();
+              return null;
+            })
+        .when(mergeContext)
+        .putPayloadById(any());
+
+    var payloadId =
+        coordinator.preparePayload(
+            new PreparePayloadArgsBuilder()
+                .parentHeader(genesisState.getBlock().getHeader())
+                .timestamp(System.currentTimeMillis() / 1000)
+                .prevRandao(Bytes32.ZERO)
+                .feeRecipient(suggestedFeeRecipient)
+                .build());
+
+    try {
+      blockCreationTask.get();
+      fail("Timeout expected");
+    } catch (ExecutionException e) {
+      assertThat(e).hasCauseInstanceOf(TimeoutException.class);
+    }
+
+    ArgumentCaptor<PayloadWrapper> payloadWrapper = ArgumentCaptor.forClass(PayloadWrapper.class);
+
+    verify(mergeContext, atLeast(retries.intValue())).putPayloadById(payloadWrapper.capture());
+    assertThat(payloadWrapper.getValue().payloadIdentifier()).isEqualTo(payloadId);
+  }
+
+  @Test
+  public void shouldStopInProgressBlockCreationIfFinalizedIsCalled()
+      throws InterruptedException, ExecutionException {
+    final CountDownLatch waitForBlockCreationInProgress = new CountDownLatch(1);
+
+    doAnswer(
+            invocation ->
+                // this is called by the first empty block
+                doAnswer(
+                        i -> {
+                          waitForBlockCreationInProgress.countDown();
+                          // simulate a long running task
+                          try {
+                            Thread.sleep(1000);
+                          } catch (Exception e) {
+                            throw new RuntimeException(e);
+                          }
+                          return i.callRealMethod();
+                        })
+                    .when(blockchain)
+                    .getBlockHeader(any()))
+        .when(mergeContext)
+        .putPayloadById(any());
+
+    var payloadId =
+        coordinator.preparePayload(
+            new PreparePayloadArgsBuilder()
+                .parentHeader(genesisState.getBlock().getHeader())
+                .timestamp(System.currentTimeMillis() / 1000)
+                .prevRandao(Bytes32.ZERO)
+                .feeRecipient(suggestedFeeRecipient)
+                .build());
+
+    waitForBlockCreationInProgress.await();
+    coordinator.finalizeProposalById(payloadId);
+
+    blockCreationTask.get();
+
+    // check that graceful cancellation completed - may produce 1 or more blocks depending on timing
+    ArgumentCaptor<PayloadWrapper> payloadWrapper = ArgumentCaptor.forClass(PayloadWrapper.class);
+
+    verify(mergeContext, atLeast(1)).putPayloadById(payloadWrapper.capture());
+    // The first payload should be our expected payload ID
+    assertThat(payloadWrapper.getAllValues().get(0).payloadIdentifier()).isEqualTo(payloadId);
+
+    assertThat(payloadWrapper.getAllValues().size()).isGreaterThanOrEqualTo(1);
+    // The first block should be empty (since cancellation was called during creation)
+    assertThat(
+            payloadWrapper
+                .getAllValues()
+                .get(0)
+                .blockWithReceipts()
+                .getBlock()
+                .getBody()
+                .getTransactions())
+        .hasSize(0);
+  }
+
+  @Test
+  public void finalizingDuringThePauseBetweenBlockCreationsDoesNotWaitForThePauseToEnd()
+      throws InterruptedException {
+    final long pauseBetweenBlockCreations = 2000;
+    final MergeCoordinator slowRepetitionCoordinator =
+        new MergeCoordinator(
+            protocolContext,
+            protocolSchedule,
+            ethScheduler,
+            transactionPool,
+            ImmutableMiningConfiguration.builder()
+                .mutableInitValues(MutableInitValues.builder().coinbase(coinbase).build())
+                .unstable(
+                    Unstable.builder()
+                        .posBlockCreationRepetitionMinDuration(pauseBetweenBlockCreations)
+                        .build())
+                .build(),
+            backwardSyncContext);
+
+    // the empty block first, then the block built from the empty pool
+    final CountDownLatch firstBlockBuilt = new CountDownLatch(2);
+    doAnswer(
+            invocation -> {
+              firstBlockBuilt.countDown();
+              return null;
+            })
+        .when(mergeContext)
+        .putPayloadById(any());
+
+    final var payloadId =
+        slowRepetitionCoordinator.preparePayload(
+            new PreparePayloadArgsBuilder()
+                .parentHeader(genesisState.getBlock().getHeader())
+                .timestamp(System.currentTimeMillis() / 1000)
+                .prevRandao(Bytes32.ZERO)
+                .feeRecipient(suggestedFeeRecipient)
+                .build());
+    firstBlockBuilt.await();
+
+    final long startedAt = System.nanoTime();
+    slowRepetitionCoordinator.finalizeProposalById(payloadId);
+    slowRepetitionCoordinator.awaitCurrentBuildCompletion(payloadId);
+    final long waitedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+
+    assertThat(waitedMs).isLessThan(400);
+    assertThat(blockCreationTask).succeedsWithin(Duration.ofMillis(500));
+  }
+
+  @Test
+  public void shouldNotStartAnotherBlockCreationJobIfCalledAgainWithTheSamePayloadId()
+      throws ExecutionException, InterruptedException {
+    final AtomicLong retries = new AtomicLong(0);
+    doAnswer(
+            invocation -> {
+              if (retries.getAndIncrement() < 5) {
+                // add a new transaction every time a block is built
+                transactions.addTransaction(
+                    createLocalTransaction(retries.get() - 1), Optional.empty());
+              } else {
+                // when we have 5 transactions finalize block creation
+                coordinator.finalizeProposalById(
+                    invocation.getArgument(0, PayloadWrapper.class).payloadIdentifier());
+              }
+              return null;
+            })
+        .when(mergeContext)
+        .putPayloadById(any());
+
+    final long timestamp = System.currentTimeMillis() / 1000;
+
+    var payloadId1 =
+        coordinator.preparePayload(
+            new PreparePayloadArgsBuilder()
+                .parentHeader(genesisState.getBlock().getHeader())
+                .timestamp(timestamp)
+                .prevRandao(Bytes32.ZERO)
+                .feeRecipient(suggestedFeeRecipient)
+                .build());
+
+    final CompletableFuture<Void> task1 = blockCreationTask;
+
+    var payloadId2 =
+        coordinator.preparePayload(
+            new PreparePayloadArgsBuilder()
+                .parentHeader(genesisState.getBlock().getHeader())
+                .timestamp(timestamp)
+                .prevRandao(Bytes32.ZERO)
+                .feeRecipient(suggestedFeeRecipient)
+                .build());
+
+    assertThat(payloadId1).isEqualTo(payloadId2);
+
+    final CompletableFuture<Void> task2 = blockCreationTask;
+
+    assertThat(task1).isSameAs(task2);
+
+    blockCreationTask.get();
+
+    ArgumentCaptor<PayloadWrapper> payloadWrapper = ArgumentCaptor.forClass(PayloadWrapper.class);
+
+    verify(mergeContext, times(retries.intValue())).putPayloadById(payloadWrapper.capture());
+
+    assertThat(payloadWrapper.getAllValues().size()).isEqualTo(retries.intValue());
+    for (int i = 0; i < retries.intValue(); i++) {
+      assertThat(
+              payloadWrapper
+                  .getAllValues()
+                  .get(i)
+                  .blockWithReceipts()
+                  .getBlock()
+                  .getBody()
+                  .getTransactions())
+          .hasSize(i);
+      assertThat(payloadWrapper.getAllValues().get(i).blockWithReceipts().getReceipts()).hasSize(i);
+    }
+  }
+
+  @Test
+  public void shouldCancelPreviousBlockCreationJobIfCalledAgainWithNewPayloadId() {
+
+    final long timestamp = System.currentTimeMillis() / 1000;
+
+    var payloadId1 =
+        coordinator.preparePayload(
+            new PreparePayloadArgsBuilder()
+                .parentHeader(genesisState.getBlock().getHeader())
+                .timestamp(timestamp)
+                .prevRandao(Bytes32.ZERO)
+                .feeRecipient(suggestedFeeRecipient)
+                .build());
+
+    assertThat(coordinator.isBlockCreationCancelled(payloadId1)).isFalse();
+
+    var payloadId2 =
+        coordinator.preparePayload(
+            new PreparePayloadArgsBuilder()
+                .parentHeader(genesisState.getBlock().getHeader())
+                .timestamp(timestamp + 1)
+                .prevRandao(Bytes32.ZERO)
+                .feeRecipient(suggestedFeeRecipient)
+                .build());
+
+    assertThat(payloadId1).isNotEqualTo(payloadId2);
+    assertThat(coordinator.isBlockCreationCancelled(payloadId1)).isTrue();
+    assertThat(coordinator.isBlockCreationCancelled(payloadId2)).isFalse();
+  }
+
+  @Test
+  public void describePayloadArgsChangesListsParentAndWithdrawalChanges() {
+    final BlockHeader previousParent = genesisState.getBlock().getHeader();
+    final BlockHeader nextParent = headerGenerator.number(1).buildHeader();
+    final PreparePayloadArgsBuilder args =
+        new PreparePayloadArgsBuilder()
+            .timestamp(1L)
+            .prevRandao(Bytes32.ZERO)
+            .feeRecipient(suggestedFeeRecipient);
+
+    final String changes =
+        MergeCoordinator.describePayloadArgsChanges(
+            args.parentHeader(previousParent).withdrawals(Optional.empty()).build(),
+            args.parentHeader(nextParent).withdrawals(Optional.of(List.of())).build());
+
+    assertThat(changes)
+        .isEqualTo(
+            "parent "
+                + previousParent.getHash()
+                + " -> "
+                + nextParent.getHash()
+                + ", withdrawals changed (none -> 0)");
+  }
+
+  @Test
+  public void describePayloadArgsChangesListsOnlyTheChangedAttributes() {
+    final PreparePayloadArgsBuilder args =
+        new PreparePayloadArgsBuilder()
+            .parentHeader(genesisState.getBlock().getHeader())
+            .timestamp(1L)
+            .prevRandao(Bytes32.ZERO)
+            .feeRecipient(suggestedFeeRecipient)
+            .slotNumber(Optional.of(7L));
+
+    final String changes =
+        MergeCoordinator.describePayloadArgsChanges(
+            args.targetGasLimit(Optional.of(60_000_000L)).build(),
+            args.targetGasLimit(Optional.of(45_000_000L)).build());
+
+    assertThat(changes).isEqualTo("targetGasLimit 60000000 -> 45000000");
+  }
+
+  @Test
+  public void describePayloadArgsChangesReportsNoneForTheSameArguments() {
+    final MergeMiningCoordinator.PreparePayloadArgs args =
+        new PreparePayloadArgsBuilder()
+            .parentHeader(genesisState.getBlock().getHeader())
+            .timestamp(1L)
+            .prevRandao(Bytes32.ZERO)
+            .feeRecipient(suggestedFeeRecipient)
+            .build();
+
+    assertThat(MergeCoordinator.describePayloadArgsChanges(args, args)).isEqualTo("none");
+  }
+
+  @Test
+  public void eachEmptyBlockHasItsOwnTimingStartedWhenItIsCreated() {
+    final List<PayloadWrapper> payloads = new CopyOnWriteArrayList<>();
+    doAnswer(
+            invocation -> {
+              payloads.add(invocation.getArgument(0, PayloadWrapper.class));
+              return null;
+            })
+        .when(mergeContext)
+        .putPayloadById(any());
+    final long timestamp = System.currentTimeMillis() / 1000;
+
+    final PayloadIdentifier firstPayloadId =
+        coordinator.preparePayload(
+            new PreparePayloadArgsBuilder()
+                .parentHeader(genesisState.getBlock().getHeader())
+                .timestamp(timestamp)
+                .prevRandao(Bytes32.ZERO)
+                .feeRecipient(suggestedFeeRecipient)
+                .build());
+    final var firstEmptyBlockTiming =
+        firstPayloadStoredFor(payloads, firstPayloadId).getBlockCreationTimings();
+
+    final Instant secondPayloadPreparedAt = Instant.now();
+    final PayloadIdentifier secondPayloadId =
+        coordinator.preparePayload(
+            new PreparePayloadArgsBuilder()
+                .parentHeader(genesisState.getBlock().getHeader())
+                .timestamp(timestamp + 1)
+                .prevRandao(Bytes32.ZERO)
+                .feeRecipient(suggestedFeeRecipient)
+                .build());
+    final var secondEmptyBlockTiming =
+        firstPayloadStoredFor(payloads, secondPayloadId).getBlockCreationTimings();
+    coordinator.finalizeProposalById(secondPayloadId);
+
+    assertThat(secondEmptyBlockTiming).isNotSameAs(firstEmptyBlockTiming);
+    assertThat(secondEmptyBlockTiming.startedAt()).isAfterOrEqualTo(secondPayloadPreparedAt);
+  }
+
+  private PayloadWrapper firstPayloadStoredFor(
+      final List<PayloadWrapper> payloads, final PayloadIdentifier payloadId) {
+    final PayloadWrapper payload =
+        payloads.stream()
+            .filter(p -> p.payloadIdentifier().equals(payloadId))
+            .findFirst()
+            .orElseThrow();
+    assertThat(payload.transactionCount()).isZero();
+    return payload;
+  }
+
+  @Test
+  public void shouldUseExtraDataFromMiningParameters() {
+    final Bytes extraData = Bytes.fromHexString("0x1234");
+
+    miningConfiguration =
+        ImmutableMiningConfiguration.builder()
+            .mutableInitValues(MutableInitValues.builder().extraData(extraData).build())
+            .build();
+
+    this.coordinator =
+        new MergeCoordinator(
+            protocolContext,
+            protocolSchedule,
+            ethScheduler,
+            transactionPool,
+            miningConfiguration,
+            backwardSyncContext);
+
+    final PayloadIdentifier payloadId =
+        this.coordinator.preparePayload(
+            new PreparePayloadArgsBuilder()
+                .parentHeader(genesisState.getBlock().getHeader())
+                .timestamp(1L)
+                .prevRandao(Bytes32.ZERO)
+                .feeRecipient(suggestedFeeRecipient)
+                .build());
+
+    ArgumentCaptor<PayloadWrapper> payloadWrapper = ArgumentCaptor.forClass(PayloadWrapper.class);
+
+    verify(mergeContext, atLeastOnce()).putPayloadById(payloadWrapper.capture());
+
+    assertThat(payloadWrapper.getValue().payloadIdentifier()).isEqualTo(payloadId);
+    assertThat(payloadWrapper.getValue().blockWithReceipts().getHeader().getExtraData())
+        .isEqualTo(extraData);
+  }
+
+  @Test
+  public void childTimestampExceedsParentsFails() {
+    BlockHeader terminalHeader = terminalPowBlock();
+    sendNewPayloadAndForkchoiceUpdate(
+        new Block(terminalHeader, BlockBody.empty()), Optional.empty(), Hash.ZERO);
+
+    BlockHeader parentHeader = nextBlockHeader(terminalHeader);
+    Block parent = new Block(parentHeader, BlockBody.empty());
+    sendNewPayloadAndForkchoiceUpdate(parent, Optional.empty(), terminalHeader.getHash());
+
+    BlockHeader childHeader = nextBlockHeader(parentHeader, parentHeader.getTimestamp());
+    Block child = new Block(childHeader, BlockBody.empty());
+    coordinator.rememberBlock(child);
+
+    ForkchoiceResult result =
+        coordinator.updateForkChoice(
+            childHeader, terminalHeader.getHash(), terminalHeader.getHash());
+
+    assertThat(result.shouldNotProceedToPayloadBuildProcess()).isTrue();
+    assertThat(result.getErrorMessage()).isPresent();
+    assertThat(result.getErrorMessage().get())
+        .isEqualTo("new head timestamp not greater than parent");
+    assertThat(result.getLatestValid()).contains(parentHeader.getHash());
+
+    verify(blockchain, never()).setFinalized(childHeader.getHash());
+    verify(mergeContext, never()).setFinalized(childHeader);
+    verify(blockchain, never()).setSafeBlock(childHeader.getHash());
+    verify(mergeContext, never()).setSafeBlock(childHeader);
+  }
+
+  @Test
+  public void latestValidAncestorDescendsFromFinalizedBlock() {
+    BlockHeader terminalHeader = terminalPowBlock();
+    sendNewPayloadAndForkchoiceUpdate(
+        new Block(terminalHeader, BlockBody.empty()), Optional.empty(), Hash.ZERO);
+
+    BlockHeader grandParentHeader = nextBlockHeader(terminalHeader);
+    Block grandParent = new Block(grandParentHeader, BlockBody.empty());
+
+    // if latest valid ancestor is PoW, then latest valid hash should be Hash.ZERO
+    var lvh = this.coordinator.getLatestValidAncestor(grandParentHeader);
+    assertThat(lvh).isPresent();
+    assertThat(lvh.get()).isEqualTo(Hash.ZERO);
+
+    sendNewPayloadAndForkchoiceUpdate(grandParent, Optional.empty(), terminalHeader.getHash());
+    BlockHeader parentHeader = nextBlockHeader(grandParentHeader);
+    Block parent = new Block(parentHeader, BlockBody.empty());
+    sendNewPayloadAndForkchoiceUpdate(
+        parent, Optional.of(grandParentHeader), grandParentHeader.getHash());
+
+    BlockHeader childHeader = nextBlockHeader(parentHeader);
+    Block child = new Block(childHeader, BlockBody.empty());
+    coordinator.validateBlock(child);
+
+    var nextLvh = this.coordinator.getLatestValidAncestor(childHeader);
+    assertThat(nextLvh).isPresent();
+    assertThat(nextLvh.get()).isEqualTo(parentHeader.getHash());
+
+    verify(mergeContext, never()).getTerminalPoWBlock();
+  }
+
+  @Test
+  public void updateForkChoiceShouldPersistFirstFinalizedBlockHash() {
+    BlockHeader terminalHeader = terminalPowBlock();
+    sendNewPayloadAndForkchoiceUpdate(
+        new Block(terminalHeader, BlockBody.empty()), Optional.empty(), Hash.ZERO);
+
+    BlockHeader firstFinalizedHeader = nextBlockHeader(terminalHeader);
+    Block firstFinalizedBlock = new Block(firstFinalizedHeader, BlockBody.empty());
+    sendNewPayloadAndForkchoiceUpdate(
+        firstFinalizedBlock, Optional.empty(), terminalHeader.getHash());
+
+    BlockHeader headBlockHeader = nextBlockHeader(firstFinalizedHeader);
+    Block headBlock = new Block(headBlockHeader, BlockBody.empty());
+    sendNewPayloadAndForkchoiceUpdate(
+        headBlock, Optional.of(firstFinalizedHeader), firstFinalizedHeader.getHash());
+
+    verify(blockchain).setFinalized(firstFinalizedBlock.getHash());
+    verify(mergeContext).setFinalized(firstFinalizedHeader);
+    verify(blockchain).setSafeBlock(firstFinalizedBlock.getHash());
+    verify(mergeContext).setSafeBlock(firstFinalizedHeader);
+  }
+
+  @Test
+  public void reorgAroundLogBloomCacheUpdate() {
+    // generate 5 blocks, remember them in order, all need to be parented correctly.
+    BlockHeader prevParent = genesisState.getBlock().getHeader();
+
+    AtomicReference<BlockAddedEvent> lastBlockAddedEvent = new AtomicReference<>();
+    blockchain.observeBlockAdded(
+        new BlockAddedObserver() {
+          @Override
+          public void onBlockAdded(final BlockAddedEvent event) {
+            LOG.info(event.toString());
+            lastBlockAddedEvent.set(event);
+          }
+        });
+    for (int i = 0; i <= 5; i++) {
+      BlockHeader nextBlock =
+          nextBlockHeader(
+              prevParent, genesisState.getBlock().getHeader().getTimestamp() + i * 1000);
+      coordinator.rememberBlock(new Block(nextBlock, BlockBody.empty()));
+      prevParent = nextBlock;
+    }
+
+    coordinator.updateForkChoice(
+        prevParent, genesisState.getBlock().getHash(), genesisState.getBlock().getHash());
+    Hash expectedCommonAncestor = blockchain.getBlockHeader(2).get().getBlockHash();
+
+    // generate from 3' down to some other head. Remember those.
+    BlockHeader forkPoint = blockchain.getBlockHeader(2).get();
+    prevParent = forkPoint;
+    for (int i = 3; i <= 5; i++) {
+      BlockHeader nextPrime =
+          nextBlockHeader(
+              prevParent, genesisState.getBlock().getHeader().getTimestamp() + i * 1001);
+      coordinator.rememberBlock(new Block(nextPrime, BlockBody.empty()));
+      prevParent = nextPrime;
+    }
+    coordinator.updateForkChoice(
+        prevParent, genesisState.getBlock().getHash(), genesisState.getBlock().getHash());
+    assertThat(lastBlockAddedEvent.get().getCommonAncestorHash()).isEqualTo(expectedCommonAncestor);
+    assertThat(lastBlockAddedEvent.get().getEventType()).isEqualTo(EventType.CHAIN_REORG);
+    assertThat(lastBlockAddedEvent.get().getHeader().getHash())
+        .isEqualTo(prevParent.getBlockHash());
+  }
+
+  @Test
+  public void updateForkChoiceShouldPersistLastFinalizedBlockHash() {
+    BlockHeader terminalHeader = terminalPowBlock();
+    sendNewPayloadAndForkchoiceUpdate(
+        new Block(terminalHeader, BlockBody.empty()), Optional.empty(), Hash.ZERO);
+
+    BlockHeader prevFinalizedHeader = nextBlockHeader(terminalHeader);
+    Block prevFinalizedBlock = new Block(prevFinalizedHeader, BlockBody.empty());
+    sendNewPayloadAndForkchoiceUpdate(
+        prevFinalizedBlock, Optional.empty(), terminalHeader.getHash());
+
+    BlockHeader lastFinalizedHeader = nextBlockHeader(prevFinalizedHeader);
+    Block lastFinalizedBlock = new Block(lastFinalizedHeader, BlockBody.empty());
+    sendNewPayloadAndForkchoiceUpdate(
+        lastFinalizedBlock, Optional.of(prevFinalizedHeader), prevFinalizedHeader.getHash());
+
+    BlockHeader headBlockHeader = nextBlockHeader(lastFinalizedHeader);
+    Block headBlock = new Block(headBlockHeader, BlockBody.empty());
+    sendNewPayloadAndForkchoiceUpdate(
+        headBlock, Optional.of(lastFinalizedHeader), lastFinalizedHeader.getHash());
+
+    verify(blockchain).setFinalized(lastFinalizedBlock.getHash());
+    verify(mergeContext).setFinalized(lastFinalizedHeader);
+    verify(blockchain).setSafeBlock(lastFinalizedBlock.getHash());
+    verify(mergeContext).setSafeBlock(lastFinalizedHeader);
+  }
+
+  @Test
+  public void assertGetOrSyncForBlockAlreadyPresent() {
+    BlockHeader mockHeader =
+        headerGenerator.parentHash(Hash.fromHexStringLenient("0xdead")).buildHeader();
+    when(blockchain.getBlockHeader(mockHeader.getHash())).thenReturn(Optional.of(mockHeader));
+    var res = coordinator.getOrSyncHeadByHash(mockHeader.getHash(), Hash.ZERO);
+
+    assertThat(res).isPresent();
+  }
+
+  @Test
+  public void assertGetOrSyncForBlockNotPresent() {
+    BlockHeader mockHeader =
+        headerGenerator.parentHash(Hash.fromHexStringLenient("0xbeef")).buildHeader();
+    when(mergeContext.isInitialSyncDone()).thenReturn(true);
+    when(backwardSyncContext.syncBackwardsUntil(mockHeader.getBlockHash()))
+        .thenReturn(CompletableFuture.completedFuture(null));
+
+    var res = coordinator.getOrSyncHeadByHash(mockHeader.getHash(), Hash.ZERO);
+
+    assertThat(res).isNotPresent();
+  }
+
+  @Test
+  public void assertGetOrSyncForBlockNotPresentDoesNotStartBackwardSyncWhenInitialSyncNotDone() {
+    BlockHeader mockHeader =
+        headerGenerator.parentHash(Hash.fromHexStringLenient("0xbeef")).buildHeader();
+    when(mergeContext.isInitialSyncDone()).thenReturn(false);
+
+    var res = coordinator.getOrSyncHeadByHash(mockHeader.getHash(), Hash.ZERO);
+
+    assertThat(res).isNotPresent();
+    verify(backwardSyncContext, never()).maybeUpdateTargetHeight(any());
+    verify(backwardSyncContext, never()).syncBackwardsUntil(any(Hash.class));
+  }
+
+  @Test
+  public void backwardSyncSessionUpdatesFinalizedOnceWithTheLatestFinalizedHash() {
+    when(mergeContext.isInitialSyncDone()).thenReturn(true);
+    final CompletableFuture<Void> firstSession = new CompletableFuture<>();
+    final CompletableFuture<Void> secondSession = new CompletableFuture<>();
+
+    when(backwardSyncContext.syncBackwardsUntil(any(Hash.class))).thenReturn(firstSession);
+    forkchoiceUpdateWithUnknownHead(1);
+    forkchoiceUpdateWithUnknownHead(2);
+    final BlockHeader firstSessionFinalized = forkchoiceUpdateWithUnknownHead(3);
+    firstSession.complete(null);
+
+    when(backwardSyncContext.syncBackwardsUntil(any(Hash.class))).thenReturn(secondSession);
+    forkchoiceUpdateWithUnknownHead(4);
+    final BlockHeader secondSessionFinalized = forkchoiceUpdateWithUnknownHead(5);
+    secondSession.complete(null);
+
+    final ArgumentCaptor<BlockHeader> finalized = ArgumentCaptor.forClass(BlockHeader.class);
+    verify(mergeContext, times(2)).setFinalized(finalized.capture());
+    assertThat(finalized.getAllValues())
+        .containsExactly(firstSessionFinalized, secondSessionFinalized);
+  }
+
+  @Test
+  public void assertCheckAndMarkBadDescendantMarksTheChildOfABadBlock() {
+    final BlockHeader badParent =
+        headerGenerator.parentHash(Hash.fromHexStringLenient("0xbeef")).buildHeader();
+    final BlockHeader child = headerGenerator.parentHash(badParent.getHash()).buildHeader();
+    badBlockManager.addBadHeader(badParent, BadBlockCause.fromValidationFailure("failed"));
+
+    final BackwardChain backwardChain = mock(BackwardChain.class);
+    when(backwardSyncContext.getBackwardChain()).thenReturn(backwardChain);
+    when(backwardChain.getHeader(child.getHash())).thenReturn(Optional.of(child));
+
+    assertThat(coordinator.checkAndMarkBadDescendant(child.getHash())).isTrue();
+    assertThat(badBlockManager.isBadBlock(child.getHash())).isTrue();
+  }
+
+  @Test
+  public void assertCheckAndMarkBadDescendantIgnoresAHeaderTheBackwardChainDoesNotKnow() {
+    final BlockHeader unknown =
+        headerGenerator.parentHash(Hash.fromHexStringLenient("0xbeef")).buildHeader();
+    // a bad block must be known, an empty manager short-circuits before the backward chain
+    badBlockManager.addBadHeader(
+        headerGenerator.parentHash(Hash.fromHexStringLenient("0xdead")).buildHeader(),
+        BadBlockCause.fromValidationFailure("failed"));
+
+    final BackwardChain backwardChain = mock(BackwardChain.class);
+    when(backwardSyncContext.getBackwardChain()).thenReturn(backwardChain);
+    when(backwardChain.getHeader(unknown.getHash())).thenReturn(Optional.empty());
+
+    assertThat(coordinator.checkAndMarkBadDescendant(unknown.getHash())).isFalse();
+    assertThat(badBlockManager.isBadBlock(unknown.getHash())).isFalse();
+  }
+
+  @Test
+  public void assertCheckAndMarkBadDescendantIsFreeWhenNoBadBlockIsKnown() {
+    assertThat(coordinator.checkAndMarkBadDescendant(Hash.fromHexStringLenient("0xbeef")))
+        .isFalse();
+
+    verify(backwardSyncContext, never()).getBackwardChain();
+  }
+
+  @Test
+  public void assertCheckAndMarkBadDescendantIgnoresAHeadWhoseParentIsOnTheChain() {
+    final BlockHeader chainParent = blockchain.getChainHeadHeader();
+    // a stale entry for a block that made it onto the chain must not condemn its descendants
+    badBlockManager.addBadHeader(chainParent, BadBlockCause.fromValidationFailure("stale"));
+    final BlockHeader child = headerGenerator.parentHash(chainParent.getHash()).buildHeader();
+
+    final BackwardChain backwardChain = mock(BackwardChain.class);
+    when(backwardSyncContext.getBackwardChain()).thenReturn(backwardChain);
+    when(backwardChain.getHeader(child.getHash())).thenReturn(Optional.of(child));
+
+    assertThat(coordinator.checkAndMarkBadDescendant(child.getHash())).isFalse();
+    assertThat(badBlockManager.isBadBlock(child.getHash())).isFalse();
+  }
+
+  @Test
+  public void assertCheckAndMarkBadDescendantByHeaderMarksTheChildOfABadBlock() {
+    final BlockHeader badParent =
+        headerGenerator.parentHash(Hash.fromHexStringLenient("0xbeef")).buildHeader();
+    final BlockHeader child = headerGenerator.parentHash(badParent.getHash()).buildHeader();
+    badBlockManager.addBadHeader(badParent, BadBlockCause.fromValidationFailure("failed"));
+
+    assertThat(coordinator.checkAndMarkBadDescendant(child))
+        .map(BadBlockCause::getDescription)
+        .contains("Descends from bad block " + badParent.toLogString());
+    assertThat(badBlockManager.isBadBlock(child.getHash())).isTrue();
+    verify(backwardSyncContext, never()).getBackwardChain();
+  }
+
+  @Test
+  public void assertCheckAndMarkBadDescendantByHeaderIgnoresAHeadWhoseParentIsOnTheChain() {
+    final BlockHeader chainParent = blockchain.getChainHeadHeader();
+    badBlockManager.addBadHeader(chainParent, BadBlockCause.fromValidationFailure("stale"));
+    final BlockHeader child = headerGenerator.parentHash(chainParent.getHash()).buildHeader();
+
+    assertThat(coordinator.checkAndMarkBadDescendant(child)).isEmpty();
+    assertThat(badBlockManager.isBadBlock(child.getHash())).isFalse();
+  }
+
+  @Test
+  public void assertOnBadChainKeepsTheBodyOfADescendantKnownAsBlock() {
+    final BlockHeader badHeader =
+        headerGenerator.parentHash(blockchain.getChainHeadHash()).buildHeader();
+    final BlockHeader descendantHeader =
+        headerGenerator.parentHash(badHeader.getHash()).buildHeader();
+    final Block descendant = new Block(descendantHeader, BlockBody.empty());
+    final BlockHeader headerOnlyDescendant =
+        headerGenerator.parentHash(descendantHeader.getHash()).buildHeader();
+    badBlockManager.addBadHeader(badHeader, BadBlockCause.fromValidationFailure("failed"));
+
+    coordinator.onBadChain(badHeader, List.of(descendant), List.of(headerOnlyDescendant));
+
+    assertThat(badBlockManager.getBadBlock(descendant.getHash())).contains(descendant);
+    assertThat(badBlockManager.getBadBlock(headerOnlyDescendant.getHash())).isEmpty();
+    assertThat(badBlockManager.isBadBlock(headerOnlyDescendant.getHash())).isTrue();
+  }
+
+  @Test
+  public void assertOnBadChainInheritsTheLatestValidHashOfAMarkedDescendantRoot() {
+    // the bad block is itself a marked descendant, its parent is not on the chain but its latest
+    // valid hash was recorded when it was marked
+    final Hash latestValidHash = Hash.fromHexStringLenient("0xcafe");
+    final BlockHeader root =
+        headerGenerator.parentHash(Hash.fromHexStringLenient("0xbeef")).buildHeader();
+    badBlockManager.addBadHeader(root, BadBlockCause.fromValidationFailure("failed"));
+    badBlockManager.addLatestValidHash(root.getHash(), latestValidHash);
+    final BlockHeader descendant = headerGenerator.parentHash(root.getHash()).buildHeader();
+
+    coordinator.onBadChain(root, List.of(), List.of(descendant));
+
+    assertThat(badBlockManager.getLatestValidHash(descendant.getHash())).contains(latestValidHash);
+  }
+
+  @Test
+  public void assertOnBadChainMarksNothingForARootThatWasResetInBetween() {
+    final BlockHeader root =
+        headerGenerator.parentHash(Hash.fromHexStringLenient("0xbeef")).buildHeader();
+    final BlockHeader descendant = headerGenerator.parentHash(root.getHash()).buildHeader();
+
+    coordinator.onBadChain(root, List.of(), List.of(descendant));
+
+    assertThat(badBlockManager.isBadBlock(descendant.getHash())).isFalse();
+    assertThat(badBlockManager.getLatestValidHash(root.getHash())).isEmpty();
+  }
+
+  @Test
+  public void assertGetLatestValidHashOfBadBlockWalksTheBadAncestryAndRemembersTheResult() {
+    final BlockHeader badParent =
+        headerGenerator.parentHash(genesisState.getBlock().getHash()).buildHeader();
+    final BlockHeader badChild = headerGenerator.parentHash(badParent.getHash()).buildHeader();
+    badBlockManager.addBadHeader(badParent, BadBlockCause.fromValidationFailure("failed"));
+    badBlockManager.addBadHeader(badChild, BadBlockCause.fromValidationFailure("failed"));
+
+    final Hash expected =
+        coordinator.getLatestValidAncestor(genesisState.getBlock().getHash()).orElseThrow();
+
+    assertThat(coordinator.getLatestValidHashOfBadBlock(badChild.getHash())).contains(expected);
+    // the walked result is remembered so the next call does not walk again
+    assertThat(badBlockManager.getLatestValidHash(badChild.getHash())).contains(expected);
+  }
+
+  @ParameterizedTest(name = "{index}: {0}")
+  @MethodSource("getGasLimits")
+  public void shouldSetCorrectTargetGasLimit(final ArgumentsAccessor argumentsAccessor) {
+    final long chainId = argumentsAccessor.getLong(1);
+    final long expectedTargetGasLimit = argumentsAccessor.getLong(2);
+
+    final MiningConfiguration mockMiningConfiguration = mock(MiningConfiguration.class);
+    when(mockMiningConfiguration.getTargetGasLimit()).thenReturn(OptionalLong.empty());
+    when(protocolSchedule.getChainId()).thenReturn(Optional.of(BigInteger.valueOf(chainId)));
+    doNothing().when(backwardSyncContext).subscribeBadChainListener(any());
+
+    MergeCoordinator testTargetGasLimitCoordinator =
+        new MergeCoordinator(
+            protocolContext,
+            protocolSchedule,
+            ethScheduler,
+            transactionPool,
+            mockMiningConfiguration,
+            backwardSyncContext);
+
+    assertThat(testTargetGasLimitCoordinator).isNotNull();
+    verify(mockMiningConfiguration).setTargetGasLimit(expectedTargetGasLimit);
+  }
+
+  @Test
+  public void shouldReturnExpectedTargetGasLimitForMainnet() {
+    final long targetGasLimitMainnet =
+        MergeCoordinator.getDefaultGasLimitByChainId(Optional.of(CHAIN_ID_MAINNET)).orElseThrow();
+    assertThat(targetGasLimitMainnet).isEqualTo(DEFAULT_TARGET_GAS_LIMIT);
+  }
+
+  @Test
+  public void shouldReturnExpectedTargetGasLimitForTestnet() {
+    final long targetGasLimitMainnet =
+        MergeCoordinator.getDefaultGasLimitByChainId(Optional.of(CHAIN_ID_HOODI)).orElseThrow();
+    assertThat(targetGasLimitMainnet).isEqualTo(DEFAULT_TARGET_GAS_LIMIT_TESTNET);
+  }
+
+  public static Stream<Arguments> getGasLimits() {
+    return Stream.of(
+        Arguments.of("mainnet", 1L, 60_000_000L),
+        Arguments.of("sepolia", 11_155_111L, 60_000_000L),
+        Arguments.of("hoodi", 560_048L, 60_000_000L),
+        Arguments.of("ephemery", 39_438_135L, 60_000_000L));
+  }
+
+  private BlockHeader forkchoiceUpdateWithUnknownHead(final long finalizedNumber) {
+    final BlockHeader finalizedHeader = headerGenerator.number(finalizedNumber).buildHeader();
+    when(blockchain.getBlockHeader(finalizedHeader.getHash()))
+        .thenReturn(Optional.of(finalizedHeader));
+    final Hash unknownHead = headerGenerator.number(finalizedNumber + 100).buildHeader().getHash();
+    coordinator.getOrSyncHeadByHash(unknownHead, finalizedHeader.getHash());
+    return finalizedHeader;
+  }
+
+  private void sendNewPayloadAndForkchoiceUpdate(
+      final Block block, final Optional<BlockHeader> finalizedHeader, final Hash safeHash) {
+
+    assertThat(coordinator.rememberBlock(block).getYield()).isPresent();
+    assertThat(
+            coordinator
+                .updateForkChoice(
+                    block.getHeader(),
+                    finalizedHeader.map(BlockHeader::getHash).orElse(Hash.ZERO),
+                    safeHash)
+                .shouldNotProceedToPayloadBuildProcess())
+        .isFalse();
+
+    when(mergeContext.getFinalized()).thenReturn(finalizedHeader);
+  }
+
+  private BlockHeader terminalPowBlock() {
+    return headerGenerator
+        .difficulty(Difficulty.MAX_VALUE)
+        .parentHash(genesisState.getBlock().getHash())
+        .number(genesisState.getBlock().getHeader().getNumber() + 1)
+        .baseFeePerGas(
+            feeMarket.computeBaseFee(
+                genesisState.getBlock().getHeader().getNumber() + 1,
+                genesisState.getBlock().getHeader().getBaseFee().orElse(Wei.of(0x3b9aca00)),
+                0,
+                15000000L))
+        .timestamp(1)
+        .gasLimit(genesisState.getBlock().getHeader().getGasLimit())
+        .stateRoot(genesisState.getBlock().getHeader().getStateRoot())
+        .buildHeader();
+  }
+
+  private BlockHeader nextBlockHeader(
+      final BlockHeader parentHeader, final long... optionalTimestamp) {
+
+    return headerGenerator
+        .difficulty(Difficulty.ZERO)
+        .parentHash(parentHeader.getHash())
+        .gasLimit(genesisState.getBlock().getHeader().getGasLimit())
+        .number(parentHeader.getNumber() + 1)
+        .stateRoot(genesisState.getBlock().getHeader().getStateRoot())
+        .timestamp(
+            optionalTimestamp.length > 0 ? optionalTimestamp[0] : parentHeader.getTimestamp() + 12)
+        .baseFeePerGas(
+            feeMarket.computeBaseFee(
+                genesisState.getBlock().getHeader().getNumber() + 1,
+                parentHeader.getBaseFee().orElse(Wei.of(0x3b9aca00)),
+                0,
+                15000000L))
+        .buildHeader();
+  }
+
+  private PendingTransaction createLocalTransaction(final long transactionNumber) {
+    return PendingTransaction.newPendingTransaction(
+        new TransactionTestFixture()
+            .value(Wei.of(transactionNumber + 1))
+            .to(Optional.of(Address.ZERO))
+            .gasLimit(53000L)
+            .gasPrice(
+                Wei.fromHexString(
+                    "0x00000000000000000000000000000000000000000000000000000013b9aca00"))
+            .maxFeePerGas(
+                Optional.of(
+                    Wei.fromHexString(
+                        "0x00000000000000000000000000000000000000000000000000000013b9aca00")))
+            .maxPriorityFeePerGas(Optional.of(Wei.of(100_000)))
+            .nonce(transactionNumber)
+            .createTransaction(KEYS1),
+        true,
+        true,
+        MAX_SCORE);
+  }
+
+  @Test
+  public void updateForkChoiceShouldFailWhenWorldStateUnavailable() {
+    // Build a chain: genesis → terminal → block1 → block2
+    BlockHeader terminalHeader = terminalPowBlock();
+    sendNewPayloadAndForkchoiceUpdate(
+        new Block(terminalHeader, BlockBody.empty()), Optional.empty(), Hash.ZERO);
+
+    BlockHeader block1Header = nextBlockHeader(terminalHeader);
+    Block block1 = new Block(block1Header, BlockBody.empty());
+    sendNewPayloadAndForkchoiceUpdate(block1, Optional.empty(), terminalHeader.getHash());
+
+    BlockHeader block2Header = nextBlockHeader(block1Header);
+    Block block2 = new Block(block2Header, BlockBody.empty());
+    sendNewPayloadAndForkchoiceUpdate(block2, Optional.empty(), block1Header.getHash());
+
+    assertThat(blockchain.getChainHeadHash()).isEqualTo(block2Header.getHash());
+
+    BlockHeader block3Header = nextBlockHeader(block2Header);
+    Block block3 = new Block(block3Header, BlockBody.empty());
+
+    // Simulate world state roll failure (storage error, pruned trie logs, etc.)
+    WorldStateArchive failingArchive = mock(WorldStateArchive.class);
+    when(failingArchive.getWorldState(
+            any(org.hyperledger.besu.ethereum.worldstate.WorldStateQueryParams.class)))
+        .thenReturn(Optional.empty());
+
+    ProtocolContext failingProtocolContext =
+        new ProtocolContext.Builder()
+            .withBlockchain(blockchain)
+            .withWorldStateArchive(failingArchive)
+            .withConsensusContext(mergeContext)
+            .withBadBlockManager(badBlockManager)
+            .build();
+
+    MergeCoordinator failingCoordinator =
+        new MergeCoordinator(
+            failingProtocolContext,
+            protocolSchedule,
+            ethScheduler,
+            transactionPool,
+            miningConfiguration,
+            backwardSyncContext);
+
+    coordinator.rememberBlock(block3);
+    clearInvocations(blockchain);
+
+    ForkchoiceResult result =
+        failingCoordinator.updateForkChoice(
+            block3Header, block1Header.getHash(), block1Header.getHash());
+
+    assertThat(result.shouldNotProceedToPayloadBuildProcess()).isTrue();
+    assertThat(result.getStatus()).isEqualTo(ForkchoiceResult.Status.INTERNAL_ERROR);
+    assertThat(result.getErrorMessage()).isPresent();
+    assertThat(result.getLatestValid()).isEmpty();
+
+    assertThat(blockchain.getChainHeadHash()).isEqualTo(block2Header.getHash());
+
+    verify(blockchain, never()).setFinalized(block1Header.getHash());
+    verify(blockchain, never()).setSafeBlock(block1Header.getHash());
+  }
+
+  @Test
+  public void updateForkChoiceToTheChainHeadMovesTheWorldStateToIt() {
+    final BlockHeader terminalHeader = terminalPowBlock();
+    sendNewPayloadAndForkchoiceUpdate(
+        new Block(terminalHeader, BlockBody.empty()), Optional.empty(), Hash.ZERO);
+    final BlockHeader block1Header = nextBlockHeader(terminalHeader);
+    sendNewPayloadAndForkchoiceUpdate(
+        new Block(block1Header, BlockBody.empty()), Optional.empty(), terminalHeader.getHash());
+    assertThat(blockchain.getChainHeadHash()).isEqualTo(block1Header.getHash());
+
+    // backward sync may have left the head world state at another block
+    final WorldStateArchive movingArchive = mock(WorldStateArchive.class);
+    when(movingArchive.getWorldState(
+            any(org.hyperledger.besu.ethereum.worldstate.WorldStateQueryParams.class)))
+        .thenReturn(Optional.of(mock(MutableWorldState.class)));
+    final MergeCoordinator movingCoordinator =
+        new MergeCoordinator(
+            new ProtocolContext.Builder()
+                .withBlockchain(blockchain)
+                .withWorldStateArchive(movingArchive)
+                .withConsensusContext(mergeContext)
+                .withBadBlockManager(badBlockManager)
+                .build(),
+            protocolSchedule,
+            ethScheduler,
+            transactionPool,
+            miningConfiguration,
+            backwardSyncContext);
+
+    final ForkchoiceResult result =
+        movingCoordinator.updateForkChoice(
+            block1Header, terminalHeader.getHash(), terminalHeader.getHash());
+
+    assertThat(result.getStatus()).isEqualTo(ForkchoiceResult.Status.VALID);
+    verify(movingArchive).getWorldState(withBlockHeaderAndUpdateNodeHead(block1Header));
+    assertThat(blockchain.getChainHeadHash()).isEqualTo(block1Header.getHash());
+  }
+
+  private static BlockHeader mockBlockHeader() {
+    final BlockHeader blockHeader = mock(BlockHeader.class);
+    when(blockHeader.getBaseFee()).thenReturn(Optional.of(Wei.ONE));
+    return blockHeader;
+  }
+}

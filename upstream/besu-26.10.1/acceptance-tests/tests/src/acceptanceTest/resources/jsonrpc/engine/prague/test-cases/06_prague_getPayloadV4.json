@@ -1,0 +1,46 @@
+{
+  "request": {
+    "jsonrpc": "2.0",
+    "method": "engine_getPayloadV4",
+    "params": [
+      "0x7d7d1b691f9f4120"
+    ],
+    "id": 67
+  },
+  "response": {
+    "jsonrpc": "2.0",
+    "id": 67,
+    "result": {
+      "executionPayload": {
+        "parentHash": "0x7cccf6d9ce3e5acaeac9058959c27ace53af3a30b15763e1703bab2d0ae9438e",
+        "feeRecipient": "0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b",
+        "stateRoot": "0xb34b0b33f95b121ae9d88d3965ec26977cc153b55514851b7473648f853265a8",
+        "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+        "prevRandao": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "gasLimit": "0x1ca35ef",
+        "gasUsed": "0x0",
+        "timestamp": "0x20",
+        "extraData": "0x",
+        "baseFeePerGas": "0x7",
+        "excessBlobGas": "0x0",
+        "blobGasUsed": "0x0",
+        "transactions": [],
+        "withdrawals": [],
+        "blockNumber": "0x2",
+        "receiptsRoot": "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+        "blockHash": "0xbd2ed736c1fe572591ca3e5862c9d8dd5c59d27e968bae4f7e145861f67798b5"
+      },
+      "blockValue": "0x0",
+      "blobsBundle": {
+        "commitments": [],
+        "proofs": [],
+        "blobs": []
+      },
+      "shouldOverrideBuilder": false,
+      "executionRequests": [
+        "0x01a4664c40aacebd82a2db79f0ea36c06bc6a19adbb10a4a15bf67b328c9b101d09e5c6ee6672978fdad9ef0d9e2ceffaee99223555d8601f0cb3bcc4ce1af9864779a416e0000000000000000"
+      ]
+    }
+  },
+  "statusCode": 200
+}

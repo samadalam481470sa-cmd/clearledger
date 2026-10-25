@@ -1,0 +1,63 @@
+apply plugin: 'java-library'
+
+compileJava {
+  options.errorprone {
+    check('NullAway', net.ltgt.gradle.errorprone.CheckSeverity.ERROR)
+    option('NullAway:AnnotatedPackages', 'org.hyperledger.besu.ethereum.blockcreation')
+  }
+}
+
+tasks.named('compileTestJava', JavaCompile).configure {
+  options.errorprone {
+    check('NullAway', net.ltgt.gradle.errorprone.CheckSeverity.OFF)
+  }
+}
+
+jar {
+  archiveBaseName = calculateArtifactId(project)
+  manifest {
+    attributes(
+      'Specification-Title': archiveBaseName,
+      'Specification-Version': project.version,
+      'Implementation-Title': archiveBaseName,
+      'Implementation-Version': calculateVersion(),
+      'Commit-Hash': getGitCommitDetails(40).hash
+      )
+  }
+}
+
+dependencies {
+  errorprone 'com.uber.nullaway:nullaway'
+
+  implementation project(':config')
+  implementation project(':crypto:algorithms')
+  implementation project(':datatypes')
+  implementation project(':ethereum:blockcreation:plugin-api')
+  implementation project(':ethereum:core')
+  implementation project(':ethereum:eth')
+  implementation project(':evm')
+  implementation project(':services:kvstore')
+  implementation project(':util')
+
+  implementation 'com.google.guava:guava'
+  implementation 'io.vertx:vertx-core'
+  implementation 'io.consensys.tuweni:tuweni-bytes'
+  implementation 'io.consensys.tuweni:tuweni-units'
+
+  compileOnly 'org.jspecify:jspecify'
+
+  testImplementation project(':app')
+  testImplementation project(path: ':config', configuration: 'testSupportArtifacts')
+  testImplementation project(path: ':ethereum:core', configuration: 'testArtifacts')
+  testImplementation project(path: ':ethereum:core', configuration: 'testSupportArtifacts')
+  testImplementation project(':ethereum:referencetests')
+  testImplementation project(':metrics:core')
+  testImplementation project(':testutil')
+
+  testImplementation 'com.fasterxml.jackson.core:jackson-databind'
+  testImplementation 'org.assertj:assertj-core'
+  testImplementation 'org.awaitility:awaitility'
+  testImplementation 'org.junit.jupiter:junit-jupiter'
+  testImplementation 'org.mockito:mockito-junit-jupiter'
+  testImplementation 'org.mockito:mockito-core'
+}

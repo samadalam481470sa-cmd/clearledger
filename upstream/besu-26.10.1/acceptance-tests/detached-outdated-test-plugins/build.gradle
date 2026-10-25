@@ -1,0 +1,27 @@
+plugins {
+    id 'net.consensys.besu-plugin-distribution' version '0.3.0'
+}
+
+group = 'org.hyperledger.besu.tests'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
+}
+
+jar {
+    archiveFileName = 'outdatedTestPlugins.jar'
+    manifest {
+        attributes(
+                'Specification-Title': archiveBaseName,
+                'Specification-Version': project.version,
+                'Implementation-Title': archiveBaseName,
+                'Implementation-Version': project.version
+        )
+    }
+}
+
+repositories {
+    mavenLocal()
+}

@@ -1,0 +1,166 @@
+/*
+ * Copyright contributors to Hyperledger Besu.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+ * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations under the License.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+package org.hyperledger.besu.ethereum.api.jsonrpc.internal.methods;
+
+import static org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.RpcErrorType.BLOCK_NOT_FOUND;
+import static org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.RpcErrorType.INTERNAL_ERROR;
+
+import org.hyperledger.besu.ethereum.api.ApiConfiguration;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.JsonRpcRequestContext;
+import org.hyperledger.besu.ethereum.api.jsonrpc.internal.response.JsonRpcErrorResponse;
+import org.hyperledger.besu.ethereum.api.query.BlockchainQueries;
+import org.hyperledger.besu.ethereum.core.BlockHeader;
+import org.hyperledger.besu.ethereum.debug.TraceOptions;
+import org.hyperledger.besu.ethereum.mainnet.ProtocolSchedule;
+import org.hyperledger.besu.ethereum.mainnet.ProtocolSpec;
+import org.hyperledger.besu.ethereum.mainnet.TransactionValidationParams;
+import org.hyperledger.besu.ethereum.transaction.CallParameter;
+import org.hyperledger.besu.ethereum.transaction.PreCloseStateHandler;
+import org.hyperledger.besu.ethereum.transaction.TransactionSimulator;
+import org.hyperledger.besu.evm.tracing.OpCodeTracerConfigBuilder;
+import org.hyperledger.besu.evm.tracing.OperationTracer;
+
+import java.util.Optional;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+public abstract class AbstractTraceCall extends AbstractTraceByBlock {
+  private static final Logger LOG = LoggerFactory.getLogger(AbstractTraceCall.class);
+
+  private final long serverStepLimit;
+
+  protected AbstractTraceCall(
+      final BlockchainQueries blockchainQueries,
+      final ProtocolSchedule protocolSchedule,
+      final TransactionSimulator transactionSimulator) {
+    this(blockchainQueries, protocolSchedule, transactionSimulator, (ApiConfiguration) null);
+  }
+
+  protected AbstractTraceCall(
+      final BlockchainQueries blockchainQueries,
+      final ProtocolSchedule protocolSchedule,
+      final TransactionSimulator transactionSimulator,
+      final ApiConfiguration apiConfiguration) {
+    super(blockchainQueries, protocolSchedule, transactionSimulator);
+    this.serverStepLimit =
+        apiConfiguration != null ? apiConfiguration.getDebugTraceStepLimit() : 0L;
+  }
+
+  @Override
+  protected Object resultByBlockNumber(
+      final JsonRpcRequestContext requestContext, final long blockNumber) {
+    final Optional<BlockHeader> maybeBlockHeader =
+        blockchainQueriesSupplier.get().getBlockHeaderByNumber(blockNumber);
+
+    if (maybeBlockHeader.isEmpty()) {
+      return new JsonRpcErrorResponse(requestContext.getRequest().getId(), BLOCK_NOT_FOUND);
+    }
+
+    return resultByBlockHeader(requestContext, maybeBlockHeader.get());
+  }
+
+  protected Object resultByBlockHeader(
+      final JsonRpcRequestContext requestContext, final BlockHeader blockHeader) {
+    final CallParameter callParams = getCallParams(requestContext);
+    final TraceOptions traceOptions = getTraceOptions(requestContext);
+    LOG.atTrace()
+        .setMessage("Received RPC rpcName={} callParams={} block={} traceTypes={}")
+        .addArgument(this::getName)
+        .addArgument(callParams)
+        .addArgument(blockHeader::getNumber)
+        .addArgument(traceOptions)
+        .log();
+
+    final ProtocolSpec protocolSpec = protocolSchedule.getByBlockHeader(blockHeader);
+
+    final TraceOptions effectiveTraceOptions = applyServerStepLimit(traceOptions);
+    final TraceExecution execution =
+        createTraceExecution(requestContext, effectiveTraceOptions, protocolSpec);
+    return transactionSimulator
+        .process(
+            callParams,
+            Optional.ofNullable(effectiveTraceOptions.stateOverrides()),
+            buildTransactionValidationParams(blockHeader, callParams),
+            execution.tracer(),
+            execution.resultHandler(),
+            blockHeader)
+        .orElseGet(
+            () -> new JsonRpcErrorResponse(requestContext.getRequest().getId(), INTERNAL_ERROR));
+  }
+
+  protected CallParameter getCallParams(final JsonRpcRequestContext requestContext) {
+    return CallParameterUtil.validateAndGetCallParams(requestContext);
+  }
+
+  /**
+   * Clamps the caller-supplied step limit to the operator-configured server ceiling. If the server
+   * limit is 0 (operator opt-out), the caller's value is used as-is. If the caller supplies 0
+   * (unlimited), the server ceiling is applied. Otherwise the minimum of the two is used.
+   */
+  protected TraceOptions applyServerStepLimit(final TraceOptions traceOptions) {
+    if (serverStepLimit <= 0) {
+      return traceOptions;
+    }
+    final int callerLimit = traceOptions.opCodeTracerConfig().limit();
+    final int effectiveLimit =
+        callerLimit > 0
+            ? (int) Math.min(callerLimit, Math.min(serverStepLimit, Integer.MAX_VALUE))
+            : (int) Math.min(serverStepLimit, Integer.MAX_VALUE);
+    if (effectiveLimit == callerLimit) {
+      return traceOptions;
+    }
+    final var newConfig =
+        OpCodeTracerConfigBuilder.createFrom(traceOptions.opCodeTracerConfig())
+            .limit(effectiveLimit)
+            .build();
+    return new TraceOptions(
+        traceOptions.tracerType(),
+        newConfig,
+        traceOptions.tracerConfig(),
+        traceOptions.stateOverrides());
+  }
+
+  protected TransactionValidationParams buildTransactionValidationParams(
+      final BlockHeader header, final CallParameter callParams) {
+    return CallParameterUtil.getTransactionValidationParams(header, callParams);
+  }
+
+  protected abstract TraceOptions getTraceOptions(final JsonRpcRequestContext requestContext);
+
+  /**
+   * Creates the {@link TraceExecution} pairing the {@link OperationTracer} with its corresponding
+   * {@link PreCloseStateHandler} result processor.
+   *
+   * @param requestContext the JSON-RPC request context
+   * @param traceOptions the trace options
+   * @param protocolSpec the protocol spec
+   * @return the trace execution pair
+   */
+  protected abstract TraceExecution createTraceExecution(
+      final JsonRpcRequestContext requestContext,
+      final TraceOptions traceOptions,
+      final ProtocolSpec protocolSpec);
+
+  /**
+   * Pairs the {@link OperationTracer} for transaction simulation with its corresponding {@link
+   * PreCloseStateHandler} result processor.
+   *
+   * @param tracer the tracer driving transaction execution
+   * @param resultHandler the simulation result handler producing the RPC response
+   */
+  protected record TraceExecution(
+      OperationTracer tracer, PreCloseStateHandler<Object> resultHandler) {}
+}

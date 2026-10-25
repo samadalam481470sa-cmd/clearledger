@@ -1,0 +1,16 @@
+{
+  "request": {
+    "id": 303,
+    "jsonrpc": "2.0",
+    "method": "eth_getBlockReceipts",
+    "params": [
+      "0x0000000000000000000000000000000000000000000000000000000000000000"
+    ]
+  },
+  "response": {
+    "jsonrpc": "2.0",
+    "id": 303,
+    "result": null
+  },
+"statusCode": 200
+}

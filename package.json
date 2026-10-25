@@ -1,0 +1,39 @@
+{
+  "name": "clearledger",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Portfolio fintech settlement system on an EVM blockchain",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "compile": "tsx scripts/compile.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsx scripts/compile.ts && tsx scripts/build.ts",
+    "test": "tsx --test --test-concurrency=1 tests/*.test.ts",
+    "demo": "tsx scripts/demo.ts",
+    "start": "tsx src/server.ts",
+    "network:generate": "tsx scripts/network.ts",
+    "source:count": "tsx scripts/count-source.ts",
+    "network:deploy": "tsx scripts/compile.ts && tsx scripts/deploy-network.ts"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "5.4.0",
+    "ethers": "6.17.0",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.0",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "ganache": "7.9.2",
+    "memdown": "6.1.1",
+    "solc": "0.8.30",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3",
+    "vite": "7.1.12"
+  }
+}

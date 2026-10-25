@@ -1,0 +1,129 @@
+/*
+ * Copyright contributors to Hyperledger Besu.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+ * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations under the License.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+package org.hyperledger.besu.tests.acceptance.config;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import org.hyperledger.besu.crypto.KeyPair;
+import org.hyperledger.besu.crypto.SECPPrivateKey;
+import org.hyperledger.besu.crypto.SignatureAlgorithm;
+import org.hyperledger.besu.tests.acceptance.dsl.AcceptanceTestBase;
+import org.hyperledger.besu.tests.acceptance.dsl.node.Node;
+import org.hyperledger.besu.tests.acceptance.dsl.node.cluster.Cluster;
+import org.hyperledger.besu.tests.acceptance.dsl.node.cluster.ClusterConfigurationBuilder;
+import org.hyperledger.besu.tests.acceptance.dsl.node.configuration.BesuNodeConfigurationBuilder;
+
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+import org.apache.tuweni.bytes.Bytes32;
+import org.bouncycastle.asn1.sec.SECNamedCurves;
+import org.bouncycastle.asn1.x9.X9ECParameters;
+import org.bouncycastle.crypto.params.ECDomainParameters;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+
+public class BootNodesGenesisSetupTest extends AcceptanceTestBase {
+  private static final String CURVE_NAME = "secp256k1";
+  private static final String ALGORITHM = SignatureAlgorithm.ALGORITHM;
+
+  private static ECDomainParameters curve;
+
+  private Cluster noDiscoveryCluster;
+
+  @BeforeAll
+  public static void environment() {
+    final X9ECParameters params = SECNamedCurves.getByName(CURVE_NAME);
+    curve = new ECDomainParameters(params.getCurve(), params.getG(), params.getN(), params.getH());
+  }
+
+  @BeforeEach
+  public void setUp() {
+    noDiscoveryCluster =
+        new Cluster(new ClusterConfigurationBuilder().awaitPeerDiscovery(false).build(), net);
+  }
+
+  @AfterEach
+  @Override
+  public void tearDownAcceptanceTestBase() {
+    noDiscoveryCluster.close();
+    super.tearDownAcceptanceTestBase();
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"enode", "enr"})
+  public void shouldConnectNodesViaBootnodesInGenesis(final String bootnodeField) throws Exception {
+    // Pin discovery mode to the one that consumes this bootnode format.
+    final String discoveryMode = bootnodeField.equals("enr") ? "V5" : "V4";
+
+    final KeyPair nodeAKeyPair =
+        createKeyPair(
+            Bytes32.fromHexString(
+                "0x8f2a55949038a9610f50fb23b5883af3b4ecb3c3bb792cbcefbd1542c692be63"));
+    final KeyPair nodeBKeyPair =
+        createKeyPair(
+            Bytes32.fromHexString(
+                "0xc87509a1c067bbde78beb793e6fa76530b6382a4c0241e5e4a9ec0a0f44dc0d3"));
+
+    // Start nodeA first with no genesis bootnodes — it just listens for incoming connections
+    final Node nodeA =
+        besu.createNode("nodeA", b -> addDiscoveryBootnodes(b, nodeAKeyPair, null, discoveryMode));
+    noDiscoveryCluster.addNode(nodeA);
+
+    final Map<String, Object> nodeAInfo = nodeA.execute(admin.nodeInfo());
+    final String nodeABootnode = (String) nodeAInfo.get(bootnodeField);
+    assertThat(nodeABootnode).isNotNull();
+
+    final Node nodeB =
+        besu.createNode(
+            "nodeB", b -> addDiscoveryBootnodes(b, nodeBKeyPair, nodeABootnode, discoveryMode));
+    noDiscoveryCluster.addNode(nodeB);
+
+    nodeA.verify(net.awaitPeerCount(1));
+    nodeA.verify(admin.hasPeer(nodeB));
+    nodeB.verify(admin.hasPeer(nodeA));
+  }
+
+  private KeyPair createKeyPair(final Bytes32 privateKey) {
+    return KeyPair.create(SECPPrivateKey.create(privateKey, ALGORITHM), curve, ALGORITHM);
+  }
+
+  private BesuNodeConfigurationBuilder addDiscoveryBootnodes(
+      final BesuNodeConfigurationBuilder b,
+      final KeyPair keyPair,
+      final String bootnode,
+      final String discoveryMode) {
+    final String discoverySection =
+        bootnode != null
+            ? String.format("\"discovery\":{\"bootnodes\":[\"%s\"]}", bootnode)
+            : "\"discovery\":{}";
+    return b.devMode(false)
+        .keyPair(keyPair)
+        .genesisConfigProvider(
+            nodes ->
+                Optional.of(
+                    String.format(
+                        "{\"config\":{\"ethash\":{},%s},\"gasLimit\":\"0x1\",\"difficulty\":\"0x1\"}",
+                        discoverySection)))
+        .bootnodeEligible(false)
+        .extraCLIOptions(List.of("--discovery-mode=" + discoveryMode))
+        .jsonRpcEnabled()
+        .jsonRpcAdmin();
+  }
+}
