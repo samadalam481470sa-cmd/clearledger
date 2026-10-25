@@ -2,7 +2,7 @@ name: clearledger-dev
 x-validator: &validator
   image: hyperledger/besu:26.10.1@sha256:47aa21463213abcddc5972bc79443e6806c1c7c68e8f36ed33222882fbad8752
   restart: unless-stopped
-  user: "0:0"
+  user: "${BESU_CONTAINER_UID:-1000}:${BESU_CONTAINER_GID:-1000}"
   environment: &validator-environment
     JAVA_OPTS: -Xms128m -Xmx512m
   command:
@@ -30,7 +30,7 @@ services:
     ports: ["127.0.0.1:8545:8545"]
     volumes:
       - ./generated/validator1:/config:ro
-      - validator1-data:/data
+      - ./generated/validator1/data:/data
     networks:
       settlement:
         ipv4_address: 172.28.77.11
@@ -43,7 +43,7 @@ services:
     ports: ["127.0.0.1:8546:8545"]
     volumes:
       - ./generated/validator2:/config:ro
-      - validator2-data:/data
+      - ./generated/validator2/data:/data
     networks:
       settlement:
         ipv4_address: 172.28.77.12
@@ -56,7 +56,7 @@ services:
     ports: ["127.0.0.1:8547:8545"]
     volumes:
       - ./generated/validator3:/config:ro
-      - validator3-data:/data
+      - ./generated/validator3/data:/data
     networks:
       settlement:
         ipv4_address: 172.28.77.13
@@ -69,7 +69,7 @@ services:
     ports: ["127.0.0.1:8548:8545"]
     volumes:
       - ./generated/validator4:/config:ro
-      - validator4-data:/data
+      - ./generated/validator4/data:/data
     networks:
       settlement:
         ipv4_address: 172.28.77.14
@@ -78,9 +78,4 @@ networks:
     internal: true
     ipam:
       config: [{subnet: 172.28.77.0/24}]
-volumes:
-  validator1-data:
-  validator2-data:
-  validator3-data:
-  validator4-data:
 

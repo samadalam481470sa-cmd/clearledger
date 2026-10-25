@@ -28,6 +28,7 @@ export function generateNetwork(root = resolve('network/generated')) {
   for (let i = 0; i < 4; i++) {
     const node = root + '/validator' + (i + 1);
     mkdirSync(node, { recursive: true });
+    mkdirSync(node + '/data', { recursive: true });
     // One read-only config mount per node; no nested file mount inside a read-only directory.
     writeFileSync(node + '/genesis.json', serialized);
     writeFileSync(node + '/key', validators[i].privateKey.slice(2), { mode: 0o600 });

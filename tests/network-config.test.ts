@@ -1,6 +1,6 @@
 import { beforeEach, afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { resolve, join, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
 import { decodeRlp, Wallet, SigningKey } from 'ethers';
@@ -32,6 +32,7 @@ test('generated QBFT membership, node keys and permission files agree', () => {
   const enodes: string[] = [];
   for (let i = 0; i < 4; i++) {
     const node = join(target, 'validator' + (i + 1));
+    assert.ok(statSync(join(node, 'data')).isDirectory());
     assert.deepEqual(JSON.parse(readFileSync(join(node, 'genesis.json'), 'utf8')), genesis);
     const key = '0x' + readFileSync(join(node, 'key'), 'utf8');
     assert.equal(new Wallet(key).address, addresses.validators[i]);
