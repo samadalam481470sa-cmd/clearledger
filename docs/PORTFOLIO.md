@@ -9,6 +9,7 @@
 5. Submit 10,000.000001 dUSD and show contract rejection above the per-payment cap.
 6. Reconcile receipts and explain what a canonical-block mismatch would mean.
 7. Open the tests and discuss crash recovery, response loss, and token conservation.
+8. Browse payment and journal pages, then explain why asset volumes stay separate and RPC tokens display base units until metadata is explicitly known.
 
 ## Résumé wording
 

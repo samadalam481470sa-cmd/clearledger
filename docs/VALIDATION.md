@@ -19,7 +19,7 @@ The initial suite passed 30 tests. The combined suite on October 25, 2026 passed
 - Docker/Besu operation on the original Windows host, two-validator loss, hostile peers, and independent-host failures. The passing GitHub Actions single-host scenario is documented below.
 - Production, security audit, load/soak performance, and upstream Besu's own test suite.
 - Complete reorganization repair, full-chain event indexing, and multi-process relayer coordination.
-- Frontend adoption of paginated APIs and per-asset totals; the dashboard remains a recent-record demo-currency view.
+- Browser verification of the paginated dashboard, including interactions and accessibility; model/API/server-rendered checks are described below.
 
 ## File-backed recovery increment — October 25, 2026
 
@@ -107,13 +107,23 @@ Its content-addressed tree SHA, `c947995d42108b239349568ff7def50ea4779f7c`, exac
 
 The initial [push workflow run 40173477932](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40173477932) completed with conclusion **success** for source head `762dd075d4b3dbe8d04a0e88fa24550818f734a7`. Job `121109103415` reported all steps successful, including dependency installation (`npm ci`), strict TypeScript checks, tests, Solidity/frontend build, and source counting. The completed run conclusion and job-step results were verified separately. This is the first remote CI verification; it does not establish Docker/Besu operation, browser QA, production readiness, or a security audit.
 
+## Dashboard collection and asset-volume increment
+
+Fourteen targeted checks passed in 558.5743 ms: eleven controller/formatting tests, one real HTTP/API/controller integration, and two server-rendered presentation tests. The combined local suite passed **96 tests, 96 passes, zero failures**, exit 0, in 85,306.2986 ms. Strict TypeScript checking and the Solidity/Vite build passed after the final reconciliation-context fix. Publication/CI verification is pending.
+
+Controller checks cover cursor history, failed navigation/retry, cancellation, obsolete successes/errors, disposal, malformed/cyclic pages, and uint256-scale formatting. The HTTP test uses 127 synthetic journaled projection records to traverse beyond overview's 100-row preview, retain an insertion boundary, retry authentication failure, and verify distinct asset totals. It is not an extra EVM settlement test. Presentation assertions preserve separate settled/review values and token-specific units without a browser.
+
+The dashboard now uses independent 25-row payment and journal pages, separate per-asset volumes, explicit historical-page refresh behavior, and receipt snapshots. Metadata and page polling are serialized within their own loops, and obsolete contexts are discarded. A payment acknowledgement is reported before background reads; uncertain submission outcomes warn the user to inspect history before retrying. This does not give the demo endpoint a durable client idempotency key.
+
+Browser-origin access remains denied. No alternative browser route was used, so layout, browser events, focus behavior, and accessibility remain unverified. The backend and network configuration were unchanged; the previous Besu workflow result remains the network evidence.
+
 ## Reproduced source count
 
-The current lifecycle-increment source count is 625,249 nonblank source lines, including comments and tests:
+The current dashboard-increment source count is 625,904 nonblank source lines, including comments and tests:
 
 | Source | Files | Physical lines | Nonblank lines |
 | --- | ---: | ---: | ---: |
-| Original application | 28 | 2,471 | 2,337 |
+| Original application | 33 | 3,158 | 2,992 |
 | Attributed Besu snapshot | 4,484 | 714,385 | 622,912 |
 
 The script's exclusions and methodology are recorded in `docs/source-count.json`; the size is not a claim of independently authored executable statements.

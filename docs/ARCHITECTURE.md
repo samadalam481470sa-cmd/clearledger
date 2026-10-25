@@ -60,7 +60,7 @@ a later tick. A timeout never proves that a submitted transaction was rejected.
 
 The EIP-712 domain is ClearLedger version 1 with chain ID and verifying contract. Instructions contain payment ID, payer, payee, token, amount, nonce, and deadline. The contract requires a valid EOA signature, current payer nonce, unused payer-scoped ID, and an unexpired deadline.
 
-Amounts are integer strings in smallest token units at the API boundary and uint256 on chain. Settlement does not use floating-point arithmetic. The dashboard assumes the six-decimal demo asset.
+Amounts are integer strings in smallest token units at the API boundary and uint256 on chain. Settlement does not use floating-point arithmetic. The dashboard applies six-decimal dUSD formatting only to the explicitly configured local demo asset. RPC assets and other tokens retain exact base-unit strings and their token addresses.
 
 An identical API retry returns its existing record. Different instructions with an existing payer/payment ID produce HTTP 409. Failed instructions remain recorded; a replacement requires a newly authorized ID.
 
@@ -72,7 +72,9 @@ Supported assets must be reviewed standard tokens without rebasing or transfer f
 
 Finalization checks confirmation count, matching event fields, and the receipt's canonical block hash. Reconciliation detects a later mismatch and marks the payment for review; it does not automatically reverse or rebuild journals.
 
-Only payments submitted through this API are journaled. Direct contract calls and ordinary token transfers are not indexed. Overview returns bounded previews of the latest 100 payment records and 100 journal rows. The dashboard still formats the demo asset and does not yet use the paginated/per-asset APIs.
+Only payments submitted through this API are journaled. Direct contract calls and ordinary token transfers are not indexed. Overview returns bounded previews of the latest 100 payment records and 100 journal rows. The dashboard uses separate 25-row payment and journal pages, and per-asset totals rather than calculating global volume from overview previews.
+
+Dashboard cursor history belongs to one authentication, network, collection, and payment-filter context. Navigation commits only after a successful response. Superseded requests are aborted and late completions ignored. The newest page can refresh periodically; older pages stay still until navigation or an explicit return to latest. These cursors preserve an insertion range, not a transactional snapshot of changing payment statuses. Journal history has no current payment status field, and is not labelled as currently canonical settlement.
 
 Payment and journal APIs use descending insertion-row-ID keyset pages, default 50 and maximum 100. Their versioned cursors retain collection, status filter, upper insertion boundary, and next position. New inserts above the initial upper boundary do not enter that scan; status changes are not transactionally frozen. Collection/status mismatch and invalid query metadata are rejected.
 

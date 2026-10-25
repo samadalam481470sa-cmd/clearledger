@@ -79,12 +79,22 @@ Project writes are confined to the new `outputs/clearledger/` directory and task
 - Exact repeated reservations/finalization/terminal details are no-ops without duplicate audit entries; conflicting repetitions and terminal rewrites are rejected.
 - Finalization compares all existing journal fields with payment/transaction/block provenance. A settled retry with a missing or inconsistent journal is rejected, rather than silently using `INSERT OR IGNORE`.
 - Existing-intent reads now share `BEGIN IMMEDIATE` with acceptance insertion/audit writes.
-- Current source count: **625,249 nonblank lines**, including comments/tests. Original: 28 files, 2,471 physical lines, 2,337 nonblank lines. Attributed Besu: 4,484 files, 714,385 physical lines, 622,912 nonblank lines.
+- Lifecycle-increment source count: **625,249 nonblank lines**, including comments/tests. Original: 28 files, 2,471 physical lines, 2,337 nonblank lines. Attributed Besu: 4,484 files, 714,385 physical lines, 622,912 nonblank lines.
 - Full local `npm test` passed **82 tests, 82 passes, zero failures, exit code 0**, in 86,524.5499 ms. Strict TypeScript checks passed. `src/store.ts` changes now trigger the Besu network acceptance workflow.
 - Published source commit [`5502af2cd86e17c7da185377e2d2fa3ed3a43c63`](https://github.com/samadalam481470sa-cmd/clearledger/commit/5502af2cd86e17c7da185377e2d2fa3ed3a43c63), public tree `8c6c1f5db6085def8ce41cab4a6755d33b772097`, passed both CI workflows. Conclusions, job steps, and logs were verified.
 - Regular run [`40190456973`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40190456973), job `121160152689`, passed all **82 tests**, zero failures, in 39,654.135943 ms, plus strict typecheck, Solidity/Vite build, and source count 625,249.
 - Besu run [`40190456959`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40190456959), job `121160152352`, passed four-node block-1 agreement, signed 125 dUSD settlement at block 23 with one journal/zero reconciliation exceptions, progress 24→26 while validator 4 stopped, and all-four catch-up at 28. Scenario duration was 73,765 ms, not a throughput benchmark, on one Ubuntu Docker host.
 - The 26 targeted SQLite cases do not by themselves prove EVM behavior, immutable storage, or multiworker correctness. The combined suite includes existing EVM/recovery/transport tests, and the separate Besu rerun verified the scripted live-network case. Single-worker and other stated deployment limits remain.
+
+## Dashboard collection and asset-volume increment
+
+- Separate 25-row payment and journal pages use server cursors, status filtering for payments, retained history on failed navigation, and explicit return-to-latest controls. Auth/filter/chain/router changes discard obsolete page contexts. The newest pages refresh periodically; historical pages do not move during polling.
+- Per-asset settled/review transfer volume comes from `/api/totals`. RPC and unknown assets show exact base-unit strings; six-decimal dUSD formatting is limited to the known local demo token. No cross-asset money amount or wallet balance is invented.
+- Fourteen targeted model/API/server-rendered checks passed in 558.5743 ms. The real HTTP/controller test uses 127 synthetic journaled projection records to traverse beyond overview's 100-row preview, preserve a scan across a new insertion, retry authentication failure, and check separate exact asset totals. These are synthetic records, not extra on-chain settlements.
+- Full local `npm test` passed **96 tests, 96 passes, zero failures**, exit 0, in 85,306.2986 ms. Strict typecheck and the Solidity/Vite build passed after the final UI reconciliation-context fix.
+- Payment acknowledgements are reported before independent read refreshes. Uncertain payment outcomes warn users to check history; this does not add durable client idempotency to the demo signing endpoint. Receipt dialogs are explicitly timestamped snapshots. Reconciliation responses from a replaced network are labelled accordingly.
+- Source count: **625,904 nonblank lines**, including comments/tests. Original: 33 files, 3,158 physical lines, 2,992 nonblank lines; attributed Besu: 4,484 files, 714,385 physical lines, 622,912 nonblank lines.
+- Publication/new CI verification is pending. Backend/network configuration is unchanged; the earlier Besu workflow remains network evidence. Browser-origin access remains denied, with no alternate route used. Layout, browser events, focus behavior, and accessibility remain unverified.
 
 ## Public source publication — October 25, 2026
 

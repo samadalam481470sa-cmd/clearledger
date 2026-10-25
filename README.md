@@ -38,7 +38,7 @@ On the original Windows workspace, `Start-ClearLedger.ps1` can use the Node runt
 - A matching settlement event, configured confirmation count, and canonical block are required before the transfer journal is finalized.
 - Reconciliation flags recorded settlements whose receipt or block is no longer canonical.
 - Payment and journal APIs support bounded cursor pages, and exact integer transfer-volume totals are grouped by asset. Reconciliation scans all settled pages rather than a recent-record cutoff.
-- A React dashboard exposes actual payment states, block data, receipts, and local audit events.
+- A React dashboard browses payment and transfer-journal cursor pages, shows settled/review volume separately per asset, and exposes receipt snapshots, block data, and recent local audit events. Unknown/RPC assets keep their exact base units.
 - A four-validator Besu QBFT network passed real Docker acceptance on GitHub Actions Ubuntu: common-chain agreement, signed settlement and reconciliation, progress with one validator stopped, and restart/catch-up.
 
 ## Repository
@@ -63,11 +63,11 @@ npm run build
 npm run source:count
 ```
 
-The latest regular [GitHub Actions run passed all 82 tests](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40190456973), typecheck, Solidity/frontend build, and source counting. Separate [Besu acceptance also passed](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40190456959) signed 125 dUSD settlement and one-validator failure/recovery on one Ubuntu Docker host for the same lifecycle-invariant source commit. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and remaining limits.
+The dashboard increment passed all **96 local tests**, strict typecheck, and the Solidity/frontend build; CI publication is pending. This includes 14 new controller, real HTTP/API, and server-rendered presentation checks. Prior [regular CI passed 82 tests](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40190456973), and [Besu acceptance passed](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40190456959) signed 125 dUSD settlement and one-validator failure/recovery on one Ubuntu Docker host. Browser appearance and interaction remain unverified. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and limits.
 
 ## More than 100,000 source lines
 
-The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **625,249 nonblank source lines**: 2,337 original and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
+The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **625,904 nonblank source lines**: 2,992 original and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
 
 Original application code is MIT-licensed. Besu and installed dependencies retain their own licenses. [Provenance](docs/PROVENANCE.md) pins the release, commit, and download hash.
 

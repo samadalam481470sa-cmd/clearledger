@@ -16,7 +16,7 @@ The service binds to `127.0.0.1`. Send `Authorization: Bearer <API_KEY>` on `/ap
 
 Other statuses include 400 for malformed payloads, 401 authentication, 403 Host/Origin checks, 409 conflicting instructions, 422 rejected instructions, 429 rate limits, and 503 recognized RPC transport errors. Acceptance means queued rather than settled. Poll the returned record in overview for its outcome.
 
-JSON bodies are limited to 32 KiB. Authenticated API calls are limited to 240 per minute per loopback address. Overview returns bounded previews of up to 100 payments and 100 journal rows. Its dashboard still uses recent demo-currency data rather than the paginated or per-asset APIs.
+JSON bodies are limited to 32 KiB. Authenticated API calls are limited to 240 per minute per loopback address. Overview returns bounded previews of up to 100 payments and 100 journal rows. The dashboard uses separate 25-row payment/journal pages and per-asset totals; overview still supplies network details, recent audit events, and explicitly bounded activity counts.
 
 ## Cursor pages and totals
 

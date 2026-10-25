@@ -28,7 +28,7 @@ The local demo exposes an ephemeral same-origin dashboard token and signs with a
 
 RPC mode defaults to a 5,000 ms timeout per HTTP exchange. `RPC_TIMEOUT_MS` accepts integers from 1 through 60,000. The transport makes one attempt for each exchange so retry decisions remain visible to the durable worker. A logical ethers RPC call may involve multiple exchanges; this setting is not a total-call deadline. Five controlled HTTP-proxy tests verify short 503/drop/timeout scenarios and response loss after transaction acceptance, not indefinite outages or all remote-node behaviors.
 
-Pagination cursors are validated metadata, not authentication tokens or tamper-proof snapshots. They bind the collection and filter and retain an upper insertion boundary, but do not freeze status changes. Authentication remains required for every page and totals request. The UI remains a demo-currency recent-record view; API totals must not be presented as customer balances or reserve proof.
+Pagination cursors are validated metadata, not authentication tokens or tamper-proof snapshots. They bind the collection and filter and retain an upper insertion boundary, but do not freeze status changes. Authentication remains required for every page and totals request. The dashboard presents transfer volume separately per asset and keeps review volume separate. These totals are not customer balances or reserve proof. Unknown/RPC token decimals are not inferred.
 
 Four development validators share one Docker host, so a host outage affects all of them. Node permission lists do not provide transaction confidentiality. Personal customer data should not be placed in this demo ledger.
 
