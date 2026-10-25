@@ -63,7 +63,7 @@ npm run build
 npm run source:count
 ```
 
-The dashboard increment passed all **96 local tests**, strict typecheck, and the Solidity/frontend build; CI publication is pending. This includes 14 new controller, real HTTP/API, and server-rendered presentation checks. Prior [regular CI passed 82 tests](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40190456973), and [Besu acceptance passed](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40190456959) signed 125 dUSD settlement and one-validator failure/recovery on one Ubuntu Docker host. Browser appearance and interaction remain unverified. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and limits.
+The latest [GitHub Actions run passed all 96 tests](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40213554281), strict typecheck, the Solidity/frontend build, and source counting. This includes 14 new controller, real HTTP/API, and server-rendered presentation checks. Earlier [Besu acceptance passed](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40190456959) signed 125 dUSD settlement and one-validator failure/recovery on one Ubuntu Docker host; backend/network code was unchanged in the dashboard increment. Browser appearance and interaction remain unverified. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and limits.
 
 ## More than 100,000 source lines
 

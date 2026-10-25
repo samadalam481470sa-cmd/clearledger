@@ -109,7 +109,9 @@ The initial [push workflow run 40173477932](https://github.com/samadalam481470sa
 
 ## Dashboard collection and asset-volume increment
 
-Fourteen targeted checks passed in 558.5743 ms: eleven controller/formatting tests, one real HTTP/API/controller integration, and two server-rendered presentation tests. The combined local suite passed **96 tests, 96 passes, zero failures**, exit 0, in 85,306.2986 ms. Strict TypeScript checking and the Solidity/Vite build passed after the final reconciliation-context fix. Publication/CI verification is pending.
+Fourteen targeted checks passed in 558.5743 ms: eleven controller/formatting tests, one real HTTP/API/controller integration, and two server-rendered presentation tests. The combined local suite passed **96 tests, 96 passes, zero failures**, exit 0, in 85,306.2986 ms. Strict TypeScript checking and the Solidity/Vite build passed after the final reconciliation-context fix.
+
+Published source [`0171822ddd94ef1ef1abf3dd435fddb3578ff610`](https://github.com/samadalam481470sa-cmd/clearledger/commit/0171822ddd94ef1ef1abf3dd435fddb3578ff610), tree `59c36e84d3858591371f7d9a3c14fc24973d0e9d`, passed [regular CI run `40213554281`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40213554281), job `121229747000`. The completed run conclusion, every job step, and logs were verified: 96 tests/96 passes/zero failures in 40,638.738634 ms, successful typecheck and Solidity/Vite build, and source count 625,904.
 
 Controller checks cover cursor history, failed navigation/retry, cancellation, obsolete successes/errors, disposal, malformed/cyclic pages, and uint256-scale formatting. The HTTP test uses 127 synthetic journaled projection records to traverse beyond overview's 100-row preview, retain an insertion boundary, retry authentication failure, and verify distinct asset totals. It is not an extra EVM settlement test. Presentation assertions preserve separate settled/review values and token-specific units without a browser.
 
