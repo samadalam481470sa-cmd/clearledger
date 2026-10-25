@@ -57,6 +57,14 @@ The scan's upper insertion boundary excludes newer inserts from that scan, but c
 
 The expanded combined `npm test` run passed **54/54 tests**, zero failures, exit code 0, in 57,485.5395 ms. Strict TypeScript checking passed. The UI was unchanged and the frontend build was not rerun for this increment.
 
+## Network acceptance tooling increment
+
+Two generator/configuration tests passed, checking generated cryptographic membership, enodes, identical per-node genesis copies, minimally encoded RLP round zero, newline-terminated permission TOML, and refusal to replace existing validator keys. Strict TypeScript checks passed, including `scripts/verify-network.ts`.
+
+The acceptance script and dedicated Docker workflow now target four-node chain/membership/block agreement, an actual 125 dUSD signed settlement and reconciliation, continued progress after stopping validator 4, and catch-up after restart. The Besu 26.10.1 container is pinned to a verified Docker Hub digest. **No Docker/Besu runtime success is yet claimed**: the initial host has no Docker and the dedicated workflow result is pending.
+
+The expanded 56-test combined suite and source recount are pending. Existing 54-test and initial public-CI results above/below describe earlier verified source.
+
 ## Public source verification — October 25, 2026
 
 The project is public at [samadalam481470sa-cmd/clearledger](https://github.com/samadalam481470sa-cmd/clearledger). The user-created repository was verified as public with connected write access. Source commit [`762dd075d4b3dbe8d04a0e88fa24550818f734a7`](https://github.com/samadalam481470sa-cmd/clearledger/commit/762dd075d4b3dbe8d04a0e88fa24550818f734a7) contains all 6,785 reviewed tracked files.
@@ -67,7 +75,7 @@ The initial [push workflow run 40173477932](https://github.com/samadalam481470sa
 
 ## Reproduced source count
 
-The latest October 25 count was 624,796 nonblank source lines, including comments and tests:
+The completed pagination-increment count on October 25 was 624,796 nonblank source lines, including comments and tests; the network-tooling recount is pending:
 
 | Source | Files | Physical lines | Nonblank lines |
 | --- | ---: | ---: | ---: |

@@ -15,6 +15,7 @@
     "demo": "tsx scripts/demo.ts",
     "start": "tsx src/server.ts",
     "network:generate": "tsx scripts/network.ts",
+    "network:verify": "tsx scripts/verify-network.ts",
     "source:count": "tsx scripts/count-source.ts",
     "network:deploy": "tsx scripts/compile.ts && tsx scripts/deploy-network.ts"
   },

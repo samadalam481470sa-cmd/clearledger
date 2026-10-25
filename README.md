@@ -38,7 +38,7 @@ On the original Windows workspace, `Start-ClearLedger.ps1` can use the Node runt
 - Reconciliation flags recorded settlements whose receipt or block is no longer canonical.
 - Payment and journal APIs support bounded cursor pages, and exact integer transfer-volume totals are grouped by asset. Reconciliation scans all settled pages rather than a recent-record cutoff.
 - A React dashboard exposes actual payment states, block data, receipts, and local audit events.
-- A network generator and Docker Compose definition target four Besu QBFT validators. Live multi-node operation remains unverified.
+- A network generator, digest-pinned Docker configuration, and bounded acceptance script target four Besu QBFT validators. The script checks agreement, signed settlement, one-validator failure, and restart recovery; its Docker CI run is pending.
 
 ## Repository
 
@@ -62,11 +62,11 @@ npm run build
 npm run source:count
 ```
 
-The latest combined Windows run passed **54 tests**, and strict TypeScript checking passed. The public source was published on October 25, 2026, and its first [GitHub Actions run passed](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40173477932): dependency installation, typecheck, tests, Solidity/frontend build, and source counting all succeeded. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and remaining limits.
+The last completed combined Windows run passed **54 tests**. Two new network-configuration tests and strict TypeScript checking passed; the expanded combined run and Docker network acceptance run are pending. The public source was published on October 25, 2026, and its first [GitHub Actions run passed](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40173477932): dependency installation, typecheck, tests, Solidity/frontend build, and source counting all succeeded. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and remaining limits.
 
 ## More than 100,000 source lines
 
-The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **624,796 nonblank source lines**: 1,884 original and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
+The [machine-readable count](docs/source-count.json) separates original and upstream source. The last completed count is **624,796 nonblank source lines**: 1,884 original and 622,912 in the included Besu release, including comments and tests. A recount for the network-tooling increment is pending. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
 
 Original application code is MIT-licensed. Besu and installed dependencies retain their own licenses. [Provenance](docs/PROVENANCE.md) pins the release, commit, and download hash.
 
@@ -77,10 +77,12 @@ Requires Docker Compose:
 ```sh
 npm run network:generate
 docker compose -f network/compose.yaml up -d
-npm run network:deploy
+npm run network:verify
 ```
 
-The generator refuses to overwrite an existing `network/generated/` directory. Validator and account keys are ignored by Git. Only validator 1's RPC endpoint is published, on loopback port 8545. Read the [network guide](docs/NETWORK.md) before using this mode. Four containers on one host are not four independent failure domains.
+`network:verify` deploys test contracts, settles and reconciles 125 dUSD, stops only validator 4 while checking continued progress, then restarts it and waits for catch-up. A dedicated Docker workflow is provided, but its runtime result is not yet verified. For separate reusable test-account deployment, run `npm run network:deploy` after the chain is healthy.
+
+The generator refuses to overwrite existing `network/generated/` keys. Validator RPC endpoints bind only to loopback ports 8545–8548. Read the [network guide](docs/NETWORK.md) before using this mode. Four containers on one host are not four independent failure domains.
 
 ## External development RPC
 

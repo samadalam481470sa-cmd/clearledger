@@ -1,0 +1,38 @@
+name: Besu network checks
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/network.yml
+      - network/**
+      - scripts/network.ts
+      - scripts/verify-network.ts
+      - scripts/deploy-network.ts
+      - contracts/**
+      - src/chain.ts
+      - src/service.ts
+permissions:
+  contents: read
+jobs:
+  qbft:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run compile
+      - run: npm run network:generate
+      - name: Start isolated development validators
+        run: docker compose -f network/compose.yaml up -d
+      - name: Verify quorum, settlement, and validator recovery
+        run: npm run network:verify
+      - name: Validator diagnostics
+        if: always()
+        run: docker compose -f network/compose.yaml logs --no-color --tail=80
+      - name: Remove ephemeral development network
+        if: always()
+        run: docker compose -f network/compose.yaml down --volumes

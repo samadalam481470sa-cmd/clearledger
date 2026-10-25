@@ -5,7 +5,7 @@ Prioritize verified payment correctness and demonstrable engineering over source
 ## Next increments
 
 1. Extend controlled HTTP-proxy coverage into prolonged outage/recovery and soak tests; short 503/drop/timeout failures, lost broadcast responses, library-level ambiguous failures, and process interruption are already tested.
-2. Run the four-validator Besu environment on a Docker-capable host and automate quorum, peer, restart, and failover acceptance checks.
+2. Execute and verify the new Docker acceptance workflow for four-node agreement, signed settlement, one-validator failure, and restart/catch-up; extend it to loss of two validators and hostile peers afterward.
 3. Adopt the implemented paginated payment/journal APIs and per-asset transfer-volume totals in the dashboard; its current view still assumes the demo asset and recent 100 records.
 4. Add a durable event indexer with checkpoints, canonical-block validation, and controlled replay.
 5. Design journal reversal/rebuild for reorganization recovery while preserving the audit trail.
@@ -27,7 +27,7 @@ Prioritize verified payment correctness and demonstrable engineering over source
 - Publish only to a new public repository created for this task; do not modify unrelated repositories.
 - Exclude keys, tokens, databases, dependency installs, generated files, and scratch data.
 - Run remote CI and record actual outcomes.
-- Pin container images by verified digest and review dependency advisories.
+- Keep the verified Besu container digest pinned and review dependency advisories.
 - Keep source counts reproducible and original/upstream attribution separate.
 
 No paid infrastructure, real financial accounts, customer data, production keys, or funded-mainnet deployment is authorized.
@@ -37,3 +37,4 @@ No paid infrastructure, real financial accounts, customer data, production keys,
 - October 25, 2026: eight new tests cover file-backed SQLite reopen after actual child-process termination around broadcast and finalization, interrupted transaction rollback, relayer nonce ordering across clock rollback, ambiguous RPC retry, and atomic state/audit/journal writes. The worker prioritizes persisted broadcasts and SQLite uses WAL with synchronous FULL. All 38 tests, strict TypeScript checking, and compilation/frontend build passed; results are recorded in `STATUS.md`.
 - October 25, 2026: five new real HTTP-proxy tests cover short 503/drop/timeout failures, response loss after upstream transaction acceptance, and receipt-outage nonce blocking. RPC mode has a configurable per-HTTP-exchange timeout and one transport attempt. All 43 tests and strict TypeScript checking passed. This transport-only increment did not rerun the frontend build. Source count reached 624,465 nonblank lines, including 1,553 original and 622,912 attributed upstream lines; comments/tests are included.
 - October 25, 2026: eleven new pagination/accounting tests cover bounded collection/filter-bound cursor pages, exact separate settled/review transfer volume by asset, and reconciliation across all settled pages. All 54 tests and strict TypeScript checking passed. Source count reached 624,796 nonblank lines, including 1,884 original and 622,912 attributed upstream lines; comments/tests are included. Frontend pagination/totals adoption remains future work.
+- Network tooling: two configuration tests and strict TypeScript checks passed. Permission TOML/genesis mounts are corrected, the image digest is pinned, and `network:verify` plus Docker CI cover agreement, settlement, one-validator failure, and recovery. Full-suite/source recount and actual Docker acceptance results are pending; configuration tests do not verify consensus.

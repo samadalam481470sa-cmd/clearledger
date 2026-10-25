@@ -1,8 +1,10 @@
 name: clearledger-dev
 x-validator: &validator
-  image: hyperledger/besu:26.10.1
+  image: hyperledger/besu:26.10.1@sha256:47aa21463213abcddc5972bc79443e6806c1c7c68e8f36ed33222882fbad8752
   restart: unless-stopped
   user: "0:0"
+  environment: &validator-environment
+    JAVA_OPTS: -Xms128m -Xmx512m
   command:
     - --data-path=/data
     - --genesis-file=/config/genesis.json
@@ -11,6 +13,7 @@ x-validator: &validator
     - --permissions-nodes-config-file-enabled=true
     - --permissions-nodes-config-file=/config/permissions_config.toml
     - --discovery-enabled=false
+    - --nat-method=NONE
     - --rpc-http-enabled=true
     - --rpc-http-host=0.0.0.0
     - --rpc-http-api=ETH,NET,WEB3,QBFT
@@ -21,9 +24,11 @@ services:
   validator1:
     <<: *validator
     hostname: validator1
+    environment:
+      <<: *validator-environment
+      BESU_P2P_HOST: 172.28.77.11
     ports: ["127.0.0.1:8545:8545"]
     volumes:
-      - ./generated/genesis.json:/config/genesis.json:ro
       - ./generated/validator1:/config:ro
       - validator1-data:/data
     networks:
@@ -32,8 +37,11 @@ services:
   validator2:
     <<: *validator
     hostname: validator2
+    environment:
+      <<: *validator-environment
+      BESU_P2P_HOST: 172.28.77.12
+    ports: ["127.0.0.1:8546:8545"]
     volumes:
-      - ./generated/genesis.json:/config/genesis.json:ro
       - ./generated/validator2:/config:ro
       - validator2-data:/data
     networks:
@@ -42,8 +50,11 @@ services:
   validator3:
     <<: *validator
     hostname: validator3
+    environment:
+      <<: *validator-environment
+      BESU_P2P_HOST: 172.28.77.13
+    ports: ["127.0.0.1:8547:8545"]
     volumes:
-      - ./generated/genesis.json:/config/genesis.json:ro
       - ./generated/validator3:/config:ro
       - validator3-data:/data
     networks:
@@ -52,8 +63,11 @@ services:
   validator4:
     <<: *validator
     hostname: validator4
+    environment:
+      <<: *validator-environment
+      BESU_P2P_HOST: 172.28.77.14
+    ports: ["127.0.0.1:8548:8545"]
     volumes:
-      - ./generated/genesis.json:/config/genesis.json:ro
       - ./generated/validator4:/config:ro
       - validator4-data:/data
     networks:

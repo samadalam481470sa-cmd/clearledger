@@ -53,7 +53,16 @@ Project writes are confined to the new `outputs/clearledger/` directory and task
 - Reconciliation now traverses all settled pages, materializing each page before RPC awaits and status updates. The insertion range is fixed for each scan, but status membership is not a transactional snapshot.
 - Overview payment/journal previews are capped at 100 each. The frontend remains a recent demo-currency view and has not adopted these pagination/totals APIs.
 - The expanded combined `npm test` run passed **54/54 tests**, zero failures, exit code 0, in 57,485.5395 ms. Strict TypeScript checking passed. The UI was unchanged and the frontend build was not rerun for this increment.
-- Current source count: **624,796 nonblank lines**, including comments/tests. Original application: 25 files, 1,983 physical lines, 1,884 nonblank lines. Besu: 4,484 files, 714,385 physical lines, 622,912 nonblank lines. See `docs/source-count.json`.
+- Pagination-increment source count: **624,796 nonblank lines**, including comments/tests. Original application: 25 files, 1,983 physical lines, 1,884 nonblank lines. Besu: 4,484 files, 714,385 physical lines, 622,912 nonblank lines.
+
+## Network acceptance tooling increment
+
+- Two generator/configuration tests passed; strict TypeScript checks passed, including the new acceptance script.
+- The exported generator fixes permission TOML newlines, gives every validator its own identical genesis copy/read-only mount, and retains cryptographically consistent membership/enodes and refusal to overwrite keys.
+- Compose now pins the verified Besu 26.10.1 image digest `sha256:47aa21463213abcddc5972bc79443e6806c1c7c68e8f36ed33222882fbad8752`, sets development JVM heap bounds, and publishes four loopback RPC ports 8545–8548.
+- `npm run network:verify` checks four-node agreement, deploys contracts, settles/reconciles 125 test dUSD, stops only validator 4 to check three-node progress, and restarts it for catch-up. Operations and cleanup are bounded; generated keys are not logged.
+- Dedicated `.github/workflows/network.yml` supplies real Docker acceptance CI. Its runtime result is pending; local Docker remains unavailable. Configuration tests alone are not consensus evidence.
+- The expanded 56-test combined run and source recount are pending. Earlier 54-test/public-CI results remain historical evidence.
 
 ## Public source publication — October 25, 2026
 
