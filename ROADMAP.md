@@ -11,7 +11,7 @@ Prioritize verified payment correctness and demonstrable engineering over source
 5. Design journal reversal/rebuild for reorganization recovery while preserving the audit trail.
 6. Verify dashboard interaction and accessibility after browser access is available.
 
-Current reliability work: verify Linux-signal/remote CI for shutdown drain ordering. Local verification passed 126 of 127 cases with zero failures and one explicit Windows skip for POSIX helper integration; typecheck/build also passed. The helper is not complete CLI signal E2E, and graceful handling does not cover force-kill or blocked JavaScript.
+Shutdown drain ordering now passes Windows unit/HTTP verification and Linux real-SIGTERM helper integration. A complete application CLI signal test remains future work; graceful handling does not cover force-kill or blocked JavaScript.
 
 ## Advanced application work
 
@@ -51,6 +51,6 @@ No paid infrastructure, real financial accounts, customer data, production keys,
 
 - Source `e99c69b34ba2c24f152e02a13e76d8515d3b278b` passed regular CI `40239735290` (110 tests/typecheck/build/count). The new case measured 60,705 ms/59 observations across an OS-killed/restarted worker and reopened SQLite file, with 10+48 failed receipt calls excluding the pre-fault read. Both payments settled once after recovery, preserving the first transaction and blocking native preparation of the second authorized intent during the outage. Source count is 626,487 nonblank lines (3,575 original, 622,912 upstream, including comments/tests). This test-only local-EVM result is not a new Besu run, daemon soak, production guarantee, or recovery SLO.
 
-## In progress
+## Graceful lifecycle verification
 
-- Serialized worker stop and actual HTTP-handler draining now precede provider/SQLite close through a shared idempotent 20-second SIGINT/SIGTERM shutdown. The local suite completed 127 cases/126 passes/zero failures/one explicit POSIX-helper skip on Windows, with typecheck/build passing. Source count is 627,090 nonblank lines (4,178 original, 622,912 upstream, including comments/tests). Only remote CI, including actual Linux helper-signal execution, remains pending; this is not complete CLI E2E, force-kill support, or a production availability guarantee.
+- Source `a263648d18c8528e14fab5077b1ce4193de72c50` passed Linux CI `40242671396` with all 127 tests, zero skips/failures, typecheck, Solidity/Vite build, and source count 627,090. It includes actual SIGTERM helper integration, HTTP drain gating, and a disconnected client's late SQLite write before close. Windows separately passed 126 cases with one explicit POSIX skip. The shared default 20-second shutdown remains cooperative—not complete CLI signal E2E, force-kill support, a daemon soak, or a production guarantee. Counts include 4,178 original and 622,912 attributed upstream nonblank source lines, including comments/tests.

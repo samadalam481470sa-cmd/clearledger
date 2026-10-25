@@ -145,13 +145,14 @@ The prior successful Docker scenarios above covered one stopped validator. The n
 
 This is one bounded local-EVM transport/process-recovery case, not an autonomous daemon, new Besu-network test, hours-long soak, or production availability claim. No production behavior changed; durations measure the test/outage, not a recovery SLO or throughput benchmark. The test-only increment did not rerun local frontend build; regular CI rebuilt it successfully.
 
-## Graceful lifecycle ordering — local pass, remote CI pending
+## Graceful lifecycle ordering — verified locally and in Linux CI
 
 - Sixteen targeted unit/real-HTTP checks passed in 510.9822 ms; strict typecheck passed. Checks include serialized worker stop, idempotent shutdown, failures/deadlines/late drain completions, and a disconnected client's late SQLite write completing before resource close.
 - The change coordinates active worker, actual HTTP handler promises, and listener shutdown before closing shared resources; new requests receive 503/connection close. Both RPC/demo entrypoints guard SIGINT and SIGTERM through the shared default 20-second cooperative shutdown.
 - Failed/timed-out drains do not trigger resource close later. Timers do not preempt blocking JavaScript or cancel already-started resource cleanup; force-kill remains crash recovery, not graceful termination.
 - Full local `npm test` completed **127 cases: 126 passes, zero failures, one explicitly skipped POSIX signal-helper case on Windows**, exit 0, in 156,786.1452 ms. Strict typecheck and the integrated Solidity/Vite build passed.
-- The Linux helper fixture sends real SIGTERM while a tick is paused, requires SQLite to remain open, then checks one late audit write, one resource close, and exit 0 after release. Its actual execution remains pending Linux CI. This is helper integration, not complete application CLI signal E2E; no new Besu run, daemon soak, exact exit deadline, or production guarantee is claimed.
+- Source [`a263648d18c8528e14fab5077b1ce4193de72c50`](https://github.com/samadalam481470sa-cmd/clearledger/commit/a263648d18c8528e14fab5077b1ce4193de72c50), tree `54b24e8ee3c7b84e0f84ab717e708e68aaade2da`, passed [Linux CI `40242671396`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40242671396), job `121317645218`: **127 tests/127 passes/zero failures/zero skips** in 107,867.015198 ms, plus typecheck, Solidity/Vite build, and source count 627,090. Conclusion, every step, and logs were verified.
+- The real-SIGTERM helper case passed in 400.36676 ms, HTTP drain gate in 25.819801 ms, and disconnected-client late SQLite write in 12.503595 ms. The helper kept SQLite open during a paused tick, then verified one late audit write, one resource close, and exit 0 after release. This is helper integration, not complete application CLI signal E2E; no new Besu run, daemon soak, exact exit deadline, or production guarantee is claimed.
 
 ## Public source verification — October 25, 2026
 

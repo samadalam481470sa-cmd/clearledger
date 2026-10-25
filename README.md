@@ -63,11 +63,11 @@ npm run build
 npm run source:count
 ```
 
-The latest [regular CI passed all 110 tests](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40239735290), strict typecheck, the Solidity/Vite build, and source counting. Earlier [Besu acceptance passed the bounded quorum-loss case](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40216704663); the new receipt-outage increment changed tests only and did not run Besu again. Browser appearance/interaction remains unverified. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and limits.
+The latest [Linux CI passed all 127 tests with zero skips](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40242671396), strict typecheck, the Solidity/Vite build, and source counting. It includes real SIGTERM helper integration and HTTP-drain checks. Earlier [Besu acceptance passed the bounded quorum-loss case](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40216704663); no new Besu run is claimed for the lifecycle increment. Browser appearance/interaction remains unverified. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and limits.
 
 A bounded receipt-outage test passed a measured 60,705 ms/59 observations in CI across actual worker termination/restart and file-backed SQLite reopen, with both payments settling once after recovery. Retries were driven by serialized IPC commands; this is not an autonomous daemon, Besu-network run, or hours-long soak.
 
-A shutdown-lifecycle increment now coordinates worker and HTTP drains before closing shared resources on SIGINT/SIGTERM. Local verification completed 127 cases: 126 passes, zero failures, and one explicitly skipped POSIX signal-helper integration on Windows. Typecheck and the Solidity/Vite build passed; only remote CI remains pending. The helper fixture does not exercise the complete application CLI. See the [shutdown operation](docs/API.md#shutdown) for the cooperative deadline and forced-termination limits.
+Shutdown coordinates worker and HTTP drains before closing shared resources on SIGINT/SIGTERM. Windows verification completed 127 cases with 126 passes, zero failures, and one explicit POSIX skip; Linux CI passed all 127, including the real-SIGTERM helper case. The helper fixture does not exercise the complete application CLI. See the [shutdown operation](docs/API.md#shutdown) for the cooperative deadline and forced-termination limits.
 
 ## More than 100,000 source lines
 
