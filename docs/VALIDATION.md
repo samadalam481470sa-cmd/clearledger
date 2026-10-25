@@ -16,7 +16,7 @@ The initial suite passed 30 tests. The combined suite on October 25, 2026 passed
 ## Unverified paths
 
 - Browser rendering, accessibility, and interaction: browser-origin access was denied by the approval gate. No alternate browser route was used.
-- Docker/Besu operation on the original Windows host, two-validator loss, hostile peers, and independent-host failures. The passing GitHub Actions single-host scenario is documented below.
+- Docker/Besu operation on the original Windows host, additional failure timings, malicious peers, arbitrary partitions, and independent-host failures. The passing bounded two-stop GitHub Actions case is documented below.
 - Production, security audit, load/soak performance, and upstream Besu's own test suite.
 - Complete reorganization repair, full-chain event indexing, and multi-process relayer coordination.
 - Browser verification of the paginated dashboard, including interactions and accessibility; model/API/server-rendered checks are described below.
@@ -97,13 +97,41 @@ Published source commit [`5502af2cd86e17c7da185377e2d2fa3ed3a43c63`](https://git
 
 The settlement transaction was `0x8a782917255f6a265cb9b237d8f23af5b98f0540174791bf6522bf40e284bff5`. This complete scenario took 73,765 ms on a single GitHub Actions Ubuntu Docker host, not a throughput or settlement-latency benchmark.
 
-The 26 targeted cases are local SQLite/application-invariant tests. They do not by themselves verify EVM execution, canonical receipts, tamper-proof storage, or multiworker operation. The combined suite runs existing EVM/recovery/transport tests, and the separate Besu workflow verifies the stated live-network scenario. Independent-host, two-validator-failure, hostile-peer, soak, browser, audit, and production limits remain.
+The 26 targeted cases are local SQLite/application-invariant tests. They do not by themselves verify EVM execution, canonical receipts, tamper-proof storage, or multiworker operation. The combined suite runs existing EVM/recovery/transport tests, and the separate Besu workflow verifies the stated live-network scenario. Broader failure patterns, independent-host, malicious-peer, soak, browser, audit, and production limits remain; bounded two-stop evidence is recorded next.
 
-## Quorum-loss extension — implemented, live result pending
+## Bounded quorum-loss and recovery — verified
 
-The implemented extension stops validators 4 and 3, drains in-flight blocks until two healthy equal latest heads agree and remain stable for eight seconds, and submits a signed 37.5 dUSD authorization at payer nonce 1. Both active nodes must see that transaction pending. A 20-second observation requires successful probes, unchanged height/hash, null receipts, broadcast state with identical hash/raw bytes, one journal, recipient balance 125 dUSD, and payer nonce 1. Restoring validator 3 allows up to 120 seconds for recovery, requires at least two blocks of progress, and finalizes the same transaction once: two journals, recipient balance 162.5 dUSD, payer nonce 2, and zero reconciliation exceptions. Validator 4 then catches up.
+The implemented extension stops validators 4 and 3, drains in-flight blocks until two healthy equal latest heads agree and remain stable for eight seconds, and submits a signed 37.5 dUSD authorization at payer nonce 1. Both active nodes must see that transaction pending. A 20-second observation requires successful probes, unchanged height/hash, null receipts, broadcast state with identical hash/raw bytes, one journal, recipient balance 125 dUSD, and payer nonce 1. Restoring validator 3 now allows up to 300 seconds for recovery, requires at least two blocks of progress, and finalizes the same transaction once: two journals, recipient balance 162.5 dUSD, payer nonce 2, and zero reconciliation exceptions. Validator 4 then catches up.
 
-Thirteen deterministic helper tests passed in 278.4717 ms; combined helper/configuration checks passed 15/15 in 725.2262 ms. The full local `npm test` run passed **109/109 tests**, zero failures, exit 0, in 86,315.1641 ms, and strict TypeScript checking passed after implementation. The helper's observation clock is monotonic. No live result is claimed for the extension yet: deterministic tests validate observation logic, and RPC failure must fail rather than masquerade as a halted chain. New real Docker and regular CI runs await publication. The frontend build was not rerun locally for this network-only change. Script budget is ten minutes, job budget 15 minutes, and failure cleanup tracks both stopped validators.
+Thirteen deterministic helper tests passed in 278.4717 ms; combined helper/configuration checks passed 15/15 in 725.2262 ms. The full local `npm test` run passed **109/109 tests**, zero failures, exit 0, in 86,315.1641 ms, and strict TypeScript checking passed after implementation. The helper's observation clock is monotonic. Deterministic tests validate observation logic rather than consensus; RPC failure must fail rather than masquerade as a halted chain.
+
+Published source [`b529fc40f68903147c29bba8685db07183805c12`](https://github.com/samadalam481470sa-cmd/clearledger/commit/b529fc40f68903147c29bba8685db07183805c12), tree `bfc11e8cd2cafcc487458bcf67b07f57d1583cc0`, passed [regular CI run `40215923258`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40215923258), job `121236910105`: 109 passes/zero failures in 52,530.954236 ms, successful typecheck/Solidity/Vite build, and source count 626,199. The completed conclusion, all steps, and logs were verified.
+
+The first [extended Besu run `40215923176`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40215923176), job `121236909792`, **failed in quorum restoration after passing the strict observation phase**:
+
+- Initial four-node agreement was at block 1; 125 dUSD settled at block 23; one-validator-stop progress was 24→26.
+- Two live nodes held the same height/hash at 26 for 20,093.496795 ms across 20 successful observations. The second payment had no receipt or new journal; recipient balance stayed 125 dUSD and payer nonce stayed 1.
+- Pending transaction: `0xe54f289617b4d334b8cfebaef7c3b4d731f66df27cdf63f23e4454a339878ee9`.
+- Restarting validator 3 did not restore progress within the original 120 seconds; the three active heads stayed at 26. Logs showed escalating QBFT rounds and a restarted-node round timer about 30 seconds behind. This failed attempt remains historical evidence, not the current result.
+
+The subsequent change raises recovery polling to 300 seconds, justified by observed default QBFT round backoff/rotating proposer timing and a restarted node beginning at round zero. It is not a recovery SLO or guarantee. No strict observation/transaction/journal assertions were relaxed, and no experimental consensus flag or coordinated restart was introduced.
+
+Published source [`d2dd93c794645ca621516d597f60d2f59a60fc09`](https://github.com/samadalam481470sa-cmd/clearledger/commit/d2dd93c794645ca621516d597f60d2f59a60fc09), tree `8eacaa281a5c57f73c92b4053d0307311e1c3e10`, passed both workflows. Completed conclusions, all job steps, and logs were verified:
+
+- [Regular run `40216704639`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40216704639), job `121239290769`: 109 tests/109 passes/zero failures in 38,070.346537 ms, successful typecheck/Solidity/Vite build, and source count 626,199.
+- [Network run `40216704663`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40216704663), job `121239290629`: the complete bounded scenario below succeeded on one Ubuntu Docker host.
+
+| Phase | Observed result |
+| --- | --- |
+| Initial agreement/settlement | Four heads at 1; 125 dUSD at block 23; one journal |
+| One stopped validator | Stop validator 4 at 24; three validators progress to 26 |
+| Two stopped validators | Two healthy heads/hash remain at 26 for 20,105.430764 ms across 20 successful samples; pending payment has no receipt/journal, balance 125 dUSD, nonce 1 |
+| Restore validator 3 | Three agreeing heads 28; the same pending transaction settles 37.5 dUSD (`37500000` base units) at block 27; journals 2, balance 162.5 dUSD, nonce 2, reconciliation exceptions 0 |
+| Restore validator 4 | Four agreeing heads at 30/common hash |
+
+First transaction: `0xa2727c183e70f779ebf2be8c12a3d058459a0c0988045bf11ee2069e0867addc`. Pending/recovered transaction: `0x88928bac116a2e9d328da8cfd9d04039ef2be4b8686087189b411292c69f7759`. Stored hash/raw bytes were required to remain identical through recovery. The whole scenario took 237,137 ms, not a throughput or settlement-latency benchmark.
+
+The frontend build was not rerun locally for this network-only increment; the successful regular CI rebuilt it. Script budget remains ten minutes, job budget 15 minutes, and failure cleanup tracks both stopped validators. This verifies only the specified single-host bounded observation/recovery case.
 
 The prior successful Docker scenarios above covered one stopped validator. The new case remains bounded to one host and a 20-second sampling window, without malicious-fault, arbitrary-partition, multi-host, soak, or production claims.
 

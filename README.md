@@ -39,7 +39,7 @@ On the original Windows workspace, `Start-ClearLedger.ps1` can use the Node runt
 - Reconciliation flags recorded settlements whose receipt or block is no longer canonical.
 - Payment and journal APIs support bounded cursor pages, and exact integer transfer-volume totals are grouped by asset. Reconciliation scans all settled pages rather than a recent-record cutoff.
 - A React dashboard browses payment and transfer-journal cursor pages, shows settled/review volume separately per asset, and exposes receipt snapshots, block data, and recent local audit events. Unknown/RPC assets keep their exact base units.
-- A four-validator Besu QBFT network passed real Docker acceptance on GitHub Actions Ubuntu: common-chain agreement, signed settlement and reconciliation, progress with one validator stopped, and restart/catch-up.
+- A four-validator Besu QBFT network passed real Docker acceptance on GitHub Actions Ubuntu: signed settlement, progress with one validator stopped, a healthy-RPC no-finalization window with two stopped, and same-transaction settlement after quorum restoration.
 
 ## Repository
 
@@ -63,7 +63,7 @@ npm run build
 npm run source:count
 ```
 
-The latest local suite passed **109 tests**, zero failures, and strict typecheck. The new two-validator quorum-loss scenario still awaits publication and real Docker CI; deterministic helper tests are not consensus proof. The prior [96-test GitHub Actions run](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40213554281) passed typecheck, build, and source counting, and earlier [Besu acceptance](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40190456959) passed one-validator failure/recovery. No local frontend build rerun is claimed for this network-only increment. Browser appearance/interaction remains unverified. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and limits.
+The latest regular [GitHub Actions run passed all 109 tests](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40216704639), typecheck, build, and source counting. Separate [Besu acceptance passed the complete bounded quorum-loss case](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40216704663): two stopped validators, a 20-second healthy-RPC no-finalization window, then restoration and settlement of the same pending transaction once. This is one scripted case on a single Ubuntu Docker host, not a recovery guarantee or production benchmark. Browser appearance/interaction remains unverified. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and limits.
 
 ## More than 100,000 source lines
 
@@ -85,7 +85,7 @@ npm run network:verify
 
 `network:verify` deploys test contracts, settles/reconciles 125 dUSD, and checks continued progress after stopping validator 4. That original one-stop/restart scenario passed on GitHub Actions Ubuntu, not the original Windows host. For separate reusable test-account deployment, run `npm run network:deploy` after the chain is healthy.
 
-The script now also stops validator 3, drains in-flight imports until two healthy agreeing heads are stable for eight seconds, and observes 20 seconds without finalization while a 37.5 dUSD payment remains pending. It then restores validator 3, requires that same signed transaction to settle once, and restores validator 4 for catch-up. The full 109-test local suite and typecheck pass, but this extension's real Docker result is pending; existing live evidence covers one stopped validator only.
+The script also stops validator 3, drains in-flight imports until two healthy agreeing heads are stable for eight seconds, and observes 20 seconds without finalization while a 37.5 dUSD payment remains pending. It allows up to 300 seconds for quorum restoration and requires settlement of the same signed transaction once before all-four catch-up. This full extension passed with two journals, payer nonce 2, recipient balance 162.5 dUSD, and zero reconciliation exceptions. The diagnostic recovery bound is not an SLO or guarantee.
 
 The generator refuses to overwrite existing `network/generated/` keys. Four validator containers stay on an internal network; a fifth, non-root RPC gateway publishes only host-loopback ports 8545–8548 and has no key mounts. Read the [network guide](docs/NETWORK.md) before using this mode. The four validators still share one host and are not independent failure domains.
 
