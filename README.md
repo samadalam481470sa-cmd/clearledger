@@ -63,9 +63,9 @@ npm run build
 npm run source:count
 ```
 
-The latest local suite passed **110 tests**, zero failures, and strict typecheck; remote CI for the new test-only increment is pending. The prior [109-test regular CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40216704639) passed typecheck, build, and count. Separate [Besu acceptance passed the bounded quorum-loss case](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40216704663): two stopped validators, a healthy-RPC no-finalization window, then same-transaction settlement after restoration on one Ubuntu Docker host. Browser appearance/interaction remains unverified. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and limits.
+The latest [regular CI passed all 110 tests](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40239735290), strict typecheck, the Solidity/Vite build, and source counting. Earlier [Besu acceptance passed the bounded quorum-loss case](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40216704663); the new receipt-outage increment changed tests only and did not run Besu again. Browser appearance/interaction remains unverified. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and limits.
 
-A bounded receipt-outage test passed a measured 60,417 ms of real HTTP failures across actual worker termination/restart and file-backed SQLite reopen, with both payments settling once after recovery. Retries were driven by serialized IPC commands; this is not an autonomous daemon, Besu-network run, or hours-long soak.
+A bounded receipt-outage test passed a measured 60,705 ms/59 observations in CI across actual worker termination/restart and file-backed SQLite reopen, with both payments settling once after recovery. Retries were driven by serialized IPC commands; this is not an autonomous daemon, Besu-network run, or hours-long soak.
 
 ## More than 100,000 source lines
 
