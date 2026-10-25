@@ -63,11 +63,13 @@ npm run build
 npm run source:count
 ```
 
-The latest regular [GitHub Actions run passed all 109 tests](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40216704639), typecheck, build, and source counting. Separate [Besu acceptance passed the complete bounded quorum-loss case](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40216704663): two stopped validators, a 20-second healthy-RPC no-finalization window, then restoration and settlement of the same pending transaction once. This is one scripted case on a single Ubuntu Docker host, not a recovery guarantee or production benchmark. Browser appearance/interaction remains unverified. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and limits.
+The latest local suite passed **110 tests**, zero failures, and strict typecheck; remote CI for the new test-only increment is pending. The prior [109-test regular CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40216704639) passed typecheck, build, and count. Separate [Besu acceptance passed the bounded quorum-loss case](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40216704663): two stopped validators, a healthy-RPC no-finalization window, then same-transaction settlement after restoration on one Ubuntu Docker host. Browser appearance/interaction remains unverified. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and limits.
+
+A bounded receipt-outage test passed a measured 60,417 ms of real HTTP failures across actual worker termination/restart and file-backed SQLite reopen, with both payments settling once after recovery. Retries were driven by serialized IPC commands; this is not an autonomous daemon, Besu-network run, or hours-long soak.
 
 ## More than 100,000 source lines
 
-The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **626,199 nonblank source lines**: 3,287 original and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
+The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **626,487 nonblank source lines**: 3,575 original and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
 
 Original application code is MIT-licensed. Besu and installed dependencies retain their own licenses. [Provenance](docs/PROVENANCE.md) pins the release, commit, and download hash.
 

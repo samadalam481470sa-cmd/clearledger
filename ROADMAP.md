@@ -4,7 +4,7 @@ Prioritize verified payment correctness and demonstrable engineering over source
 
 ## Next increments
 
-1. Extend controlled HTTP-proxy coverage into prolonged outage/recovery and soak tests; short 503/drop/timeout failures, lost broadcast responses, library-level ambiguous failures, and process interruption are already tested.
+1. Verify remote CI for the locally passing bounded 60-second receipt-outage/worker-restart check, then extend toward longer outage/recovery and soak tests. IPC-driven retries are not an autonomous daemon soak.
 2. Extend the verified bounded two-validator-stop scenario to other failure timings, malicious peers, arbitrary partitions, and independent-host failures.
 3. Add an explicit token-metadata registry before displaying decimal amounts for arbitrary RPC assets; the dashboard currently preserves their exact base units.
 4. Add a durable event indexer with checkpoints, canonical-block validation, and controlled replay.
@@ -44,3 +44,7 @@ No paid infrastructure, real financial accounts, customer data, production keys,
 ## Bounded quorum-loss verification
 
 - Source `d2dd93c794645ca621516d597f60d2f59a60fc09` passed regular CI (109 tests/typecheck/build/count) and the complete live single-host QBFT extension. Two healthy nodes held height/hash unchanged over 20,105.430764 ms/20 successful samples; restoring quorum finalized the same pending 37.5 dUSD transaction once, with two journals, payer nonce 2, balance 162.5 dUSD, and zero reconciliation exceptions before all-four catch-up. The initial 120-second timeout remains historical; the successful run used a 300-second diagnostic allowance without relaxed safety assertions or consensus flags. Whole duration 237,137 ms is not a benchmark or recovery SLO. Source count remains 626,199 nonblank lines (3,287 original, 622,912 upstream, including comments/tests). Malicious faults, arbitrary partitions, independent hosts, and soak validation remain future work.
+
+## In progress
+
+- The bounded local-EVM receipt-outage test passed 60,417 ms/56 observations across an OS-killed/restarted worker and reopened SQLite file. Serialized IPC retries yielded 9+46 failed receipt reads, preserving the first transaction and blocking preparation of the second authorized intent until recovery; both settled once afterward. All 110 local tests and typecheck passed; remote CI remains pending. Source count is 626,487 nonblank lines (3,575 original, 622,912 upstream, including comments/tests). This is test-only work, not a Besu result, daemon soak, production guarantee, or recovery SLO.

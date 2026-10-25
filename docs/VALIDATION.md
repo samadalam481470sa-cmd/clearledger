@@ -135,6 +135,16 @@ The frontend build was not rerun locally for this network-only increment; the su
 
 The prior successful Docker scenarios above covered one stopped validator. The new case remains bounded to one host and a 20-second sampling window, without malicious-fault, arbitrary-partition, multi-host, soak, or production claims.
 
+## Bounded receipt-outage/restart check — local pass, remote CI pending
+
+- The real local-EVM HTTP receipt outage lasted **60,417 ms** with 56 observations across actual worker OS termination/restart and SQLite reopen. Parent checks explicitly reopened a separate read-only connection.
+- Serialized IPC retry commands completed 9 ticks/9 failed receipt reads before termination and 46 ticks/46 failed reads after restart. The 55 total failed receipt reads exclude the pre-fault read.
+- During the outage the first mined 125 dUSD payment retained identical hash/raw bytes and no journal. The second 7 dUSD intent already had its EIP-712 authorization but remained queued without signed native transaction bytes or another allocated relayer nonce.
+- Healing settled both once: 132 dUSD recipient balance, two journals, payer nonce 2, consecutive native transaction nonces, one settled audit per payment, and reconciliation checked 2 with zero exceptions.
+- Full local `npm test`: **110 tests/110 passes/zero failures**, exit 0, 168,939.2818 ms. The new case took 66,914.8221 ms, and strict typecheck passed. Only new remote CI verification remains pending; no local build rerun was needed for this test-only increment.
+
+This is one bounded local-EVM transport/process-recovery case, not an autonomous daemon, Besu-network test, hours-long soak, or production availability claim. No production behavior changed; durations measure the test/outage, not a recovery SLO or throughput benchmark.
+
 ## Public source verification — October 25, 2026
 
 The project is public at [samadalam481470sa-cmd/clearledger](https://github.com/samadalam481470sa-cmd/clearledger). The user-created repository was verified as public with connected write access. Source commit [`762dd075d4b3dbe8d04a0e88fa24550818f734a7`](https://github.com/samadalam481470sa-cmd/clearledger/commit/762dd075d4b3dbe8d04a0e88fa24550818f734a7) contains all 6,785 reviewed tracked files.
@@ -157,11 +167,11 @@ Browser-origin access remains denied. No alternative browser route was used, so 
 
 ## Reproduced source count
 
-The current quorum-loss-increment source count is 626,199 nonblank source lines, including comments and tests:
+The current receipt-outage-increment source count is 626,487 nonblank source lines, including comments and tests:
 
 | Source | Files | Physical lines | Nonblank lines |
 | --- | ---: | ---: | ---: |
-| Original application | 35 | 3,476 | 3,287 |
+| Original application | 37 | 3,775 | 3,575 |
 | Attributed Besu snapshot | 4,484 | 714,385 | 622,912 |
 
 The script's exclusions and methodology are recorded in `docs/source-count.json`; the size is not a claim of independently authored executable statements.
