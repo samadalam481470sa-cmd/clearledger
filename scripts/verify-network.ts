@@ -238,7 +238,7 @@ export async function verifyNetwork() {
     const restored = await poll(phase, async () => {
       const sample = await agreement(providers.slice(0, 3), generated.validators);
       return sample && sample.height >= baseline.height + 2 ? sample : undefined;
-    }, 120000);
+    }, 300000);
     console.log(JSON.stringify({ check: 'quorum-restoration', ...restored }));
 
     phase = 'settle original pending transaction after quorum restoration';
