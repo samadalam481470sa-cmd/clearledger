@@ -20,7 +20,7 @@ Project writes are confined to the new `outputs/clearledger/` directory and task
 - Initial suite: 30 passing EVM/API tests; strict TypeScript checks passed.
 - Production frontend bundle and local demo startup with three seeded payments.
 - Besu 26.10.1 source snapshot with upstream LICENSE and NOTICE retained; 622,912 nonblank upstream source lines including comments/tests.
-- Four-validator generator, Compose definition, deployment script; runtime validation pending.
+- Four-validator generator, Compose definition, deployment script, and successful single-host Docker settlement/failure/recovery acceptance on GitHub Actions Ubuntu.
 - Architecture, API, security, provenance, setup, and portfolio documentation.
 
 ## October 25 recovery increment
@@ -59,10 +59,18 @@ Project writes are confined to the new `outputs/clearledger/` directory and task
 
 - Two generator/configuration tests passed; strict TypeScript checks passed, including the new acceptance script.
 - The exported generator fixes permission TOML newlines, gives every validator its own identical genesis copy/read-only mount, and retains cryptographically consistent membership/enodes and refusal to overwrite keys.
-- Compose now pins the verified Besu 26.10.1 image digest `sha256:47aa21463213abcddc5972bc79443e6806c1c7c68e8f36ed33222882fbad8752`, sets development JVM heap bounds, and publishes four loopback RPC ports 8545–8548.
+- Compose pins the verified Besu 26.10.1 image digest `sha256:47aa21463213abcddc5972bc79443e6806c1c7c68e8f36ed33222882fbad8752`, sets development JVM heap bounds, and keeps the four validators exclusively on an internal network.
+- Static P2P host advertisements and `--nat-method=NONE` keep peer addressing consistent with the generated enodes.
 - `npm run network:verify` checks four-node agreement, deploys contracts, settles/reconciles 125 test dUSD, stops only validator 4 to check three-node progress, and restarts it for catch-up. Operations and cleanup are bounded; generated keys are not logged.
-- Dedicated `.github/workflows/network.yml` supplies real Docker acceptance CI. Its runtime result is pending; local Docker remains unavailable. Configuration tests alone are not consensus evidence.
-- The expanded 56-test combined run and source recount are pending. Earlier 54-test/public-CI results remain historical evidence.
+- Regular CI run [`40188100516`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40188100516) passed all 56 tests, build, and source count. Local configuration tests and strict TypeScript checks also passed.
+- First Docker runtime run [`40188100502`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40188100502) failed at startup because Besu dropped root to UID 1000 but runner-owned mode-0600 keys belonged to UID 1001.
+- Secure ownership fix [`9ca8f9280fa0bbf28b259e53f1e392e56d733de7`](https://github.com/samadalam481470sa-cmd/clearledger/commit/9ca8f9280fa0bbf28b259e53f1e392e56d733de7) uses configurable non-root UID/GID matching the generating host user, read-only config, and host-owned writable node-data binds. Keys stay 0600. Two local configuration tests and typecheck passed again.
+- Diagnostic run [`40188833778`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40188833778) confirmed matching produced blocks through height 39, while host RPC ports failed with connection refused on the internal-only validator network.
+- Gateway fix [`50e5aeed10b7305f5ce04a5765385fa8873f5c76`](https://github.com/samadalam481470sa-cmd/clearledger/commit/50e5aeed10b7305f5ce04a5765385fa8873f5c76) retains isolated/non-root validators and adds one official digest-pinned non-root nginx gateway. It joins internal `settlement` and ordinary `rpc-access`, publishes host-loopback 8545–8548, mounts only read-only `network/rpc.conf`, and has no key mounts. The stack is four validators plus one gateway.
+- Final source head `0091aa306111e67855ccda6d08435e15aaae6e5a` passed both workflows: [network run `40189385292`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40189385292), job `121156932986`, and [regular run `40189385293`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40189385293), job `121156932941`, including all 56 tests, typecheck, build, and source count. Run conclusions, job steps, and logs were verified; regular CI recorded 56 passes/zero failures and 625,049 nonblank source lines.
+- Actual network evidence: all four agreed at block 1/heads `[1,1,1,1]`; signed 125 dUSD settled at block 23 with one journal and zero reconciliation exceptions; validator 4 stopped at height 24 while the surviving three advanced to 26 and agreed; all four caught up to height 28 after restart. The scenario took 77,920 ms, not a throughput benchmark.
+- The passing scenario ran on one GitHub Actions Ubuntu Docker host. Local Docker remains unavailable on the original Windows host. The non-root gateway uses `/tmp` for every PID/temporary/cache path.
+- Current source count: **625,049 nonblank lines**, including comments/tests. Original: 27 files, 2,255 physical lines, 2,137 nonblank lines. Attributed Besu: 4,484 files, 714,385 physical lines, 622,912 nonblank lines.
 
 ## Public source publication — October 25, 2026
 
@@ -76,7 +84,7 @@ Project writes are confined to the new `outputs/clearledger/` directory and task
 ## Remaining verification limits
 
 - Browser appearance/interaction remains unverified because browser-origin access was denied. No alternate browser route was used. Publishing through the authorized GitHub connector did not verify the dashboard visually.
-- Docker/Besu failover, prolonged-outage/soak tests, disk/power-failure behavior, automatic stuck-transaction management, and distributed relayer coordination remain future work.
+- Loss of two validators, hostile/unapproved peers, independent-host failures, prolonged-outage/soak tests, disk/power-failure behavior, automatic stuck-transaction management, production readiness, and distributed relayer coordination remain future work. The passing one-validator scenario does not establish these properties.
 - Native Git credential availability is not established by connector publication. Do not inspect unrelated secrets or modify any unrelated repository.
 
 ## Resume

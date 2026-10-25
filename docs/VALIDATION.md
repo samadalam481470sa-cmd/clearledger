@@ -16,7 +16,7 @@ The initial suite passed 30 tests. The combined suite on October 25, 2026 passed
 ## Unverified paths
 
 - Browser rendering, accessibility, and interaction: browser-origin access was denied by the approval gate. No alternate browser route was used.
-- Four-node Docker/Besu startup and failover: Docker unavailable on the initial host.
+- Docker/Besu operation on the original Windows host, two-validator loss, hostile peers, and independent-host failures. The passing GitHub Actions single-host scenario is documented below.
 - Production, security audit, load/soak performance, and upstream Besu's own test suite.
 - Complete reorganization repair, full-chain event indexing, and multi-process relayer coordination.
 - Frontend adoption of paginated APIs and per-asset totals; the dashboard remains a recent-record demo-currency view.
@@ -61,9 +61,28 @@ The expanded combined `npm test` run passed **54/54 tests**, zero failures, exit
 
 Two generator/configuration tests passed, checking generated cryptographic membership, enodes, identical per-node genesis copies, minimally encoded RLP round zero, newline-terminated permission TOML, and refusal to replace existing validator keys. Strict TypeScript checks passed, including `scripts/verify-network.ts`.
 
-The acceptance script and dedicated Docker workflow now target four-node chain/membership/block agreement, an actual 125 dUSD signed settlement and reconciliation, continued progress after stopping validator 4, and catch-up after restart. The Besu 26.10.1 container is pinned to a verified Docker Hub digest. **No Docker/Besu runtime success is yet claimed**: the initial host has no Docker and the dedicated workflow result is pending.
+The acceptance script and dedicated Docker workflow verify four-node chain/membership/block agreement, an actual 125 dUSD signed settlement and reconciliation, continued progress after stopping validator 4, and catch-up after restart. Besu and the separate RPC gateway are pinned to verified Docker Hub digests. This complete scenario passed on GitHub Actions Ubuntu, not the original Windows host.
 
-The expanded 56-test combined suite and source recount are pending. Existing 54-test and initial public-CI results above/below describe earlier verified source.
+Regular CI run [`40188100516`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40188100516) passed **56 tests**, zero failures, build, and source counting. The subsequent secure ownership fix passed two local configuration tests and strict TypeScript checks again.
+
+First Docker runtime run [`40188100502`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40188100502) failed before consensus checks: Besu's entrypoint dropped root to UID 1000 while mode-0600 keys were owned by runner UID 1001. The fix in commit [`9ca8f9280fa0bbf28b259e53f1e392e56d733de7`](https://github.com/samadalam481470sa-cmd/clearledger/commit/9ca8f9280fa0bbf28b259e53f1e392e56d733de7) matches the configured non-root container identity to host ownership, keeps config read-only/keys 0600, and supplies writable host-owned node-data binds.
+
+Diagnostic run [`40188833778`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40188833778) observed matching produced validator blocks but exposed host RPC connection refusals on the internal-only network. A separate non-root, digest-pinned gateway resolved host access while retaining internal validators, restricted key permissions, read-only proxy config, and no gateway key mounts. Its PID/temporary/cache paths are all under `/tmp`.
+
+### Successful real network evidence
+
+Source head `0091aa306111e67855ccda6d08435e15aaae6e5a` passed [network run `40189385292`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40189385292), job `121156932986`, and [regular CI run `40189385293`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40189385293), job `121156932941`. Both completed with success, and their job-step results/logs were verified. Regular CI recorded 56 tests/56 passes/zero failures, successful typecheck/build, and a source count of 625,049 nonblank lines.
+
+The actual Docker acceptance log recorded:
+
+| Check | Observed result |
+| --- | --- |
+| Initial agreement | Common block 1/hash; all heads `[1,1,1,1]` |
+| Signed settlement | 125 dUSD / `125000000` base units at block 23; one journal; zero reconciliation exceptions |
+| One-validator stop | Validator 4 stopped at height 24; surviving three advanced to 26 and agreed |
+| Restart | All four heads 28 with a common canonical block hash |
+
+Settlement transaction: `0xee95153f7fac54ae81804ac6586160868935ade07dc54b032b5930f483d4dc02`. The entire scenario took 77,920 ms; that duration is not a throughput or settlement-latency benchmark. All five containers shared one Ubuntu runner. This verifies the scripted single-host case, not two-validator failure, hostile peers, independent-host failures, prolonged soak, production readiness, or browser QA.
 
 ## Public source verification — October 25, 2026
 
@@ -75,11 +94,11 @@ The initial [push workflow run 40173477932](https://github.com/samadalam481470sa
 
 ## Reproduced source count
 
-The completed pagination-increment count on October 25 was 624,796 nonblank source lines, including comments and tests; the network-tooling recount is pending:
+The current network-tooling source count is 625,049 nonblank source lines, including comments and tests:
 
 | Source | Files | Physical lines | Nonblank lines |
 | --- | ---: | ---: | ---: |
-| Original application | 25 | 1,983 | 1,884 |
+| Original application | 27 | 2,255 | 2,137 |
 | Attributed Besu snapshot | 4,484 | 714,385 | 622,912 |
 
 The script's exclusions and methodology are recorded in `docs/source-count.json`; the size is not a claim of independently authored executable statements.

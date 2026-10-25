@@ -2,7 +2,7 @@
 
 **Signed payments, on-chain settlement, and a reconciled transfer journal.**
 
-[Public repository](https://github.com/samadalam481470sa-cmd/clearledger) · [![ClearLedger checks](https://github.com/samadalam481470sa-cmd/clearledger/actions/workflows/ci.yml/badge.svg)](https://github.com/samadalam481470sa-cmd/clearledger/actions/workflows/ci.yml)
+[Public repository](https://github.com/samadalam481470sa-cmd/clearledger) · [![ClearLedger checks](https://github.com/samadalam481470sa-cmd/clearledger/actions/workflows/ci.yml/badge.svg)](https://github.com/samadalam481470sa-cmd/clearledger/actions/workflows/ci.yml) · [![Besu network checks](https://github.com/samadalam481470sa-cmd/clearledger/actions/workflows/network.yml/badge.svg)](https://github.com/samadalam481470sa-cmd/clearledger/actions/workflows/network.yml)
 
 ClearLedger is a fintech engineering portfolio prototype built on EVM infrastructure. Its original application combines Solidity payment controls, a TypeScript settlement worker, SQLite accounting records, and a React operations dashboard. An attributed **Besu 26.10.1 source snapshot** is included under `upstream/`.
 
@@ -38,7 +38,7 @@ On the original Windows workspace, `Start-ClearLedger.ps1` can use the Node runt
 - Reconciliation flags recorded settlements whose receipt or block is no longer canonical.
 - Payment and journal APIs support bounded cursor pages, and exact integer transfer-volume totals are grouped by asset. Reconciliation scans all settled pages rather than a recent-record cutoff.
 - A React dashboard exposes actual payment states, block data, receipts, and local audit events.
-- A network generator, digest-pinned Docker configuration, and bounded acceptance script target four Besu QBFT validators. The script checks agreement, signed settlement, one-validator failure, and restart recovery; its Docker CI run is pending.
+- A four-validator Besu QBFT network passed real Docker acceptance on GitHub Actions Ubuntu: common-chain agreement, signed settlement and reconciliation, progress with one validator stopped, and restart/catch-up.
 
 ## Repository
 
@@ -62,11 +62,11 @@ npm run build
 npm run source:count
 ```
 
-The last completed combined Windows run passed **54 tests**. Two new network-configuration tests and strict TypeScript checking passed; the expanded combined run and Docker network acceptance run are pending. The public source was published on October 25, 2026, and its first [GitHub Actions run passed](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40173477932): dependency installation, typecheck, tests, Solidity/frontend build, and source counting all succeeded. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and remaining limits.
+The latest regular [GitHub Actions run passed 56 tests](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40189385293), typecheck, build, and source counting. The separate [Besu network acceptance run also passed](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40189385292), including signed 125 dUSD settlement and one-validator failure/recovery on a single Ubuntu Docker host. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and remaining limits.
 
 ## More than 100,000 source lines
 
-The [machine-readable count](docs/source-count.json) separates original and upstream source. The last completed count is **624,796 nonblank source lines**: 1,884 original and 622,912 in the included Besu release, including comments and tests. A recount for the network-tooling increment is pending. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
+The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **625,049 nonblank source lines**: 2,137 original and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
 
 Original application code is MIT-licensed. Besu and installed dependencies retain their own licenses. [Provenance](docs/PROVENANCE.md) pins the release, commit, and download hash.
 
@@ -74,15 +74,17 @@ Original application code is MIT-licensed. Besu and installed dependencies retai
 
 Requires Docker Compose:
 
+On Linux, set the container UID/GID to the generating user's identity before these commands, as shown in the [network guide](docs/NETWORK.md), so private key permissions remain restricted.
+
 ```sh
 npm run network:generate
 docker compose -f network/compose.yaml up -d
 npm run network:verify
 ```
 
-`network:verify` deploys test contracts, settles and reconciles 125 dUSD, stops only validator 4 while checking continued progress, then restarts it and waits for catch-up. A dedicated Docker workflow is provided, but its runtime result is not yet verified. For separate reusable test-account deployment, run `npm run network:deploy` after the chain is healthy.
+`network:verify` deploys test contracts, settles and reconciles 125 dUSD, stops only validator 4 while checking continued progress, then restarts it and waits for catch-up. This scenario passed in the dedicated Docker workflow on GitHub Actions Ubuntu; it has not been run on the original Windows host. For separate reusable test-account deployment, run `npm run network:deploy` after the chain is healthy.
 
-The generator refuses to overwrite existing `network/generated/` keys. Validator RPC endpoints bind only to loopback ports 8545–8548. Read the [network guide](docs/NETWORK.md) before using this mode. Four containers on one host are not four independent failure domains.
+The generator refuses to overwrite existing `network/generated/` keys. Four validator containers stay on an internal network; a fifth, non-root RPC gateway publishes only host-loopback ports 8545–8548 and has no key mounts. Read the [network guide](docs/NETWORK.md) before using this mode. The four validators still share one host and are not independent failure domains.
 
 ## External development RPC
 
