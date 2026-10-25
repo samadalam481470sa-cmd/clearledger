@@ -63,11 +63,11 @@ npm run build
 npm run source:count
 ```
 
-The latest [GitHub Actions run passed all 96 tests](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40213554281), strict typecheck, the Solidity/frontend build, and source counting. This includes 14 new controller, real HTTP/API, and server-rendered presentation checks. Earlier [Besu acceptance passed](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40190456959) signed 125 dUSD settlement and one-validator failure/recovery on one Ubuntu Docker host; backend/network code was unchanged in the dashboard increment. Browser appearance and interaction remain unverified. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and limits.
+The latest local suite passed **109 tests**, zero failures, and strict typecheck. The new two-validator quorum-loss scenario still awaits publication and real Docker CI; deterministic helper tests are not consensus proof. The prior [96-test GitHub Actions run](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40213554281) passed typecheck, build, and source counting, and earlier [Besu acceptance](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40190456959) passed one-validator failure/recovery. No local frontend build rerun is claimed for this network-only increment. Browser appearance/interaction remains unverified. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and limits.
 
 ## More than 100,000 source lines
 
-The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **625,904 nonblank source lines**: 2,992 original and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
+The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **626,199 nonblank source lines**: 3,287 original and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
 
 Original application code is MIT-licensed. Besu and installed dependencies retain their own licenses. [Provenance](docs/PROVENANCE.md) pins the release, commit, and download hash.
 
@@ -83,7 +83,9 @@ docker compose -f network/compose.yaml up -d
 npm run network:verify
 ```
 
-`network:verify` deploys test contracts, settles and reconciles 125 dUSD, stops only validator 4 while checking continued progress, then restarts it and waits for catch-up. This scenario passed in the dedicated Docker workflow on GitHub Actions Ubuntu; it has not been run on the original Windows host. For separate reusable test-account deployment, run `npm run network:deploy` after the chain is healthy.
+`network:verify` deploys test contracts, settles/reconciles 125 dUSD, and checks continued progress after stopping validator 4. That original one-stop/restart scenario passed on GitHub Actions Ubuntu, not the original Windows host. For separate reusable test-account deployment, run `npm run network:deploy` after the chain is healthy.
+
+The script now also stops validator 3, drains in-flight imports until two healthy agreeing heads are stable for eight seconds, and observes 20 seconds without finalization while a 37.5 dUSD payment remains pending. It then restores validator 3, requires that same signed transaction to settle once, and restores validator 4 for catch-up. The full 109-test local suite and typecheck pass, but this extension's real Docker result is pending; existing live evidence covers one stopped validator only.
 
 The generator refuses to overwrite existing `network/generated/` keys. Four validator containers stay on an internal network; a fifth, non-root RPC gateway publishes only host-loopback ports 8545–8548 and has no key mounts. Read the [network guide](docs/NETWORK.md) before using this mode. The four validators still share one host and are not independent failure domains.
 

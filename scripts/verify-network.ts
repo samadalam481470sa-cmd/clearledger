@@ -11,17 +11,19 @@ import { Store } from '../src/store.ts';
 import { PaymentService } from '../src/service.ts';
 import { paymentTypes } from '../src/payment.ts';
 import { compile } from './compile.ts';
+import { observeHalted, QuorumObservationError } from './quorum-observation.ts';
 
 const CHAIN_ID = 20261024;
 const COMPOSE_FILE = resolve('network/compose.yaml');
 const PROJECT_NAME = 'clearledger-dev';
 const PORTS = [8545, 8546, 8547, 8548];
 const POLL_MS = 1000;
-const TOTAL_BUDGET_MS = 8 * 60 * 1000;
+const TOTAL_BUDGET_MS = 10 * 60 * 1000;
 
 interface Agreement { height: number; hash: string; heads: number[] }
 interface GeneratedAddresses { chainId: number; deployer: string; validators: string[] }
 class AcceptanceFailure extends Error {}
+type StoppableValidator = 'validator3' | 'validator4';
 
 function sameValidatorSet(actual: unknown, expected: string[]): boolean {
   if (!Array.isArray(actual) || actual.some(value => typeof value !== 'string')) return false;
@@ -30,12 +32,12 @@ function sameValidatorSet(actual: unknown, expected: string[]): boolean {
     normalized.join(',') === expected.map(value => value.toLowerCase()).sort().join(',');
 }
 
-async function compose(command: 'stop' | 'start') {
-  // Never stop a whole Docker host, another project, or any service besides validator4.
+async function compose(command: 'stop' | 'start', service: StoppableValidator) {
+  // Restrict fault injection to these two services in this task's development project.
   await new Promise<void>((resolveCommand, reject) => {
-    execFile('docker', ['compose', '-p', PROJECT_NAME, '-f', COMPOSE_FILE, command, 'validator4'],
+    execFile('docker', ['compose', '-p', PROJECT_NAME, '-f', COMPOSE_FILE, command, service],
       { timeout: 30000, maxBuffer: 1024 * 1024, windowsHide: true }, error => {
-        if (error) reject(new Error('Docker Compose ' + command + ' validator4 failed'));
+        if (error) reject(new Error('Docker Compose ' + command + ' ' + service + ' failed'));
         else resolveCommand();
       });
   });
@@ -46,7 +48,7 @@ export async function verifyNetwork() {
   const started = Date.now();
   const deadline = started + TOTAL_BUDGET_MS;
   let phase = 'configuration';
-  let validator4MayBeStopped = false;
+  const possiblyStopped = new Set<StoppableValidator>();
   let lastProbeLog = 0;
   const providers = PORTS.map(port => createRpcProvider('http://127.0.0.1:' + port, 3000));
   const store = new Store();
@@ -160,8 +162,8 @@ export async function verifyNetwork() {
       journalEntries: 1, transactionHash: settled.tx_hash, block: settled.block_number }));
 
     phase = 'one-validator failure';
-    validator4MayBeStopped = true;
-    await bounded(phase, () => compose('stop'), 30000);
+    possiblyStopped.add('validator4');
+    await bounded(phase, () => compose('stop', 'validator4'), 30000);
     const stopHeight = await bounded(phase, () => provider.getBlockNumber(), 10000);
     const progressedHeight = await poll(phase, async () => {
       const height = await provider.getBlockNumber();
@@ -171,22 +173,109 @@ export async function verifyNetwork() {
     console.log(JSON.stringify({ check: 'one-validator-failure', stoppedService: 'validator4',
       fromHeight: stopHeight, progressedHeight, survivingAgreement: surviving.height }));
 
-    phase = 'validator restart and catch-up';
-    await bounded(phase, () => compose('start'), 30000);
-    validator4MayBeStopped = false;
+    phase = 'two-validator stop and in-flight block drain';
+    possiblyStopped.add('validator3');
+    await bounded(phase, () => compose('stop', 'validator3'), 30000);
+    const pair = providers.slice(0, 2);
+    let quiet: { height: number; hash: string; since: number } | undefined;
+    const baseline = await poll(phase, async () => {
+      try {
+        const sample = await agreement(pair, generated.validators);
+        if (!sample || sample.heads.some(height => height !== sample.height)) { quiet = undefined; return; }
+        if (!quiet || quiet.height !== sample.height || quiet.hash !== sample.hash)
+          quiet = { height: sample.height, hash: sample.hash, since: Date.now() };
+        return Date.now() - quiet.since >= 8000 ? sample : undefined;
+      } catch (error) { quiet = undefined; throw error; }
+    }, 45000);
+
+    phase = 'pending payment without quorum';
+    const laterAmount = parseUnits('37.5', 6);
+    const laterBlock = await bounded(phase, () => provider.getBlock('latest'), 10000);
+    assert.ok(laterBlock, 'Latest block is unavailable');
+    const laterPayment = { ...payment, paymentId: id(randomBytes(24).toString('hex')),
+      amount: laterAmount.toString(), nonce: '1', deadline: String(laterBlock.timestamp + 3600) };
+    const laterSignature = await payer.signTypedData(service.signingDomain, paymentTypes, laterPayment);
+    const laterAccepted = await bounded(phase, () => service.accept({ payment: laterPayment, signature: laterSignature }), 10000);
+    await bounded(phase, () => service.tick(), 20000);
+    const pending = store.get(laterAccepted.row.id)!;
+    assert.equal(pending.status, 'broadcast', 'No-quorum payment must have durable signed bytes');
+    assert.ok(pending.tx_hash && pending.raw_tx, 'Pending transaction provenance is required');
+    const pendingHash = pending.tx_hash, pendingRaw = pending.raw_tx;
+    await poll('both live nodes accepted the pending transaction', async () => {
+      const transactions = await Promise.all(pair.map(node => node.getTransaction(pendingHash)));
+      if (transactions.some(transaction => !transaction)) return;
+      assert.ok(transactions.every(transaction => transaction!.hash === pendingHash && transaction!.blockNumber === null),
+        'Quorum-loss transaction must be pending on both live nodes');
+      return true;
+    }, 20000);
+
+    phase = 'two-validator quorum observation';
+    const halted = await bounded(phase, () => observeHalted(async () => {
+      await service.tick();
+      const sample = await agreement(pair, generated.validators);
+      if (!sample) throw new AcceptanceFailure('Surviving RPC nodes do not agree');
+      const [receipts, balance, nonce] = await Promise.all([
+        Promise.all(pair.map(node => node.getTransactionReceipt(pendingHash))),
+        token.balanceOf(payee.address), router.nonces(payer.address)
+      ]);
+      assert.ok(receipts.every(receipt => receipt === null), 'No-quorum transaction unexpectedly has a receipt');
+      const row = store.get(laterAccepted.row.id)!;
+      assert.equal(row.status, 'broadcast', 'No-quorum payment finalized prematurely');
+      assert.equal(row.tx_hash, pendingHash, 'Pending transaction hash changed');
+      assert.equal(row.raw_tx, pendingRaw, 'Pending signed bytes changed');
+      assert.equal(store.journals().length, 1, 'No-quorum payment must not create a journal');
+      assert.equal(balance, amount, 'Recipient balance changed without quorum');
+      assert.equal(nonce, 1n, 'Payer nonce changed without quorum');
+      return sample;
+    }, baseline), 45000);
+    console.log(JSON.stringify({ check: 'two-validator-quorum-loss', stoppedServices: ['validator3', 'validator4'],
+      height: halted.height, hash: halted.hash, observedMs: halted.elapsedMs, observations: halted.observations,
+      pendingTransactionHash: pendingHash, journalEntries: 1 }));
+
+    phase = 'restore three-validator quorum';
+    await bounded(phase, () => compose('start', 'validator3'), 30000);
+    possiblyStopped.delete('validator3');
+    const restored = await poll(phase, async () => {
+      const sample = await agreement(providers.slice(0, 3), generated.validators);
+      return sample && sample.height >= baseline.height + 2 ? sample : undefined;
+    }, 120000);
+    console.log(JSON.stringify({ check: 'quorum-restoration', ...restored }));
+
+    phase = 'settle original pending transaction after quorum restoration';
+    const laterSettled = await poll(phase, async () => {
+      await service.tick();
+      const row = store.get(laterAccepted.row.id)!;
+      if (row.status === 'failed' || row.status === 'review')
+        throw new AcceptanceFailure('Recovered payment entered ' + row.status + ' state');
+      return row.status === 'settled' ? row : undefined;
+    }, 60000);
+    assert.equal(laterSettled.tx_hash, pendingHash, 'Recovery must settle the original transaction');
+    assert.equal(laterSettled.raw_tx, pendingRaw, 'Recovery must retain original signed bytes');
+    await bounded(phase, () => service.tick(), 10000);
+    assert.equal(await token.balanceOf(payee.address), amount + laterAmount, 'Recovered transfer balance mismatch');
+    assert.equal(await router.nonces(payer.address), 2n, 'Recovered payer nonce mismatch');
+    assert.equal(store.journals().length, 2, 'Recovered payment must add exactly one journal');
+    assert.deepEqual((await bounded('recovered receipt reconciliation', () => service.reconcile(), 10000)).exceptions, []);
+    console.log(JSON.stringify({ check: 'post-quorum-settlement', settledBaseUnits: laterAmount.toString(),
+      transactionHash: laterSettled.tx_hash, block: laterSettled.block_number, journalEntries: 2 }));
+
+    phase = 'all-validator restart and catch-up';
+    await bounded(phase, () => compose('start', 'validator4'), 30000);
+    possiblyStopped.delete('validator4');
     const recovered = await poll(phase, () => agreement(providers, generated.validators));
-    assert.ok(recovered.height >= progressedHeight, 'Restarted validator did not catch up');
+    assert.ok(recovered.height >= laterSettled.block_number!, 'Restarted validator did not catch up');
     console.log(JSON.stringify({ check: 'validator-recovery', ...recovered }));
     console.log(JSON.stringify({ result: 'passed', elapsedMs: Date.now() - started,
-      checks: ['four-validator-agreement', 'signed-settlement', 'one-validator-failure', 'validator-recovery'] }));
+      checks: ['four-validator-agreement', 'signed-settlement', 'one-validator-failure',
+        'two-validator-quorum-loss', 'quorum-restoration', 'post-quorum-settlement', 'validator-recovery'] }));
   } catch (error) {
     // Avoid dumping transaction arguments, generated keys, or wallet objects into CI logs.
-    const reason = error instanceof AcceptanceFailure ? ' (' + error.message + ')' : '';
+    const reason = error instanceof AcceptanceFailure || error instanceof QuorumObservationError ? ' (' + error.message + ')' : '';
     throw new Error('Besu acceptance failed during ' + phase + reason + '; inspect the validator logs');
   } finally {
-    if (validator4MayBeStopped) {
-      try { await compose('start'); }
-      catch { console.error('Cleanup could not restart clearledger-dev validator4'); process.exitCode = 1; }
+    for (const validator of possiblyStopped) {
+      try { await compose('start', validator); }
+      catch { console.error('Cleanup could not restart clearledger-dev ' + validator); process.exitCode = 1; }
     }
     for (const provider of providers) provider.destroy();
     store.close();

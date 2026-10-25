@@ -41,9 +41,9 @@ Node permissioning does not make transactions private. Token account eligibility
 - All four report chain ID 20261024, the generated QBFT validator membership, and a common canonical block hash with close head heights.
 - Fresh test contracts execute a signed 125 dUSD payment, yield one transfer journal, and reconcile without exceptions.
 - Stopping only `validator4` in the exact `clearledger-dev` Compose project leaves the other three progressing by at least two blocks and agreeing on the chain.
-- Restarting validator 4 restores four-node agreement and catches it up to the observed progress.
+- The new extension then stops validator 3, observes healthy two-node no-finalization, restores three-node quorum to settle a pending payment once, and restarts validator 4 for all-four catch-up. Its details and pending verification are below.
 
-The script has an eight-minute budget, bounded RPC/Compose operations, a best-effort restart of validator 4 on failure, and avoids logging generated keys. It does not stop other Docker projects or validators. Its journal is temporary memory state; `network:deploy` separately writes ignored reusable development-account credentials.
+The script has a ten-minute budget, bounded RPC/Compose operations, tracks both test-stopped validators 3 and 4 for best-effort restart on failure, and avoids logging generated keys. It does not stop other Docker projects or services. Its journal is temporary memory state; `network:deploy` separately writes ignored reusable development-account credentials.
 
 `.github/workflows/network.yml` runs this acceptance path on relevant pushes or manual dispatch, with a 15-minute job budget. Its cleanup removes only the workflow's ephemeral Compose network/volumes. Initial runs exposed key ownership and internal-network host-access issues; the non-root identity/data-bind configuration and separate gateway resolved those boundaries, with all gateway temporary/cache paths under `/tmp`.
 
@@ -58,6 +58,20 @@ The complete acceptance scenario took 77,920 ms. This is scenario duration, not 
 
 Two generator/configuration tests pass for cryptographic identity/membership consistency, enodes, copied genesis, minimal round-zero RLP, permission TOML, and refusal to replace existing keys. They do not execute consensus.
 
-Still beyond the script: loss of two validators, hostile/unapproved-peer attempts, independent-host failures, prolonged soak/load behavior, external port probing, and production fault tolerance.
+## Implemented quorum-loss extension — live result pending
+
+With four configured validators, the pinned Besu implementation calculates a required quorum of three (`ceil(2N/3)`); see [BftHelpers.java](../upstream/besu-26.10.1/consensus/common/src/main/java/org/hyperledger/besu/consensus/common/bft/BftHelpers.java). The script implements these additional phases, with no live-network pass yet:
+
+1. After the existing one-validator progress check, stop validator 3 as well, leaving validators 1 and 2 active.
+2. Allow already-in-flight blocks to drain until successful RPC probes show the two healthy latest heads equal, agreeing, and stable for at least eight seconds.
+3. Submit a second valid signed authorization for 37.5 dUSD with payer nonce 1. Require that its transaction is visible as pending on both live nodes before observation. During the 20-second window, every successful probe must show the same height/hash, null receipts, recipient balance still 125 dUSD, payer nonce still 1, one existing journal, and the payment remaining broadcast with identical stored hash/raw signed bytes. RPC failure fails the observation rather than counting as evidence of a halted chain.
+4. Restart validator 3 and allow up to 120 seconds for three-node recovery, accounting for QBFT round backoff. Require at least two blocks of progress and finalization of the same pending hash/raw bytes once: two journals, recipient balance 162.5 dUSD, payer nonce 2, and reconciliation without exceptions.
+5. Restart validator 4 and require all-four catch-up/agreement. Cleanup must restore any test-stopped validators on failure.
+
+Thirteen deterministic observation-helper tests passed in 278.4717 ms; the combined helper/configuration checks passed all 15 tests in 725.2262 ms. The full local suite then passed 109/109 tests, zero failures, in 86,315.1641 ms, with strict TypeScript checks also passing. The observation helper uses a monotonic clock. These tests verify sampling/configuration/application logic, not the new actual QBFT scenario; its real Docker acceptance result remains pending publication/CI. The script budget is ten minutes inside a 15-minute workflow job.
+
+A bounded 20-second window on one host does not test malicious validators, arbitrary partitions, independent-host failures, prolonged outages, or production safety/liveness.
+
+Still beyond verified acceptance: the pending two-validator scenario, hostile/unapproved-peer attempts, independent-host failures, prolonged soak/load behavior, external port probing, and production fault tolerance.
 
 References: [Besu QBFT tutorial](https://docs.besu-eth.org/private-networks/tutorials/qbft), [permissioning](https://docs.besu-eth.org/private-networks/concepts/permissioning).

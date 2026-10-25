@@ -99,6 +99,14 @@ The settlement transaction was `0x8a782917255f6a265cb9b237d8f23af5b98f0540174791
 
 The 26 targeted cases are local SQLite/application-invariant tests. They do not by themselves verify EVM execution, canonical receipts, tamper-proof storage, or multiworker operation. The combined suite runs existing EVM/recovery/transport tests, and the separate Besu workflow verifies the stated live-network scenario. Independent-host, two-validator-failure, hostile-peer, soak, browser, audit, and production limits remain.
 
+## Quorum-loss extension — implemented, live result pending
+
+The implemented extension stops validators 4 and 3, drains in-flight blocks until two healthy equal latest heads agree and remain stable for eight seconds, and submits a signed 37.5 dUSD authorization at payer nonce 1. Both active nodes must see that transaction pending. A 20-second observation requires successful probes, unchanged height/hash, null receipts, broadcast state with identical hash/raw bytes, one journal, recipient balance 125 dUSD, and payer nonce 1. Restoring validator 3 allows up to 120 seconds for recovery, requires at least two blocks of progress, and finalizes the same transaction once: two journals, recipient balance 162.5 dUSD, payer nonce 2, and zero reconciliation exceptions. Validator 4 then catches up.
+
+Thirteen deterministic helper tests passed in 278.4717 ms; combined helper/configuration checks passed 15/15 in 725.2262 ms. The full local `npm test` run passed **109/109 tests**, zero failures, exit 0, in 86,315.1641 ms, and strict TypeScript checking passed after implementation. The helper's observation clock is monotonic. No live result is claimed for the extension yet: deterministic tests validate observation logic, and RPC failure must fail rather than masquerade as a halted chain. New real Docker and regular CI runs await publication. The frontend build was not rerun locally for this network-only change. Script budget is ten minutes, job budget 15 minutes, and failure cleanup tracks both stopped validators.
+
+The prior successful Docker scenarios above covered one stopped validator. The new case remains bounded to one host and a 20-second sampling window, without malicious-fault, arbitrary-partition, multi-host, soak, or production claims.
+
 ## Public source verification — October 25, 2026
 
 The project is public at [samadalam481470sa-cmd/clearledger](https://github.com/samadalam481470sa-cmd/clearledger). The user-created repository was verified as public with connected write access. Source commit [`762dd075d4b3dbe8d04a0e88fa24550818f734a7`](https://github.com/samadalam481470sa-cmd/clearledger/commit/762dd075d4b3dbe8d04a0e88fa24550818f734a7) contains all 6,785 reviewed tracked files.
@@ -121,11 +129,11 @@ Browser-origin access remains denied. No alternative browser route was used, so 
 
 ## Reproduced source count
 
-The current dashboard-increment source count is 625,904 nonblank source lines, including comments and tests:
+The current quorum-loss-increment source count is 626,199 nonblank source lines, including comments and tests:
 
 | Source | Files | Physical lines | Nonblank lines |
 | --- | ---: | ---: | ---: |
-| Original application | 33 | 3,158 | 2,992 |
+| Original application | 35 | 3,476 | 3,287 |
 | Attributed Besu snapshot | 4,484 | 714,385 | 622,912 |
 
 The script's exclusions and methodology are recorded in `docs/source-count.json`; the size is not a claim of independently authored executable statements.
