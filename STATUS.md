@@ -6,9 +6,9 @@ Updated: October 25, 2026.
 
 - Build an advanced fintech/blockchain portfolio relevant to job applications.
 - Exceed 100,000 source lines through licensed attributed upstream source, with separate original/upstream counts.
-- Publish to a **new public** GitHub repository; suggested name `clearledger`.
+- Publish only to the new public repository created for this task: [samadalam481470sa-cmd/clearledger](https://github.com/samadalam481470sa-cmd/clearledger).
 - Do not modify, move, delete, stage, or upload any user files or repositories that existed before this task.
-- Hourly follow-up work is authorized. Automation `improve-clearledger-fintech-portfolio` is active.
+- Scheduled follow-up work is authorized. Automation `improve-clearledger-fintech-portfolio` is active, with the persisted schedule currently every 30 minutes; this is not uninterrupted execution.
 
 Project writes are confined to the new `outputs/clearledger/` directory and task-created scratch files under `../../work/`. There is no permission to edit other projects.
 
@@ -55,22 +55,21 @@ Project writes are confined to the new `outputs/clearledger/` directory and task
 - The expanded combined `npm test` run passed **54/54 tests**, zero failures, exit code 0, in 57,485.5395 ms. Strict TypeScript checking passed. The UI was unchanged and the frontend build was not rerun for this increment.
 - Current source count: **624,796 nonblank lines**, including comments/tests. Original application: 25 files, 1,983 physical lines, 1,884 nonblank lines. Besu: 4,484 files, 714,385 physical lines, 622,912 nonblank lines. See `docs/source-count.json`.
 
-## Publication and verification limits
+## Public source publication — October 25, 2026
 
-- GitHub connector authenticated as `samadalam481470sa-cmd`, but exposes no repository-creation tool.
-- Git credential manager has no usable GitHub credential. Do not inspect unrelated secrets.
-- Browser access to `github.com` and `http://127.0.0.1:4317` was explicitly denied by the approval gate. Do not bypass via another browser surface, raw protocol, or indirect route.
-- No remote GitHub repository has been created or uploaded. Do not claim remote CI passed.
-- A new local Git repository was initialized only inside this ClearLedger root. The source is saved in local commit `18cc7346f3ee95e25492d3a3a013c76da7cace4b` (6,785 project files). Root `.env`, `node_modules/`, `data/`, `dist/`, `artifacts/`, and `network/generated/` are not tracked. No remote or upload is configured.
-- The user supplied account `samadalam481470sa-cmd`; the connected repository lookup still found no new `clearledger` repository. The user has been asked to create a new public repository and provide its URL. Do not modify an existing unrelated repository or bypass the browser-origin denial.
-- Browser appearance/interaction and Docker/Besu failover remain unverified. Prolonged-outage/soak tests, disk/power-failure behavior, automatic stuck-transaction management, and distributed relayer coordination also remain future work.
+- The user created and supplied [samadalam481470sa-cmd/clearledger](https://github.com/samadalam481470sa-cmd/clearledger). Repository ID `1432932875` was verified public, with administrative/push access for the connected account.
+- All 6,785 reviewed tracked files were published on `main` in source commit [`762dd075d4b3dbe8d04a0e88fa24550818f734a7`](https://github.com/samadalam481470sa-cmd/clearledger/commit/762dd075d4b3dbe8d04a0e88fa24550818f734a7).
+- The published content tree, `c947995d42108b239349568ff7def50ea4779f7c`, matched the entire reviewed local Git tree exactly, including 56 unique binary blobs across 66 binary paths. Contracts and the source-count report were also verified through the connector.
+- `origin` points to this new repository. Local `main` was aligned to `origin/main` only after the identical-tree check; the original local build history is preserved on `local-build-history`.
+- Root `.env`, `node_modules/`, `data/`, `dist/`, `artifacts/`, and `network/generated/` are not tracked. Continue excluding keys, tokens, databases, scratch files, cached tools, and logs from future publication.
+- Initial push CI run [`40173477932`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40173477932) completed successfully for source head `762dd075d4b3dbe8d04a0e88fa24550818f734a7`. Job `121109103415` reported every step successful, including `npm ci`, typecheck, tests, build, and source counting. Both the completed run conclusion and connector job steps were checked.
 
-## Safe publication path after user action
+## Remaining verification limits
 
-The user can create a new public fork of `besu-eth/besu` named `clearledger` and supply its URL. Verify it was created for this task and that connector write access exists. Then organize the pinned Besu tree under `upstream/besu-26.10.1/` and add original files, preserving licenses and attribution. A new empty repository is another option if the user configures an authorized Git push credential.
-
-Never upload `.env`, `node_modules/`, `data/`, generated validator/account keys, raw payment databases, logs, scratch files, or cached tools. Do not modify an existing unrelated repository.
+- Browser appearance/interaction remains unverified because browser-origin access was denied. No alternate browser route was used. Publishing through the authorized GitHub connector did not verify the dashboard visually.
+- Docker/Besu failover, prolonged-outage/soak tests, disk/power-failure behavior, automatic stuck-transaction management, and distributed relayer coordination remain future work.
+- Native Git credential availability is not established by connector publication. Do not inspect unrelated secrets or modify any unrelated repository.
 
 ## Resume
 
-Read this file and `ROADMAP.md`. Implement and verify one useful increment, record evidence and limitations, and notify only for a meaningful milestone, failure, completion, or required action. Do not repeat an unchanged connection blocker every hour.
+Read this file and `ROADMAP.md`. Implement and verify one useful increment, record evidence and limitations, and notify only for a meaningful milestone, failure, completion, or required action. Check the new repository's actual CI outcome when actionable. Commit or publish only to this task's ClearLedger repository, preserving upstream attribution and excluding runtime state.

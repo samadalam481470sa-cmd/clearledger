@@ -18,7 +18,6 @@ The initial suite passed 30 tests. The combined suite on October 25, 2026 passed
 - Browser rendering, accessibility, and interaction: browser-origin access was denied by the approval gate. No alternate browser route was used.
 - Four-node Docker/Besu startup and failover: Docker unavailable on the initial host.
 - Production, security audit, load/soak performance, and upstream Besu's own test suite.
-- Remote GitHub Actions until a repository is published and its actual run succeeds.
 - Complete reorganization repair, full-chain event indexing, and multi-process relayer coordination.
 - Frontend adoption of paginated APIs and per-asset totals; the dashboard remains a recent-record demo-currency view.
 
@@ -57,6 +56,14 @@ Eleven targeted pagination/accounting tests passed in 8,875 ms, and the latest s
 The scan's upper insertion boundary excludes newer inserts from that scan, but changing statuses are not a transactionally frozen snapshot. Reconciliation materializes each page before RPC awaits and status updates. Overview now returns payment/journal previews of up to 100 each. No browser rendering or frontend adoption of the new collection APIs was verified.
 
 The expanded combined `npm test` run passed **54/54 tests**, zero failures, exit code 0, in 57,485.5395 ms. Strict TypeScript checking passed. The UI was unchanged and the frontend build was not rerun for this increment.
+
+## Public source verification — October 25, 2026
+
+The project is public at [samadalam481470sa-cmd/clearledger](https://github.com/samadalam481470sa-cmd/clearledger). The user-created repository was verified as public with connected write access. Source commit [`762dd075d4b3dbe8d04a0e88fa24550818f734a7`](https://github.com/samadalam481470sa-cmd/clearledger/commit/762dd075d4b3dbe8d04a0e88fa24550818f734a7) contains all 6,785 reviewed tracked files.
+
+Its content-addressed tree SHA, `c947995d42108b239349568ff7def50ea4779f7c`, exactly matches the reviewed local Git tree, including 56 unique binary blobs across 66 binary paths. Contracts and `docs/source-count.json` were additionally read back through the connector. Root runtime/dependency/generated-key directories and `.env` are untracked and were excluded from publication.
+
+The initial [push workflow run 40173477932](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40173477932) completed with conclusion **success** for source head `762dd075d4b3dbe8d04a0e88fa24550818f734a7`. Job `121109103415` reported all steps successful, including dependency installation (`npm ci`), strict TypeScript checks, tests, Solidity/frontend build, and source counting. The completed run conclusion and job-step results were verified separately. This is the first remote CI verification; it does not establish Docker/Besu operation, browser QA, production readiness, or a security audit.
 
 ## Reproduced source count
 

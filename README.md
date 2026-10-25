@@ -2,6 +2,8 @@
 
 **Signed payments, on-chain settlement, and a reconciled transfer journal.**
 
+[Public repository](https://github.com/samadalam481470sa-cmd/clearledger) · [![ClearLedger checks](https://github.com/samadalam481470sa-cmd/clearledger/actions/workflows/ci.yml/badge.svg)](https://github.com/samadalam481470sa-cmd/clearledger/actions/workflows/ci.yml)
+
 ClearLedger is a fintech engineering portfolio prototype built on EVM infrastructure. Its original application combines Solidity payment controls, a TypeScript settlement worker, SQLite accounting records, and a React operations dashboard. An attributed **Besu 26.10.1 source snapshot** is included under `upstream/`.
 
 Demo USD has no monetary value, reserves, or redemption promise. This project is unaudited and has no banking integration. The consensus implementation is Besu's work; ClearLedger's original contribution is the payment application and its integration, tests, and documentation.
@@ -60,7 +62,7 @@ npm run build
 npm run source:count
 ```
 
-The latest combined Windows run passed **54 tests**, and strict TypeScript checking passed. Solidity compilation and the React/Vite build passed in the earlier recovery increment; frontend changes are not part of these service increments and that build was not rerun. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and unverified paths. GitHub Actions configuration is provided; remote CI success is not claimed before publication and a successful run.
+The latest combined Windows run passed **54 tests**, and strict TypeScript checking passed. The public source was published on October 25, 2026, and its first [GitHub Actions run passed](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40173477932): dependency installation, typecheck, tests, Solidity/frontend build, and source counting all succeeded. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and remaining limits.
 
 ## More than 100,000 source lines
 
