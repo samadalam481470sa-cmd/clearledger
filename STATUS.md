@@ -70,7 +70,18 @@ Project writes are confined to the new `outputs/clearledger/` directory and task
 - Final source head `0091aa306111e67855ccda6d08435e15aaae6e5a` passed both workflows: [network run `40189385292`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40189385292), job `121156932986`, and [regular run `40189385293`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40189385293), job `121156932941`, including all 56 tests, typecheck, build, and source count. Run conclusions, job steps, and logs were verified; regular CI recorded 56 passes/zero failures and 625,049 nonblank source lines.
 - Actual network evidence: all four agreed at block 1/heads `[1,1,1,1]`; signed 125 dUSD settled at block 23 with one journal and zero reconciliation exceptions; validator 4 stopped at height 24 while the surviving three advanced to 26 and agreed; all four caught up to height 28 after restart. The scenario took 77,920 ms, not a throughput benchmark.
 - The passing scenario ran on one GitHub Actions Ubuntu Docker host. Local Docker remains unavailable on the original Windows host. The non-root gateway uses `/tmp` for every PID/temporary/cache path.
-- Current source count: **625,049 nonblank lines**, including comments/tests. Original: 27 files, 2,255 physical lines, 2,137 nonblank lines. Attributed Besu: 4,484 files, 714,385 physical lines, 622,912 nonblank lines.
+- Network-increment source count: **625,049 nonblank lines**, including comments/tests. Original: 27 files, 2,255 physical lines, 2,137 nonblank lines. Attributed Besu: 4,484 files, 714,385 physical lines, 622,912 nonblank lines.
+
+## Store lifecycle invariant increment
+
+- Twenty-six targeted synthetic database tests passed in 521.598 ms; strict TypeScript checks passed.
+- Store mutations enforce explicit transitions: queued→broadcast, queued/broadcast→failed, broadcast/settled→review, and broadcast→settled. Invalid transitions and unknown rows raise `StateTransitionError` inside the write transaction.
+- Exact repeated reservations/finalization/terminal details are no-ops without duplicate audit entries; conflicting repetitions and terminal rewrites are rejected.
+- Finalization compares all existing journal fields with payment/transaction/block provenance. A settled retry with a missing or inconsistent journal is rejected, rather than silently using `INSERT OR IGNORE`.
+- Existing-intent reads now share `BEGIN IMMEDIATE` with acceptance insertion/audit writes.
+- Current source count: **625,249 nonblank lines**, including comments/tests. Original: 28 files, 2,471 physical lines, 2,337 nonblank lines. Attributed Besu: 4,484 files, 714,385 physical lines, 622,912 nonblank lines.
+- Full local `npm test` passed **82 tests, 82 passes, zero failures, exit code 0**, in 86,524.5499 ms. Latest strict TypeScript checks passed. New CI results are pending publication; `src/store.ts` changes now trigger the Besu network acceptance workflow.
+- The 26 targeted SQLite cases do not by themselves prove EVM behavior, immutable storage, or multiworker correctness. The combined suite includes existing EVM/recovery/transport tests; a real Besu rerun remains pending CI. Single-worker limits remain.
 
 ## Public source publication — October 25, 2026
 

@@ -11,6 +11,7 @@ on:
       - contracts/**
       - src/chain.ts
       - src/service.ts
+      - src/store.ts
 permissions:
   contents: read
 jobs:

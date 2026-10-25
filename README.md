@@ -33,6 +33,7 @@ On the original Windows workspace, `Start-ClearLedger.ps1` can use the Node runt
 - Effects and token movement revert atomically; recipient balance checks reject incompatible transfer amounts.
 - Signed transaction bytes are stored before broadcast, allowing the worker to retry the same transaction hash after an uncertain outcome.
 - File-backed recovery tests kill a real worker process at dispatch/finalization boundaries and verify that restart does not duplicate a transfer or journal row. Persisted broadcasts retain nonce priority even if the wall clock moves backward.
+- Atomic Store transition guards reject conflicting lifecycle/journal updates, while exact repetitions preserve the existing audit history without duplicate entries.
 - Controlled HTTP-proxy tests verify retry after 503 responses, dropped connections, silent transport timeouts, and a lost response after upstream transaction acceptance. RPC-mode HTTP exchanges have a configurable timeout.
 - A matching settlement event, configured confirmation count, and canonical block are required before the transfer journal is finalized.
 - Reconciliation flags recorded settlements whose receipt or block is no longer canonical.
@@ -62,11 +63,11 @@ npm run build
 npm run source:count
 ```
 
-The latest regular [GitHub Actions run passed 56 tests](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40189385293), typecheck, build, and source counting. The separate [Besu network acceptance run also passed](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40189385292), including signed 125 dUSD settlement and one-validator failure/recovery on a single Ubuntu Docker host. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and remaining limits.
+The latest local run passed **82 tests**, zero failures, and strict TypeScript checking. CI for the lifecycle-invariant increment is pending publication. The prior regular [GitHub Actions run passed 56 tests](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40189385293), typecheck, build, and source counting, while separate [Besu acceptance passed](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40189385292) signed 125 dUSD settlement and one-validator failure/recovery on one Ubuntu Docker host. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and remaining limits.
 
 ## More than 100,000 source lines
 
-The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **625,049 nonblank source lines**: 2,137 original and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
+The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **625,249 nonblank source lines**: 2,337 original and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
 
 Original application code is MIT-licensed. Besu and installed dependencies retain their own licenses. [Provenance](docs/PROVENANCE.md) pins the release, commit, and download hash.
 

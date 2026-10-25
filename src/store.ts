@@ -9,6 +9,7 @@ export interface RecordRow {
 }
 export class Conflict extends Error {}
 export class PaginationError extends Error {}
+export class StateTransitionError extends Error {}
 interface PageOptions { limit?: number; cursor?: string; status?: Status }
 interface Cursor { version: 1; kind: 'payments' | 'journals'; status: Status | null; upper: number; before: number }
 interface JournalRow {
@@ -68,57 +69,80 @@ export class Store {
   get(id: string): RecordRow | undefined {
     return this.db.prepare('SELECT * FROM payments WHERE id = ?').get(id) as unknown as RecordRow | undefined;
   }
-  accept(p: Payment, fingerprint: string, signature: string) {
-    const id = paymentKey(p), existing = this.get(id);
-    if (existing) {
-      if (existing.fingerprint !== fingerprint) throw new Conflict('Payment ID already has different instructions');
-      return { row: existing, replay: true };
-    }
-    const now = new Date().toISOString();
+  private transaction<T>(change: () => T): T {
     this.db.exec('BEGIN IMMEDIATE');
     try {
+      const result = change();
+      this.db.exec('COMMIT');
+      return result;
+    } catch (e) { this.db.exec('ROLLBACK'); throw e; }
+  }
+  private requireRow(id: string) {
+    const row = this.get(id);
+    if (!row) throw new StateTransitionError('Unknown payment');
+    return row;
+  }
+  accept(p: Payment, fingerprint: string, signature: string) {
+    return this.transaction(() => {
+      const id = paymentKey(p), existing = this.get(id);
+      if (existing) {
+        if (existing.fingerprint !== fingerprint) throw new Conflict('Payment ID already has different instructions');
+        return { row: existing, replay: true };
+      }
+      const now = new Date().toISOString();
       this.db.prepare('INSERT INTO payments(id,fingerprint,payload,signature,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)')
         .run(id, fingerprint, JSON.stringify(p), signature, 'queued', now, now);
       this.audit(id, 'accepted', 'Signed payment queued');
-      this.db.exec('COMMIT');
-    } catch (e) { this.db.exec('ROLLBACK'); throw e; }
-    return { row: this.get(id)!, replay: false };
+      return { row: this.requireRow(id), replay: false };
+    });
   }
   audit(id: string, action: string, detail: string) {
     this.db.prepare('INSERT INTO audit(payment_id,action,at,detail) VALUES(?,?,?,?)')
       .run(id, action, new Date().toISOString(), detail);
   }
   broadcast(id: string, raw: string, hash: string) {
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
+    this.transaction(() => {
+      const row = this.requireRow(id);
+      if (row.status === 'broadcast' && row.raw_tx === raw && row.tx_hash === hash) return;
+      if (row.status !== 'queued') throw new StateTransitionError('Payment cannot reserve a new broadcast');
       this.db.prepare("UPDATE payments SET status='broadcast',raw_tx=?,tx_hash=?,updated_at=? WHERE id=? AND status='queued'")
         .run(raw, hash, new Date().toISOString(), id);
       this.audit(id, 'broadcast-prepared', hash);
-      this.db.exec('COMMIT');
-    } catch (e) { this.db.exec('ROLLBACK'); throw e; }
+    });
   }
   setStatus(id: string, status: 'failed' | 'review', error: string) {
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
+    this.transaction(() => {
+      const row = this.requireRow(id), detail = error.slice(0, 500);
+      if (row.status === status && row.error === detail) return;
+      const allowed = status === 'failed' ? ['queued', 'broadcast'] : ['broadcast', 'settled'];
+      if (!allowed.includes(row.status)) throw new StateTransitionError('Payment cannot enter ' + status);
       this.db.prepare('UPDATE payments SET status=?,error=?,updated_at=? WHERE id=?')
-        .run(status, error.slice(0, 500), new Date().toISOString(), id);
-      this.audit(id, status, error.slice(0, 500));
-      this.db.exec('COMMIT');
-    } catch (e) { this.db.exec('ROLLBACK'); throw e; }
+        .run(status, detail, new Date().toISOString(), id);
+      this.audit(id, status, detail);
+    });
   }
   finalize(id: string, blockNumber: number, blockHash: string) {
-    const row = this.get(id);
-    if (!row || !row.tx_hash) throw new Error('No broadcast transaction');
-    const p: Payment = JSON.parse(row.payload);
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      this.db.prepare('INSERT OR IGNORE INTO journals VALUES(?,?,?,?,?,?,?,?)')
+    this.transaction(() => {
+      const row = this.requireRow(id);
+      if (!['broadcast', 'settled'].includes(row.status) || !row.tx_hash || !row.raw_tx)
+        throw new StateTransitionError('No eligible broadcast transaction');
+      const p: Payment = JSON.parse(row.payload);
+      const journal = this.db.prepare('SELECT * FROM journals WHERE payment_id=?').get(id) as unknown as JournalRow | undefined;
+      if (journal && (journal.token !== p.token || journal.debit_account !== p.payer ||
+        journal.credit_account !== p.payee || journal.amount !== p.amount || journal.tx_hash !== row.tx_hash ||
+        journal.block_number !== blockNumber || journal.block_hash !== blockHash))
+        throw new StateTransitionError('Settlement conflicts with the existing journal');
+      if (row.status === 'settled') {
+        if (!journal || row.block_number !== blockNumber || row.block_hash !== blockHash)
+          throw new StateTransitionError('Settlement retry does not match recorded provenance');
+        return;
+      }
+      if (!journal) this.db.prepare('INSERT INTO journals VALUES(?,?,?,?,?,?,?,?)')
         .run(id, p.token, p.payer, p.payee, p.amount, row.tx_hash, blockNumber, blockHash);
       this.db.prepare("UPDATE payments SET status='settled',block_number=?,block_hash=?,error=NULL,updated_at=? WHERE id=?")
         .run(blockNumber, blockHash, new Date().toISOString(), id);
       this.audit(id, 'settled', row.tx_hash);
-      this.db.exec('COMMIT');
-    } catch (e) { this.db.exec('ROLLBACK'); throw e; }
+    });
   }
   list(limit = 100): RecordRow[] {
     return this.db.prepare('SELECT * FROM payments ORDER BY rowid DESC LIMIT ?').all(limit) as unknown as RecordRow[];

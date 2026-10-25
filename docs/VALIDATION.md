@@ -84,6 +84,14 @@ The actual Docker acceptance log recorded:
 
 Settlement transaction: `0xee95153f7fac54ae81804ac6586160868935ade07dc54b032b5930f483d4dc02`. The entire scenario took 77,920 ms; that duration is not a throughput or settlement-latency benchmark. All five containers shared one Ubuntu runner. This verifies the scripted single-host case, not two-validator failure, hostile peers, independent-host failures, prolonged soak, production readiness, or browser QA.
 
+## Store lifecycle invariant increment
+
+Twenty-six targeted synthetic database tests passed in 521.598 ms, and strict TypeScript checking passed. They cover atomic lifecycle transition guards, unknown-payment rejection, exact-repeat no-ops without duplicate audits, conflicting reservation/finalization rejection, terminal rewrite rejection, and comparison of stored journal/provenance fields. Settled retries reject missing or inconsistent journals rather than hiding them behind an ignored duplicate insert. The intent lookup and insertion share a `BEGIN IMMEDIATE` transaction.
+
+The full local `npm test` run also passed: **82 tests, 82 passes, zero failures, exit code 0**, in 86,524.5499 ms. Strict TypeScript checking passed. New CI evidence is pending publication; the 56-test and Docker acceptance results above describe previously verified source. Store changes now trigger network acceptance as well as regular CI.
+
+The 26 targeted cases are local SQLite/application-invariant tests. They do not by themselves verify EVM execution, canonical receipts, tamper-proof storage, or multiworker operation; the combined suite also runs the existing EVM/recovery/transport tests, with the real Besu rerun still pending CI.
+
 ## Public source verification — October 25, 2026
 
 The project is public at [samadalam481470sa-cmd/clearledger](https://github.com/samadalam481470sa-cmd/clearledger). The user-created repository was verified as public with connected write access. Source commit [`762dd075d4b3dbe8d04a0e88fa24550818f734a7`](https://github.com/samadalam481470sa-cmd/clearledger/commit/762dd075d4b3dbe8d04a0e88fa24550818f734a7) contains all 6,785 reviewed tracked files.
@@ -94,11 +102,11 @@ The initial [push workflow run 40173477932](https://github.com/samadalam481470sa
 
 ## Reproduced source count
 
-The current network-tooling source count is 625,049 nonblank source lines, including comments and tests:
+The current lifecycle-increment source count is 625,249 nonblank source lines, including comments and tests:
 
 | Source | Files | Physical lines | Nonblank lines |
 | --- | ---: | ---: | ---: |
-| Original application | 27 | 2,255 | 2,137 |
+| Original application | 28 | 2,471 | 2,337 |
 | Attributed Besu snapshot | 4,484 | 714,385 | 622,912 |
 
 The script's exclusions and methodology are recorded in `docs/source-count.json`; the size is not a claim of independently authored executable statements.
