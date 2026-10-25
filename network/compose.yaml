@@ -27,7 +27,6 @@ services:
     environment:
       <<: *validator-environment
       BESU_P2P_HOST: 172.28.77.11
-    ports: ["127.0.0.1:8545:8545"]
     volumes:
       - ./generated/validator1:/config:ro
       - ./generated/validator1/data:/data
@@ -40,7 +39,6 @@ services:
     environment:
       <<: *validator-environment
       BESU_P2P_HOST: 172.28.77.12
-    ports: ["127.0.0.1:8546:8545"]
     volumes:
       - ./generated/validator2:/config:ro
       - ./generated/validator2/data:/data
@@ -53,7 +51,6 @@ services:
     environment:
       <<: *validator-environment
       BESU_P2P_HOST: 172.28.77.13
-    ports: ["127.0.0.1:8547:8545"]
     volumes:
       - ./generated/validator3:/config:ro
       - ./generated/validator3/data:/data
@@ -66,14 +63,27 @@ services:
     environment:
       <<: *validator-environment
       BESU_P2P_HOST: 172.28.77.14
-    ports: ["127.0.0.1:8548:8545"]
     volumes:
       - ./generated/validator4:/config:ro
       - ./generated/validator4/data:/data
     networks:
       settlement:
         ipv4_address: 172.28.77.14
+  rpc:
+    image: nginx:stable-alpine@sha256:47928bf67eb62a1863cb08d9ecb52d3e704304ba614eaee17884204677702951
+    user: "101:101"
+    entrypoint: ["nginx", "-g", "daemon off;"]
+    depends_on: [validator1, validator2, validator3, validator4]
+    ports:
+      - "127.0.0.1:8545:8545"
+      - "127.0.0.1:8546:8546"
+      - "127.0.0.1:8547:8547"
+      - "127.0.0.1:8548:8548"
+    volumes:
+      - ./rpc.conf:/etc/nginx/nginx.conf:ro
+    networks: [settlement, rpc-access]
 networks:
+  rpc-access: {}
   settlement:
     internal: true
     ipam:
