@@ -93,3 +93,9 @@ Broadcast records retain signed bytes and a deterministic hash. A restarted work
 Missing or empty preflight revert data remains retryable even when the RPC library labels it `CALL_EXCEPTION`. That avoids treating a transport failure as a rejected payment. A real empty-data revert can consequently remain queued until investigated.
 
 A stuck/replaced transaction can block the queue. Fee replacement and administrative resolution are not implemented. Inspect signer nonce and transaction state rather than re-signing an uncertain business payment under another ID.
+
+## Shutdown
+
+RPC and demo entrypoints handle SIGINT and SIGTERM through one guarded, idempotent shutdown path with a default 20-second cooperative budget. New requests receive 503 and `Connection: close` while shutdown stops the listener, waits for the serialized worker's active tick, and drains actual HTTP handler promises before closing the provider/chain and SQLite. A disconnected client does not cancel a handler awaiting RPC; that operation remains part of the drain until its last possible write has completed.
+
+If a drain fails or times out, no deferred resource-close step starts when it eventually completes. The entrypoint prints a fixed diagnostic and exits 1; a successful close exits naturally with code 0. An in-progress resource close or blocking JavaScript cannot be forcibly cancelled by the timer. SIGKILL, Windows force termination, and hardware failure are crash-recovery cases, not graceful shutdown. These mechanics do not guarantee an exact wall-clock exit deadline or establish production availability. Local unit/HTTP checks and build passed; real POSIX signal-helper integration remains pending Linux CI and is not a complete application CLI test. See [validation](VALIDATION.md).

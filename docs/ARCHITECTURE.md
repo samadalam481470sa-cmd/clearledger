@@ -51,6 +51,12 @@ Finalization compares every existing journal field against the payment, transact
 
 There is no distributed lease. Only one process may own a relayer key. A stuck or replaced native transaction may block the queue until an operator investigates it.
 
+## Resource lifecycle and shutdown
+
+The runtime worker schedules one tick at a time and `stop()` awaits the active tick. HTTP draining tracks handler promises rather than socket lifetimes, since an RPC-awaited handler can still write SQLite after its client disconnects. A shared idempotent shutdown starts worker/request/listener drains together and closes shared resources only after those drains finish within the default 20-second cooperative budget. New HTTP requests are rejected with 503/connection close during draining. RPC and demo entrypoints share the guarded SIGINT/SIGTERM path.
+
+Previously, immediate signal cleanup could destroy the provider or close SQLite while an active worker or handler still owned a pending write. The new ordering addresses that race. Failed or timed-out drains never initiate resource closing later; entrypoints report a fixed diagnostic/exit 1 so durable state can be inspected on restart. Successful close allows natural exit 0. The timer cannot preempt synchronous JavaScript, cancel already-started resource closing, or make OS force-kill graceful. Local tests/typecheck/build passed, with the POSIX signal-helper integration explicitly skipped on Windows and awaiting Linux CI. That fixture tests shared helpers with a real signal, not a complete application CLI process; no daemon-soak or production-readiness claim is made.
+
 RPC mode uses an explicit HTTP timeout (five seconds by default, configurable
 through `RPC_TIMEOUT_MS`) with one transport attempt. A silent upstream therefore
 releases the current HTTP exchange so the worker can retry from durable state on

@@ -145,6 +145,14 @@ The prior successful Docker scenarios above covered one stopped validator. The n
 
 This is one bounded local-EVM transport/process-recovery case, not an autonomous daemon, new Besu-network test, hours-long soak, or production availability claim. No production behavior changed; durations measure the test/outage, not a recovery SLO or throughput benchmark. The test-only increment did not rerun local frontend build; regular CI rebuilt it successfully.
 
+## Graceful lifecycle ordering — local pass, remote CI pending
+
+- Sixteen targeted unit/real-HTTP checks passed in 510.9822 ms; strict typecheck passed. Checks include serialized worker stop, idempotent shutdown, failures/deadlines/late drain completions, and a disconnected client's late SQLite write completing before resource close.
+- The change coordinates active worker, actual HTTP handler promises, and listener shutdown before closing shared resources; new requests receive 503/connection close. Both RPC/demo entrypoints guard SIGINT and SIGTERM through the shared default 20-second cooperative shutdown.
+- Failed/timed-out drains do not trigger resource close later. Timers do not preempt blocking JavaScript or cancel already-started resource cleanup; force-kill remains crash recovery, not graceful termination.
+- Full local `npm test` completed **127 cases: 126 passes, zero failures, one explicitly skipped POSIX signal-helper case on Windows**, exit 0, in 156,786.1452 ms. Strict typecheck and the integrated Solidity/Vite build passed.
+- The Linux helper fixture sends real SIGTERM while a tick is paused, requires SQLite to remain open, then checks one late audit write, one resource close, and exit 0 after release. Its actual execution remains pending Linux CI. This is helper integration, not complete application CLI signal E2E; no new Besu run, daemon soak, exact exit deadline, or production guarantee is claimed.
+
 ## Public source verification — October 25, 2026
 
 The project is public at [samadalam481470sa-cmd/clearledger](https://github.com/samadalam481470sa-cmd/clearledger). The user-created repository was verified as public with connected write access. Source commit [`762dd075d4b3dbe8d04a0e88fa24550818f734a7`](https://github.com/samadalam481470sa-cmd/clearledger/commit/762dd075d4b3dbe8d04a0e88fa24550818f734a7) contains all 6,785 reviewed tracked files.
@@ -167,11 +175,11 @@ Browser-origin access remains denied. No alternative browser route was used, so 
 
 ## Reproduced source count
 
-The current receipt-outage-increment source count is 626,487 nonblank source lines, including comments and tests:
+The current lifecycle-increment source count is 627,090 nonblank source lines, including comments and tests:
 
 | Source | Files | Physical lines | Nonblank lines |
 | --- | ---: | ---: | ---: |
-| Original application | 37 | 3,775 | 3,575 |
+| Original application | 42 | 4,407 | 4,178 |
 | Attributed Besu snapshot | 4,484 | 714,385 | 622,912 |
 
 The script's exclusions and methodology are recorded in `docs/source-count.json`; the size is not a claim of independently authored executable statements.

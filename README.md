@@ -67,9 +67,11 @@ The latest [regular CI passed all 110 tests](https://github.com/samadalam481470s
 
 A bounded receipt-outage test passed a measured 60,705 ms/59 observations in CI across actual worker termination/restart and file-backed SQLite reopen, with both payments settling once after recovery. Retries were driven by serialized IPC commands; this is not an autonomous daemon, Besu-network run, or hours-long soak.
 
+A shutdown-lifecycle increment now coordinates worker and HTTP drains before closing shared resources on SIGINT/SIGTERM. Local verification completed 127 cases: 126 passes, zero failures, and one explicitly skipped POSIX signal-helper integration on Windows. Typecheck and the Solidity/Vite build passed; only remote CI remains pending. The helper fixture does not exercise the complete application CLI. See the [shutdown operation](docs/API.md#shutdown) for the cooperative deadline and forced-termination limits.
+
 ## More than 100,000 source lines
 
-The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **626,487 nonblank source lines**: 3,575 original and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
+The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **627,090 nonblank source lines**: 4,178 original and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
 
 Original application code is MIT-licensed. Besu and installed dependencies retain their own licenses. [Provenance](docs/PROVENANCE.md) pins the release, commit, and download hash.
 

@@ -6,6 +6,7 @@ import { Store } from '../src/store.ts';
 import { PaymentService } from '../src/service.ts';
 import { paymentTypes } from '../src/payment.ts';
 import { makeServer } from '../src/http.ts';
+import { createShutdown, startWorker } from '../src/lifecycle.ts';
 
 compile();
 const chain = await localChain();
@@ -38,14 +39,28 @@ const server = makeServer({ service, apiKey, port, mode: 'demo', demoPayment: su
     perPaymentLimit: '10000', dailyLimit: '25000' }
 });
 server.listen(port, '127.0.0.1', () => console.log('ClearLedger demo: http://127.0.0.1:' + port));
-const timer = setInterval(() => void service.tick().catch(() => console.error('Worker waiting for RPC recovery')), 1000);
-async function shutdown() {
-  clearInterval(timer);
-  server.close();
-  await chain.close();
-  store.close();
-  process.exit(0);
+const worker = startWorker(() => service.tick(), { onError: () => console.error('Worker waiting for RPC recovery') });
+const shutdown = createShutdown({
+  stopWorker: () => worker.stop(),
+  drainRequests: () => server.drainRequests(),
+  closeServer: () => new Promise<void>((resolveClose, reject) => {
+    server.close(error => error ? reject(error) : resolveClose());
+    server.closeIdleConnections();
+  }),
+  closeResources: async () => { await chain.close(); store.close(); }
+});
+let shuttingDown = false;
+function onSignal() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  void shutdown().then(result => {
+    if (result === 'closed') process.exitCode = 0;
+    else {
+      console.error('ClearLedger demo shutdown could not finish safely');
+      process.exit(1);
+    }
+  });
 }
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+process.on('SIGINT', onSignal);
+process.on('SIGTERM', onSignal);
 

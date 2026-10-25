@@ -17,6 +17,7 @@ const paginationQuery = z.object({
   status: z.enum(['queued', 'broadcast', 'settled', 'failed', 'review']).optional()
 }).strict();
 function json(res: ServerResponse, status: number, data: unknown) {
+  if (res.destroyed || res.writableEnded) return;
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(data));
 }
@@ -39,7 +40,9 @@ function authenticated(req: IncomingMessage, key: string) {
 export function makeServer(options: HttpOptions) {
   const { service, apiKey, mode } = options;
   const rate = new Map<string, { started: number; count: number }>();
-  const server = createServer(async (req, res) => {
+  const active = new Set<Promise<void>>();
+  let draining = false, drained: Promise<void> | undefined;
+  const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('Cache-Control', 'no-store');
@@ -122,9 +125,28 @@ export function makeServer(options: HttpOptions) {
         e.code === 'NETWORK_ERROR' || e.code === 'SERVER_ERROR' ? 503 : 422;
       json(res, status, { error: e instanceof ZodError ? 'Invalid payment payload' : (e.shortMessage ?? e.message ?? 'Request failed').slice(0, 300) });
     }
+  };
+  const server = createServer((req, res) => {
+    if (draining) {
+      res.setHeader('Connection', 'close');
+      json(res, 503, { error: 'Service is shutting down' }); return;
+    }
+    // Socket closure does not cancel an async handler waiting on RPC. Track the
+    // operation itself so SQLite stays open until its last possible write.
+    const operation = handle(req, res);
+    active.add(operation);
+    void operation.finally(() => active.delete(operation)).catch(() => {
+      if (!res.headersSent && !res.destroyed && !res.writableEnded)
+        json(res, 500, { error: 'Request failed' });
+    });
   });
   server.requestTimeout = 15000;
   server.headersTimeout = 10000;
-  return server;
+  return Object.assign(server, {
+    drainRequests() {
+      draining = true;
+      return drained ??= Promise.allSettled([...active]).then(() => undefined);
+    }
+  });
 }
 

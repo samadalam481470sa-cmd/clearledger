@@ -5,6 +5,7 @@ import { Store } from './store.ts';
 import { PaymentService } from './service.ts';
 import { makeServer } from './http.ts';
 import { createRpcProvider } from './rpc.ts';
+import { createShutdown, startWorker } from './lifecycle.ts';
 
 function required(name: string) {
   const value = process.env[name];
@@ -28,6 +29,28 @@ const service = new PaymentService(store, provider, relayer, router, chainId, ad
 const port = Number(process.env.PORT ?? '4317');
 const server = makeServer({ service, apiKey, port, mode: 'rpc' });
 server.listen(port, '127.0.0.1', () => console.log('ClearLedger RPC mode: http://127.0.0.1:' + port));
-const timer = setInterval(() => void service.tick().catch(() => console.error('Worker waiting for RPC recovery')), 1000);
-process.on('SIGINT', () => { clearInterval(timer); server.close(); provider.destroy(); store.close(); process.exit(0); });
+const worker = startWorker(() => service.tick(), { onError: () => console.error('Worker waiting for RPC recovery') });
+const shutdown = createShutdown({
+  stopWorker: () => worker.stop(),
+  drainRequests: () => server.drainRequests(),
+  closeServer: () => new Promise<void>((resolveClose, reject) => {
+    server.close(error => error ? reject(error) : resolveClose());
+    server.closeIdleConnections();
+  }),
+  closeResources: () => { provider.destroy(); store.close(); }
+});
+let shuttingDown = false;
+function onSignal() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  void shutdown().then(result => {
+    if (result === 'closed') process.exitCode = 0;
+    else {
+      console.error('ClearLedger shutdown could not finish safely; inspect durable state on restart');
+      process.exit(1);
+    }
+  });
+}
+process.on('SIGINT', onSignal);
+process.on('SIGTERM', onSignal);
 
