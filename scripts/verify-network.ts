@@ -47,6 +47,7 @@ export async function verifyNetwork() {
   const deadline = started + TOTAL_BUDGET_MS;
   let phase = 'configuration';
   let validator4MayBeStopped = false;
+  let lastProbeLog = 0;
   const providers = PORTS.map(port => createRpcProvider('http://127.0.0.1:' + port, 3000));
   const store = new Store();
 
@@ -72,6 +73,12 @@ export async function verifyNetwork() {
         if (result !== undefined) return result;
       } catch (error) {
         if (error instanceof AcceptanceFailure) throw error;
+        if (Date.now() - lastProbeLog >= 10000) {
+          lastProbeLog = Date.now();
+          const detail = error as { code?: string; shortMessage?: string };
+          console.log(JSON.stringify({ check: 'rpc-wait', phase: label,
+            code: detail.code ?? 'unknown', reason: detail.shortMessage ?? 'RPC not ready' }));
+        }
         // Startup, stopped peers, and temporary RPC failures are expected while polling.
       }
       const pause = Math.min(POLL_MS, until - Date.now());
@@ -93,6 +100,11 @@ export async function verifyNetwork() {
       Promise.all(active.map(provider => provider.send('qbft_getValidatorsByBlockNumber', [tag])))
     ]);
     const hash = blocks[0]?.hash;
+    if (Date.now() - lastProbeLog >= 10000) {
+      lastProbeLog = Date.now();
+      console.log(JSON.stringify({ check: 'agreement-probe', heads,
+        hashes: blocks.map(block => block?.hash), memberships }));
+    }
     if (!hash || blocks.some(block => !block || block.hash !== hash) ||
       memberships.some(members => !sameValidatorSet(members, validators))) return undefined;
     return { height, hash, heads };
