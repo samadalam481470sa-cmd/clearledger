@@ -63,7 +63,7 @@ npm run build
 npm run source:count
 ```
 
-The latest local run passed **82 tests**, zero failures, and strict TypeScript checking. CI for the lifecycle-invariant increment is pending publication. The prior regular [GitHub Actions run passed 56 tests](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40189385293), typecheck, build, and source counting, while separate [Besu acceptance passed](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40189385292) signed 125 dUSD settlement and one-validator failure/recovery on one Ubuntu Docker host. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and remaining limits.
+The latest regular [GitHub Actions run passed all 82 tests](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40190456973), typecheck, Solidity/frontend build, and source counting. Separate [Besu acceptance also passed](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40190456959) signed 125 dUSD settlement and one-validator failure/recovery on one Ubuntu Docker host for the same lifecycle-invariant source commit. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and remaining limits.
 
 ## More than 100,000 source lines
 

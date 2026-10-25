@@ -88,9 +88,16 @@ Settlement transaction: `0xee95153f7fac54ae81804ac6586160868935ade07dc54b032b593
 
 Twenty-six targeted synthetic database tests passed in 521.598 ms, and strict TypeScript checking passed. They cover atomic lifecycle transition guards, unknown-payment rejection, exact-repeat no-ops without duplicate audits, conflicting reservation/finalization rejection, terminal rewrite rejection, and comparison of stored journal/provenance fields. Settled retries reject missing or inconsistent journals rather than hiding them behind an ignored duplicate insert. The intent lookup and insertion share a `BEGIN IMMEDIATE` transaction.
 
-The full local `npm test` run also passed: **82 tests, 82 passes, zero failures, exit code 0**, in 86,524.5499 ms. Strict TypeScript checking passed. New CI evidence is pending publication; the 56-test and Docker acceptance results above describe previously verified source. Store changes now trigger network acceptance as well as regular CI.
+The full local `npm test` run also passed: **82 tests, 82 passes, zero failures, exit code 0**, in 86,524.5499 ms. Strict TypeScript checking passed. Store changes now trigger network acceptance as well as regular CI.
 
-The 26 targeted cases are local SQLite/application-invariant tests. They do not by themselves verify EVM execution, canonical receipts, tamper-proof storage, or multiworker operation; the combined suite also runs the existing EVM/recovery/transport tests, with the real Besu rerun still pending CI.
+Published source commit [`5502af2cd86e17c7da185377e2d2fa3ed3a43c63`](https://github.com/samadalam481470sa-cmd/clearledger/commit/5502af2cd86e17c7da185377e2d2fa3ed3a43c63), public tree `8c6c1f5db6085def8ce41cab4a6755d33b772097`, passed both workflows. Completed conclusions, all job steps, and logs were verified:
+
+- [Regular run `40190456973`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40190456973), job `121160152689`: 82 tests/82 passes/zero failures in 39,654.135943 ms, plus typecheck, Solidity/frontend build, and source count 625,249.
+- [Besu run `40190456959`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40190456959), job `121160152352`: all four agreed at block 1 with heads `[1,1,1,1]`; signed 125 dUSD (`125000000` base units) settled at block 23 with one journal and zero reconciliation exceptions; the surviving three progressed from 24 to 26 while validator 4 was stopped; restart restored all-four agreement at height 28.
+
+The settlement transaction was `0x8a782917255f6a265cb9b237d8f23af5b98f0540174791bf6522bf40e284bff5`. This complete scenario took 73,765 ms on a single GitHub Actions Ubuntu Docker host, not a throughput or settlement-latency benchmark.
+
+The 26 targeted cases are local SQLite/application-invariant tests. They do not by themselves verify EVM execution, canonical receipts, tamper-proof storage, or multiworker operation. The combined suite runs existing EVM/recovery/transport tests, and the separate Besu workflow verifies the stated live-network scenario. Independent-host, two-validator-failure, hostile-peer, soak, browser, audit, and production limits remain.
 
 ## Public source verification — October 25, 2026
 
