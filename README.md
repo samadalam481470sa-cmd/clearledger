@@ -69,9 +69,11 @@ A bounded receipt-outage test passed a measured 60,705 ms/59 observations in CI 
 
 Shutdown coordinates worker and HTTP drains before closing shared resources on SIGINT/SIGTERM. Windows verification completed 127 cases with 126 passes, zero failures, and one explicit POSIX skip; Linux CI passed all 127, including the real-SIGTERM helper case. The helper fixture does not exercise the complete application CLI. See the [shutdown operation](docs/API.md#shutdown) for the cooperative deadline and forced-termination limits.
 
+Reconciliation cross-checks recorded payment/journal provenance with the receipt, canonical block, and configured router's settlement event. Local verification completed 181 cases: 180 passes, zero failures, and one explicit POSIX skip on Windows. Remote CI is pending. Mismatches flag review while retaining journal history, without automatic accounting reversal.
+
 ## More than 100,000 source lines
 
-The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **627,090 nonblank source lines**: 4,178 original and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
+The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **627,385 nonblank source lines**: 4,473 original and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
 
 Original application code is MIT-licensed. Besu and installed dependencies retain their own licenses. [Provenance](docs/PROVENANCE.md) pins the release, commit, and download hash.
 

@@ -16,6 +16,14 @@ interface JournalRow {
   payment_id: string; token: string; debit_account: string; credit_account: string;
   amount: string; tx_hash: string; block_number: number; block_hash: string;
 }
+function numericRow<T>(row: unknown): T {
+  if (row === undefined) return row as T;
+  // SQLite integers can exceed JS's safe range. Read them without throwing,
+  // then leave oversized numbers unsafe for provenance validation. This does
+  // not rewrite the exact integer stored in SQLite.
+  return Object.fromEntries(Object.entries(row as Record<string, unknown>)
+    .map(([key, value]) => [key, typeof value === 'bigint' ? Number(value) : value])) as T;
+}
 function pageSize(limit = 50) {
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new PaginationError('Page limit must be an integer from 1 to 100');
   return limit;
@@ -67,7 +75,14 @@ export class Store {
     `);
   }
   get(id: string): RecordRow | undefined {
-    return this.db.prepare('SELECT * FROM payments WHERE id = ?').get(id) as unknown as RecordRow | undefined;
+    const query = this.db.prepare('SELECT * FROM payments WHERE id = ?');
+    query.setReadBigInts(true);
+    return numericRow<RecordRow | undefined>(query.get(id));
+  }
+  journal(id: string): JournalRow | undefined {
+    const query = this.db.prepare('SELECT * FROM journals WHERE payment_id = ?');
+    query.setReadBigInts(true);
+    return numericRow<JournalRow | undefined>(query.get(id));
   }
   private transaction<T>(change: () => T): T {
     this.db.exec('BEGIN IMMEDIATE');
@@ -127,7 +142,7 @@ export class Store {
       if (!['broadcast', 'settled'].includes(row.status) || !row.tx_hash || !row.raw_tx)
         throw new StateTransitionError('No eligible broadcast transaction');
       const p: Payment = JSON.parse(row.payload);
-      const journal = this.db.prepare('SELECT * FROM journals WHERE payment_id=?').get(id) as unknown as JournalRow | undefined;
+      const journal = this.journal(id);
       if (journal && (journal.token !== p.token || journal.debit_account !== p.payer ||
         journal.credit_account !== p.payee || journal.amount !== p.amount || journal.tx_hash !== row.tx_hash ||
         journal.block_number !== blockNumber || journal.block_hash !== blockHash))
@@ -145,7 +160,9 @@ export class Store {
     });
   }
   list(limit = 100): RecordRow[] {
-    return this.db.prepare('SELECT * FROM payments ORDER BY rowid DESC LIMIT ?').all(limit) as unknown as RecordRow[];
+    const query = this.db.prepare('SELECT * FROM payments ORDER BY rowid DESC LIMIT ?');
+    query.setReadBigInts(true);
+    return query.all(limit).map(row => numericRow<RecordRow>(row));
   }
   private cursor(kind: Cursor['kind'], options: PageOptions) {
     const status = options.status ?? null;
@@ -162,14 +179,17 @@ export class Store {
     const args: (string | number)[] = [cursor.upper, cursor.before];
     if (cursor.status) args.push(cursor.status);
     args.push(size + 1);
-    const rows = this.db.prepare('SELECT *,rowid AS cursor_rowid FROM payments WHERE rowid<=? AND rowid<?' +
-      (cursor.status ? ' AND status=?' : '') + ' ORDER BY rowid DESC LIMIT ?').all(...args) as unknown as (RecordRow & { cursor_rowid: number })[];
+    const query = this.db.prepare('SELECT *,rowid AS cursor_rowid FROM payments WHERE rowid<=? AND rowid<?' +
+      (cursor.status ? ' AND status=?' : '') + ' ORDER BY rowid DESC LIMIT ?');
+    query.setReadBigInts(true);
+    const rows = query.all(...args).map(row => numericRow<RecordRow & { cursor_rowid: number }>(row));
     return packPage<RecordRow>(rows, size, cursor);
   }
   pageJournals(options: Omit<PageOptions, 'status'> = {}) {
     const size = pageSize(options.limit), cursor = this.cursor('journals', options);
-    const rows = this.db.prepare('SELECT *,rowid AS cursor_rowid FROM journals WHERE rowid<=? AND rowid<? ORDER BY rowid DESC LIMIT ?')
-      .all(cursor.upper, cursor.before, size + 1) as unknown as (JournalRow & { cursor_rowid: number })[];
+    const query = this.db.prepare('SELECT *,rowid AS cursor_rowid FROM journals WHERE rowid<=? AND rowid<? ORDER BY rowid DESC LIMIT ?');
+    query.setReadBigInts(true);
+    const rows = query.all(cursor.upper, cursor.before, size + 1).map(row => numericRow<JournalRow & { cursor_rowid: number }>(row));
     return packPage<JournalRow>(rows, size, cursor);
   }
   assetTotals() {
@@ -187,11 +207,14 @@ export class Store {
   pending(): RecordRow[] {
     // A durable signed transaction reserves the relayer nonce even before RPC sees it.
     // Recover broadcasts first; rowid preserves acceptance order without wall-clock ties.
-    return this.db.prepare("SELECT * FROM payments WHERE status IN ('queued','broadcast') ORDER BY CASE status WHEN 'broadcast' THEN 0 ELSE 1 END,rowid").all() as unknown as RecordRow[];
+    const query = this.db.prepare("SELECT * FROM payments WHERE status IN ('queued','broadcast') ORDER BY CASE status WHEN 'broadcast' THEN 0 ELSE 1 END,rowid");
+    query.setReadBigInts(true);
+    return query.all().map(row => numericRow<RecordRow>(row));
   }
   journals(limit?: number) {
-    return limit === undefined ? this.db.prepare('SELECT * FROM journals ORDER BY rowid DESC').all() :
-      this.db.prepare('SELECT * FROM journals ORDER BY rowid DESC LIMIT ?').all(pageSize(limit));
+    const query = this.db.prepare('SELECT * FROM journals ORDER BY rowid DESC' + (limit === undefined ? '' : ' LIMIT ?'));
+    query.setReadBigInts(true);
+    return (limit === undefined ? query.all() : query.all(pageSize(limit))).map(row => numericRow<JournalRow>(row));
   }
   events() { return this.db.prepare('SELECT sequence,payment_id,action,at,detail FROM audit ORDER BY sequence DESC LIMIT 100').all(); }
   close() { this.db.close(); }

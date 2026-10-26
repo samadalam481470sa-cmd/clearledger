@@ -1,6 +1,11 @@
-import { keccak256, verifyTypedData, type JsonRpcProvider, type Wallet, type TypedDataDomain } from 'ethers';
-import { digest, domain, paymentKey, paymentTypes, submissionSchema, type Payment } from './payment.ts';
+import { keccak256, verifyTypedData, type JsonRpcProvider, type Wallet, type TypedDataDomain, type TransactionReceipt } from 'ethers';
+import { digest, domain, paymentKey, paymentSchema, paymentTypes, submissionSchema, type Payment } from './payment.ts';
 import { Store, type RecordRow } from './store.ts';
+
+function sameHash(actual: unknown, expected: string): boolean {
+  return typeof actual === 'string' && /^0x[0-9a-fA-F]{64}$/.test(actual) &&
+    actual.toLowerCase() === expected.toLowerCase();
+}
 
 export class PaymentService {
   readonly signingDomain: TypedDataDomain;
@@ -82,9 +87,17 @@ export class PaymentService {
     const canonical = await this.provider.getBlock(receipt.blockNumber);
     if (!canonical || canonical.hash !== receipt.blockHash) return;
     const p: Payment = JSON.parse(row.payload);
-    const matching = receipt.logs.some(log => {
-      if (log.address.toLowerCase() !== this.routerAddress.toLowerCase()) return false;
+    if (!this.matchesSettlement(p, receipt)) {
+      this.store.setStatus(row.id, 'review', 'Receipt does not contain the expected settlement event');
+      return;
+    }
+    this.store.finalize(row.id, receipt.blockNumber, receipt.blockHash);
+  }
+
+  private matchesSettlement(p: Payment, receipt: TransactionReceipt): boolean {
+    return Array.isArray(receipt.logs) && receipt.logs.some(log => {
       try {
+        if (log.address.toLowerCase() !== this.routerAddress.toLowerCase()) return false;
         const event = this.router.interface.parseLog(log);
         return event?.name === 'PaymentSettled' && event.args.paymentId === p.paymentId &&
           event.args.payer === p.payer && event.args.payee === p.payee &&
@@ -92,11 +105,6 @@ export class PaymentService {
           event.args.nonce.toString() === p.nonce;
       } catch { return false; }
     });
-    if (!matching) {
-      this.store.setStatus(row.id, 'review', 'Receipt does not contain the expected settlement event');
-      return;
-    }
-    this.store.finalize(row.id, receipt.blockNumber, receipt.blockHash);
   }
 
   async reconcile() {
@@ -109,12 +117,33 @@ export class PaymentService {
       const page = this.store.pagePayments({ status: 'settled', limit: 100, cursor });
       for (const row of page.items) {
         checked++;
-        const receipt = await this.provider.getTransactionReceipt(row.tx_hash!);
-        const block = row.block_number == null ? null : await this.provider.getBlock(row.block_number);
-        if (!receipt || receipt.status !== 1 || receipt.blockHash !== row.block_hash ||
-          !block || block.hash !== row.block_hash) {
+        let p: Payment | undefined;
+        try {
+          const parsed = paymentSchema.safeParse(JSON.parse(row.payload));
+          if (parsed.success) p = parsed.data;
+        } catch { /* Invalid persisted JSON is an integrity exception. */ }
+        let matches = false;
+        if (p && paymentKey(p) === row.id &&
+          typeof row.tx_hash === 'string' && /^0x[0-9a-fA-F]{64}$/.test(row.tx_hash) &&
+          typeof row.block_hash === 'string' && /^0x[0-9a-fA-F]{64}$/.test(row.block_hash) &&
+          Number.isSafeInteger(row.block_number) && row.block_number! >= 0) {
+          // RPC errors abort the scan; unavailable transport is not evidence of corruption.
+          const receipt = await this.provider.getTransactionReceipt(row.tx_hash);
+          const block = await this.provider.getBlock(row.block_number!);
+          // Read the projection after the RPC awaits, and retain it unchanged on review.
+          const journal = this.store.journal(row.id);
+          matches = !!receipt && receipt.status === 1 && sameHash(receipt.hash, row.tx_hash) &&
+            receipt.blockNumber === row.block_number && sameHash(receipt.blockHash, row.block_hash) &&
+            !!block && block.number === row.block_number && sameHash(block.hash, row.block_hash) &&
+            !!journal && journal.payment_id === row.id && journal.token === p.token &&
+            journal.debit_account === p.payer && journal.credit_account === p.payee &&
+            journal.amount === p.amount && journal.tx_hash === row.tx_hash &&
+            journal.block_number === row.block_number && journal.block_hash === row.block_hash &&
+            this.matchesSettlement(p, receipt);
+        }
+        if (!matches) {
           exceptions.push(row.id);
-          this.store.setStatus(row.id, 'review', 'Canonical chain no longer matches recorded settlement');
+          this.store.setStatus(row.id, 'review', 'Recorded settlement no longer matches canonical receipt and journal');
         }
       }
       cursor = page.nextCursor ?? undefined;

@@ -94,6 +94,14 @@ Missing or empty preflight revert data remains retryable even when the RPC libra
 
 A stuck/replaced transaction can block the queue. Fee replacement and administrative resolution are not implemented. Inspect signer nonce and transaction state rather than re-signing an uncertain business payment under another ID.
 
+### Reconciliation integrity
+
+Reconciliation validates stored payment/ID/transaction/block metadata and compares receipt identity/status, the canonical block's number/hash, every journal field, and a matching `PaymentSettled` event emitted by the configured router. Mismatches or missing receipt/block data conservatively flag the payment for review while retaining its journal; they do not reverse accounting or independently prove a reorganization.
+
+RPC exceptions propagate without marking the affected payment for review merely because a lookup failed. A scan may already have committed review flags for earlier mismatches before a later RPC failure; reconciliation is not one transaction over all rows. See [validation](VALIDATION.md#reconciliation-integrity) for the measured evidence.
+
+SQLite block integers outside JavaScript's safe integer range are invalid provenance. The exact SQLite value remains unchanged, but JavaScript/JSON reads of that invalid metadata can be approximate; API output must not be treated as an exact representation of it.
+
 ## Shutdown
 
 RPC and demo entrypoints handle SIGINT and SIGTERM through one guarded, idempotent shutdown path with a default 20-second cooperative budget. New requests receive 503 and `Connection: close` while shutdown stops the listener, waits for the serialized worker's active tick, and drains actual HTTP handler promises before closing the provider/chain and SQLite. A disconnected client does not cancel a handler awaiting RPC; that operation remains part of the drain until its last possible write has completed.

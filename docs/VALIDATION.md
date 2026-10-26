@@ -154,6 +154,14 @@ This is one bounded local-EVM transport/process-recovery case, not an autonomous
 - Source [`a263648d18c8528e14fab5077b1ce4193de72c50`](https://github.com/samadalam481470sa-cmd/clearledger/commit/a263648d18c8528e14fab5077b1ce4193de72c50), tree `54b24e8ee3c7b84e0f84ab717e708e68aaade2da`, passed [Linux CI `40242671396`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40242671396), job `121317645218`: **127 tests/127 passes/zero failures/zero skips** in 107,867.015198 ms, plus typecheck, Solidity/Vite build, and source count 627,090. Conclusion, every step, and logs were verified.
 - The real-SIGTERM helper case passed in 400.36676 ms, HTTP drain gate in 25.819801 ms, and disconnected-client late SQLite write in 12.503595 ms. The helper kept SQLite open during a paused tick, then verified one late audit write, one resource close, and exit 0 after release. This is helper integration, not complete application CLI signal E2E; no new Besu run, daemon soak, exact exit deadline, or production guarantee is claimed.
 
+## Reconciliation integrity
+
+- Implemented validation covers stored payment/ID/transaction/block metadata, receipt identity/status, canonical block identity, every journal field, and matching configured-router settlement events. Hashes compare as bytes; unsafe SQLite block integers remain unchanged in storage and are invalid provenance.
+- **64/64 targeted cases passed** in 14,914.0154 ms: 53 synthetic integrity cases plus 11 pagination cases. Strict typecheck and Solidity/Vite build passed.
+- A real-EVM regression was added: corrupt the journal amount after genuine settlement, then require review with no reversal/resubmission or change in token balance/payer nonce. It passed in 1,520.2528 ms. The full local suite completed **181 cases: 180 passes, zero failures, one explicit POSIX skip on Windows**, exit 0, in 165,037.1639 ms. The synthetic checks alone are not EVM proof.
+- Mismatches and missing receipt/block data retain the journal and flag review. RPC exceptions propagate without falsely reviewing the affected row; earlier mismatch decisions can remain committed before a later lookup fails. This is not independent RPC-proof verification or tamper-proof local storage.
+- The source counter reports **627,385 nonblank lines**, including comments/tests: original 43 files/4,721 physical/4,473 nonblank and attributed Besu 4,484 files/714,385 physical/622,912 nonblank. Remote CI remains pending; the preceding 127-test CI evidence is historical.
+
 ## Public source verification — October 25, 2026
 
 The project is public at [samadalam481470sa-cmd/clearledger](https://github.com/samadalam481470sa-cmd/clearledger). The user-created repository was verified as public with connected write access. Source commit [`762dd075d4b3dbe8d04a0e88fa24550818f734a7`](https://github.com/samadalam481470sa-cmd/clearledger/commit/762dd075d4b3dbe8d04a0e88fa24550818f734a7) contains all 6,785 reviewed tracked files.
@@ -176,11 +184,11 @@ Browser-origin access remains denied. No alternative browser route was used, so 
 
 ## Reproduced source count
 
-The current lifecycle-increment source count is 627,090 nonblank source lines, including comments and tests:
+The current reconciliation-increment source count is 627,385 nonblank source lines, including comments and tests:
 
 | Source | Files | Physical lines | Nonblank lines |
 | --- | ---: | ---: | ---: |
-| Original application | 42 | 4,407 | 4,178 |
+| Original application | 43 | 4,721 | 4,473 |
 | Attributed Besu snapshot | 4,484 | 714,385 | 622,912 |
 
 The script's exclusions and methodology are recorded in `docs/source-count.json`; the size is not a claim of independently authored executable statements.

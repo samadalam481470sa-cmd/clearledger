@@ -54,3 +54,7 @@ No paid infrastructure, real financial accounts, customer data, production keys,
 ## Graceful lifecycle verification
 
 - Source `a263648d18c8528e14fab5077b1ce4193de72c50` passed Linux CI `40242671396` with all 127 tests, zero skips/failures, typecheck, Solidity/Vite build, and source count 627,090. It includes actual SIGTERM helper integration, HTTP drain gating, and a disconnected client's late SQLite write before close. Windows separately passed 126 cases with one explicit POSIX skip. The shared default 20-second shutdown remains cooperative—not complete CLI signal E2E, force-kill support, a daemon soak, or a production guarantee. Counts include 4,178 original and 622,912 attributed upstream nonblank source lines, including comments/tests.
+
+## Reconciliation integrity verification
+
+- Implemented stored metadata, complete journal fields, receipt/canonical identity, and configured-router settlement-event checks. The 53 synthetic integrity and 11 pagination cases pass, along with typecheck and build; the full local suite completed 181 cases (180 passes, zero failures, one explicit Windows POSIX skip) in 165,037.1639 ms, including a new real-EVM journal-corruption regression. Remote CI remains pending. The source count is 627,385 nonblank lines, separated by authorship in validation. Review flags retain journal history without automatic reversal or replacement of trusted RPC data.

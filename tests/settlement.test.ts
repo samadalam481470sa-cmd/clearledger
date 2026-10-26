@@ -211,6 +211,25 @@ test('reconciliation detects removal of a previously settled block', async () =>
   assert.deepEqual(result.exceptions, [row.id]);
   assert.equal(store.get(row.id)!.status, 'review');
 });
+test('reconciliation flags a corrupt journal after genuine EVM settlement without reversing the transfer', async () => {
+  const row = await settled(await signed());
+  const balance = await chain.token.balanceOf(chain.payee.address);
+  assert.deepEqual((await service.reconcile()).exceptions, []);
+  store.db.prepare('UPDATE journals SET amount=? WHERE payment_id=?').run('1', row.id);
+  const evidence = store.journal(row.id);
+  const result = await service.reconcile();
+  assert.equal(result.checked, 1);
+  assert.deepEqual(result.exceptions, [row.id]);
+  assert.equal(store.get(row.id)!.status, 'review');
+  assert.deepEqual(store.journal(row.id), evidence);
+  assert.equal(await chain.token.balanceOf(chain.payee.address), balance);
+  assert.equal(await chain.router.nonces(chain.payer.address), 1n);
+  assert.equal(store.events().filter(event => event.action === 'review').length, 1);
+  await service.tick();
+  assert.deepEqual((await service.reconcile()).exceptions, []);
+  assert.equal(store.journals().length, 1);
+  assert.equal(await chain.token.balanceOf(chain.payee.address), balance);
+});
 test('concurrent worker ticks do not settle a payment twice', async () => {
   const accepted = await service.accept(await signed());
   await Promise.all([service.tick(), service.tick(), service.tick()]);
