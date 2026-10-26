@@ -15,7 +15,7 @@ Shutdown drain ordering now passes Windows unit/HTTP verification and Linux real
 
 ## Advanced application work
 
-- Replace the legacy development EVM with a maintained Cancun-compatible runner.
+- Review the dependency advisories reported by CI and replace the legacy development EVM with a maintained Cancun-compatible runner.
 - Add ERC-1271 contract-wallet authorization with explicit revocation semantics.
 - Add PostgreSQL-backed jobs and a relayer lease before allowing multiple workers.
 - Add controlled fee replacement and stuck-nonce resolution with an audit trail.
@@ -57,4 +57,4 @@ No paid infrastructure, real financial accounts, customer data, production keys,
 
 ## Reconciliation integrity verification
 
-- Implemented stored metadata, complete journal fields, receipt/canonical identity, and configured-router settlement-event checks. The 53 synthetic integrity and 11 pagination cases pass, along with typecheck and build; the full local suite completed 181 cases (180 passes, zero failures, one explicit Windows POSIX skip) in 165,037.1639 ms, including a new real-EVM journal-corruption regression. Remote CI remains pending. The source count is 627,385 nonblank lines, separated by authorship in validation. Review flags retain journal history without automatic reversal or replacement of trusted RPC data.
+- Implemented stored metadata, complete journal fields, receipt/canonical identity, and configured-router settlement-event checks. The 53 synthetic integrity and 11 pagination cases pass, along with typecheck and build; the full local suite completed 181 cases (180 passes, zero failures, one explicit Windows POSIX skip) in 165,037.1639 ms, including a new real-EVM journal-corruption regression. Source `4db63d57d16a4d750fd565f0fef11da23e4ab66e` passed regular CI `40266156639` with all 181 tests, zero skips/failures, typecheck/build/count, and Besu run `40266156756` with settlement, two-stop quorum loss, same-transaction recovery, and four-node catch-up. The source count is 627,385 nonblank lines, separated by authorship in validation. Review flags retain journal history without automatic reversal or replacement of trusted RPC data.

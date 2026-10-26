@@ -69,7 +69,7 @@ A bounded receipt-outage test passed a measured 60,705 ms/59 observations in CI 
 
 Shutdown coordinates worker and HTTP drains before closing shared resources on SIGINT/SIGTERM. Windows verification completed 127 cases with 126 passes, zero failures, and one explicit POSIX skip; Linux CI passed all 127, including the real-SIGTERM helper case. The helper fixture does not exercise the complete application CLI. See the [shutdown operation](docs/API.md#shutdown) for the cooperative deadline and forced-termination limits.
 
-Reconciliation cross-checks recorded payment/journal provenance with the receipt, canonical block, and configured router's settlement event. Local verification completed 181 cases: 180 passes, zero failures, and one explicit POSIX skip on Windows. Remote CI is pending. Mismatches flag review while retaining journal history, without automatic accounting reversal.
+Reconciliation cross-checks recorded payment/journal provenance with the receipt, canonical block, and configured router's settlement event. Local verification completed 181 cases: 180 passes, zero failures, and one explicit POSIX skip on Windows. Linux CI passed all 181 tests, and the four-validator Besu settlement/quorum-loss/recovery workflow also passed. See [validation](docs/VALIDATION.md#reconciliation-integrity) for evidence and limits. Mismatches flag review while retaining journal history, without automatic accounting reversal.
 
 ## More than 100,000 source lines
 
