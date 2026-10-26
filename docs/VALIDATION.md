@@ -189,6 +189,14 @@ This is one bounded local-EVM transport/process-recovery case, not an autonomous
 - Twenty-two targeted real-EVM wallet checks passed in 21,015.4173 ms, and five targeted EOA/API cases passed in 58,887.4269 ms. Strict typecheck and Solidity 0.8.30/Paris plus Vite 7.3.7 build passed. The full local suite completed **253 cases: 252 passes, zero failures, one explicit POSIX skip on Windows**, exit 0, in 183,121.5447 ms. Published source [`2366a00a356ef5e4229e757dc6167d52308b7a25`](https://github.com/samadalam481470sa-cmd/clearledger/commit/2366a00a356ef5e4229e757dc6167d52308b7a25), tree `9f45be2af71c4aedc0c9ad3d50feaebdb8451a21`, passed [Linux CI `40288453471`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40288453471), job `121457620838`: **253 passes/zero failures/zero skips**, 148,019.258318 ms, plus typecheck, Solidity 0.8.30/Paris and Vite 7.3.7 build, and source counting. All wallet cases and the real POSIX signal test executed successfully. Installation still reported 33 audit entries including five critical findings. Earlier test/bytecode records remain evidence for their recorded version; the new router must be redeployed with an updated ABI/address. The application counter includes the attributed adaptation, with Besu counted separately.
 - Current count is 627,955 nonblank lines: application 46 files/5,330 physical/5,043 nonblank and Besu 4,484 files/714,385 physical/622,912 nonblank. Wallet behavior is tested on the local EVM in Windows and Linux CI. The same source passed [Besu run `40288453437`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40288453437), job `121457621507`, testing EOA settlement through the updated router, not a deployed contract wallet. It recorded agreement at 1; 125 dUSD at 23; progress 24→26 with one node stopped; two healthy heads/hash unchanged at 26 for approximately 20,089.103 ms/20 successful samples; restoration settled the same pending `0x98a3d036ef0b3aa28bb45fbfad3050150746e50cd794078f2a1d926978cecd1d` for 37.5 dUSD once at 27 with two journals, payer nonce 2, balance 162.5 dUSD and zero reconciliation exceptions; all-four catch-up at 31. Whole scenario 177,009 ms is single-host scripted evidence, not a benchmark or recovery SLO. Run conclusions, all job steps, and logs were verified. No Safe deployment, ERC-6492 counterfactual support, ERC-4337 operation, multisignature governance, independent RPC proof, finality, or bounded gas/returndata-griefing guarantee is established by this implementation.
 
+## Contract-wallet Besu acceptance — verification pending
+
+- The implemented extension follows the existing EOA quorum/recovery scenario with a test-only caller-bound ERC-1271 wallet. Earlier completed Besu runs remain EOA evidence; router/API behavior is unchanged.
+- Require 100 dUSD wallet funding/owner allowance, one 12.5 dUSD settlement, recipient total 175 dUSD, wallet balance 87.5 dUSD, wallet nonce 1, and three journals.
+- Revoke a queued 1.25 dUSD authorization before native signing; require failed status, null raw transaction, no new journal/native reservation, reconciliation 3/0, and final agreement/read checks across the four nodes.
+- Shared in-memory fixture compiler extraction passed **22/22 local-EVM ERC-1271 cases** in 20,106.9988 ms, and strict typecheck passed. No local full-suite/build rerun is claimed for this acceptance-tooling-only increment. New live Besu verification is pending remote CI; local Windows Docker is unavailable.
+- Current source count is **628,055 nonblank lines**: application 47 files/5,433 physical/5,143 nonblank and Besu 4,484 files/714,385 physical/622,912 nonblank, including comments/tests. Prior 253-test/627,955-count evidence is historical. The wallet phase follows quorum recovery; it is not wallet quorum-loss evidence, a Safe/multisignature demonstration, multi-host validation, or a production guarantee.
+
 ## Public source verification — October 25, 2026
 
 The project is public at [samadalam481470sa-cmd/clearledger](https://github.com/samadalam481470sa-cmd/clearledger). The user-created repository was verified as public with connected write access. Source commit [`762dd075d4b3dbe8d04a0e88fa24550818f734a7`](https://github.com/samadalam481470sa-cmd/clearledger/commit/762dd075d4b3dbe8d04a0e88fa24550818f734a7) contains all 6,785 reviewed tracked files.
@@ -211,11 +219,11 @@ Browser-origin access remains denied. No alternative browser route was used, so 
 
 ## Reproduced source count
 
-The current ERC-1271-increment source count is 627,955 nonblank source lines, including comments and tests:
+The current wallet-acceptance-tooling source count is 628,055 nonblank source lines, including comments and tests:
 
 | Source | Files | Physical lines | Nonblank lines |
 | --- | ---: | ---: | ---: |
-| Application, including attributed adaptation | 46 | 5,330 | 5,043 |
+| Application, including attributed adaptation | 47 | 5,433 | 5,143 |
 | Attributed Besu snapshot | 4,484 | 714,385 | 622,912 |
 
 The script's exclusions and methodology are recorded in `docs/source-count.json`; the size is not a claim of independently authored executable statements.

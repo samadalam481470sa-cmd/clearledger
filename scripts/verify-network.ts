@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomBytes } from 'node:crypto';
-import { Wallet, id, parseEther, parseUnits, type JsonRpcProvider } from 'ethers';
+import { ContractFactory, Wallet, id, parseEther, parseUnits, type JsonRpcProvider } from 'ethers';
 import { createRpcProvider } from '../src/rpc.ts';
 import { deploy } from '../src/chain.ts';
 import { Store } from '../src/store.ts';
@@ -12,6 +12,7 @@ import { PaymentService } from '../src/service.ts';
 import { paymentTypes } from '../src/payment.ts';
 import { compile } from './compile.ts';
 import { observeHalted, QuorumObservationError } from './quorum-observation.ts';
+import { compileTestWallet } from '../tests/fixtures/compile-wallet.ts';
 
 const CHAIN_ID = 20261024;
 const COMPOSE_FILE = resolve('network/compose.yaml');
@@ -265,9 +266,108 @@ export async function verifyNetwork() {
     const recovered = await poll(phase, () => agreement(providers, generated.validators));
     assert.ok(recovered.height >= laterSettled.block_number!, 'Restarted validator did not catch up');
     console.log(JSON.stringify({ check: 'validator-recovery', ...recovered }));
+
+    phase = 'contract-wallet fixture deployment and approval';
+    const fixture = compileTestWallet(); // Acceptance-only, never a production artifact.
+    const walletFunding = parseUnits('100', 6), walletAmount = parseUnits('12.5', 6);
+    const contractWallet: any = await bounded(phase, async () => {
+      const wallet: any = await new ContractFactory(fixture.abi, fixture.bytecode, payer).deploy(payer.address);
+      await wallet.waitForDeployment();
+      const address = await wallet.getAddress();
+      await (await token.setAllowed(address, true)).wait();
+      await (await token.mint(address, walletFunding)).wait();
+      await (await wallet.execute(await token.getAddress(), token.interface.encodeFunctionData('approve',
+        [await router.getAddress(), walletFunding]))).wait();
+      await (await wallet.setRequiredCaller(await router.getAddress())).wait();
+      return wallet;
+    }, 90000);
+    const walletAddress = await contractWallet.getAddress();
+    phase = 'ERC-1271 wallet settlement';
+    const walletBlock = await bounded(phase, () => provider.getBlock('latest'), 10000);
+    assert.ok(walletBlock, 'Wallet payment block is unavailable');
+    const walletPayment = { ...payment, paymentId: id(randomBytes(24).toString('hex')),
+      payer: walletAddress, amount: walletAmount.toString(), nonce: '0', deadline: String(walletBlock.timestamp + 3600) };
+    const walletSignature = await payer.signTypedData(service.signingDomain, paymentTypes, walletPayment);
+    const walletDigest = await bounded(phase, () => router.hashPayment(walletPayment), 10000);
+    assert.equal(await bounded(phase, () => contractWallet.isValidSignature.staticCall(walletDigest, walletSignature), 10000),
+      '0xffffffff', 'Direct owner call must fail the router-caller requirement');
+    const walletAccepted = await bounded(phase,
+      () => service.accept({ payment: walletPayment, signature: walletSignature }), 10000);
+    const walletSettled = await poll(phase, async () => {
+      await service.tick();
+      const row = store.get(walletAccepted.row.id)!;
+      if (row.status === 'failed' || row.status === 'review')
+        throw new AcceptanceFailure('Contract-wallet payment entered ' + row.status + ' state');
+      return row.status === 'settled' ? row : undefined;
+    }, 60000);
+    assert.equal((await bounded(phase,
+      () => service.accept({ payment: walletPayment, signature: walletSignature }), 10000)).replay, true);
+    await bounded(phase, () => service.tick(), 10000);
+    const walletJournal = store.journal(walletAccepted.row.id)!;
+    assert.equal(walletJournal.debit_account, walletAddress, 'Journal must debit the contract wallet');
+    assert.equal(walletJournal.credit_account, payee.address);
+    assert.equal(walletJournal.amount, walletAmount.toString());
+    assert.equal(walletJournal.tx_hash, walletSettled.tx_hash);
+    assert.equal(store.journals().length, 3, 'Wallet replay must not create another journal');
+    assert.equal(store.events().filter(event => event.payment_id === walletAccepted.row.id && event.action === 'settled').length, 1);
+    const expectedPayee = amount + laterAmount + walletAmount, expectedWallet = walletFunding - walletAmount;
+    assert.equal(await token.balanceOf(payee.address), expectedPayee);
+    assert.equal(await token.balanceOf(walletAddress), expectedWallet);
+    assert.equal(await router.nonces(walletAddress), 1n);
+    console.log(JSON.stringify({ check: 'erc1271-settlement', wallet: walletAddress, settledBaseUnits: walletAmount.toString(),
+      transactionHash: walletSettled.tx_hash, block: walletSettled.block_number, journalEntries: 3,
+      payeeBaseUnits: expectedPayee.toString(), walletBaseUnits: expectedWallet.toString(), payerNonce: 1 }));
+
+    phase = 'queued contract-wallet authorization revocation';
+    const revokedPayment = { ...walletPayment, paymentId: id(randomBytes(24).toString('hex')),
+      amount: parseUnits('1.25', 6).toString(), nonce: '1' };
+    const revokedSignature = await payer.signTypedData(service.signingDomain, paymentTypes, revokedPayment);
+    const nonceBeforeRevocation = await bounded(phase, () => relayer.getNonce('pending'), 10000);
+    const revokedAccepted = await bounded(phase,
+      () => service.accept({ payment: revokedPayment, signature: revokedSignature }), 10000);
+    assert.equal(revokedAccepted.row.status, 'queued');
+    assert.equal(revokedAccepted.row.raw_tx, null);
+    const revocationReceipt = await bounded(phase, async () => (await contractWallet.setRevoked(true)).wait(), 30000);
+    assert.ok(revocationReceipt, 'Wallet revocation must be mined before worker preparation');
+    assert.equal(await bounded(phase,
+      () => router.isValidPaymentSignature(revokedPayment, revokedSignature), 10000), false);
+    await bounded(phase, () => service.tick(), 20000);
+    await bounded(phase, () => service.tick(), 10000);
+    const revokedRow = store.get(revokedAccepted.row.id)!;
+    assert.equal(revokedRow.status, 'failed', 'Revoked queued authorization must fail preflight');
+    assert.equal(revokedRow.raw_tx, null, 'Revoked authorization must not sign a native transaction');
+    assert.equal(revokedRow.tx_hash, null);
+    assert.equal(store.journal(revokedRow.id), undefined);
+    assert.equal(store.journals().length, 3);
+    assert.equal(store.events().filter(event => event.payment_id === revokedRow.id && event.action === 'failed').length, 1);
+    assert.equal(await bounded(phase, () => relayer.getNonce('pending'), 10000), nonceBeforeRevocation);
+    const reconciliation = await bounded(phase, () => service.reconcile(), 15000);
+    assert.equal(reconciliation.checked, 3);
+    assert.deepEqual(reconciliation.exceptions, []);
+
+    phase = 'all-validator contract-wallet state agreement';
+    const walletAgreement = await poll(phase, async () => {
+      const sample = await agreement(providers, generated.validators);
+      return sample && sample.height >= revocationReceipt.blockNumber ? sample : undefined;
+    });
+    await bounded(phase, () => Promise.all(providers.map(async node => {
+      const nodeToken: any = token.connect(node), nodeRouter: any = router.connect(node);
+      const tag = { blockTag: walletAgreement.height };
+      assert.equal(await nodeToken.balanceOf(payee.address, tag), expectedPayee);
+      assert.equal(await nodeToken.balanceOf(walletAddress, tag), expectedWallet);
+      assert.equal(await nodeRouter.nonces(walletAddress, tag), 1n);
+      assert.equal(await nodeRouter.nonces(payer.address, tag), 2n);
+      assert.equal(await nodeRouter.processed(walletAddress, walletPayment.paymentId, tag), true);
+      assert.equal(await nodeRouter.processed(walletAddress, revokedPayment.paymentId, tag), false);
+      assert.equal(await nodeRouter.isValidPaymentSignature(revokedPayment, revokedSignature, tag), false);
+    })), 20000);
+    console.log(JSON.stringify({ check: 'erc1271-revocation', failedBeforeBroadcast: true, journalEntries: 3,
+      payerNonce: 1, relayerNonceUnchanged: true, reconciliationChecked: reconciliation.checked,
+      reconciliationExceptions: reconciliation.exceptions.length, ...walletAgreement }));
     console.log(JSON.stringify({ result: 'passed', elapsedMs: Date.now() - started,
       checks: ['four-validator-agreement', 'signed-settlement', 'one-validator-failure',
-        'two-validator-quorum-loss', 'quorum-restoration', 'post-quorum-settlement', 'validator-recovery'] }));
+        'two-validator-quorum-loss', 'quorum-restoration', 'post-quorum-settlement', 'validator-recovery',
+        'erc1271-settlement', 'erc1271-revocation'] }));
   } catch (error) {
     // Avoid dumping transaction arguments, generated keys, or wallet objects into CI logs.
     const reason = error instanceof AcceptanceFailure || error instanceof QuorumObservationError ? ' (' + error.message + ')' : '';

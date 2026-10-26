@@ -26,7 +26,7 @@ On the original Windows workspace, `Start-ClearLedger.ps1` can use the Node runt
 ## Implemented behavior
 
 - EIP-712 signatures bind payer, recipient, asset, amount, nonce, deadline, chain, and router.
-- EOA and deployed ERC-1271 wallet authorization share one router view, checked at API acceptance and again at dispatch/execution. Wallet authorization can be revoked; existing routers need redeployment with the new ABI/address. Twenty-two contract-wallet checks and all 253 Linux CI cases pass; see [authorization behavior](docs/API.md#contract-wallet-authorization-and-retries).
+- EOA and deployed ERC-1271 wallet authorization share one router view, checked at API acceptance and again at dispatch/execution. Wallet authorization can be revoked; existing routers need redeployment with the new ABI/address. Twenty-two local-EVM contract-wallet checks and all 253 Linux CI cases pass; see [authorization behavior](docs/API.md#contract-wallet-authorization-and-retries).
 - The payer approves a token allowance; a role-authorized relayer pays native gas and executes settlement.
 - Payer-scoped payment IDs and nonces prevent replay on chain. Unique intent records and fingerprints make API retries idempotent.
 - Token roles control issuance, account eligibility, maximum supply, and emergency pause.
@@ -40,7 +40,7 @@ On the original Windows workspace, `Start-ClearLedger.ps1` can use the Node runt
 - Reconciliation flags recorded settlements whose receipt or block is no longer canonical.
 - Payment and journal APIs support bounded cursor pages, and exact integer transfer-volume totals are grouped by asset. Reconciliation scans all settled pages rather than a recent-record cutoff.
 - A React dashboard browses payment and transfer-journal cursor pages, shows settled/review volume separately per asset, and exposes receipt snapshots, block data, and recent local audit events. Unknown/RPC assets keep their exact base units.
-- A four-validator Besu QBFT network passed real Docker acceptance on GitHub Actions Ubuntu: signed settlement, progress with one validator stopped, a healthy-RPC no-finalization window with two stopped, and same-transaction settlement after quorum restoration.
+- A four-validator Besu QBFT network passed real Docker acceptance on GitHub Actions Ubuntu: signed EOA settlement, progress with one validator stopped, a healthy-RPC no-finalization window with two stopped, and same-transaction settlement after quorum restoration.
 
 ## Repository
 
@@ -76,9 +76,11 @@ Initial confirmation leaves inconsistent or malformed RPC receipt data in broadc
 
 The [dependency maintenance record](docs/DEPENDENCIES.md) documents patched validation/build dependencies and 33 remaining Ganache-tree audit entries, including critical findings. Successful correctness checks do not establish dependency security.
 
+A Besu acceptance extension now includes a caller-bound test contract wallet: settle 12.5 dUSD after EOA quorum recovery, then revoke a queued 1.25 dUSD authorization before signing and require no new journal/native reservation. Shared fixture compilation passed 22 local-EVM wallet tests and typecheck; live verification remains pending. Prior Besu evidence covers EOA settlement; this tooling increment leaves the router/API unchanged.
+
 ## More than 100,000 source lines
 
-The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **627,955 nonblank source lines**: 5,043 application and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
+The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **628,055 nonblank source lines**: 5,143 application and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
 
 Application code is MIT-licensed, including a clearly attributed OpenZeppelin-derived signature-check adaptation. Its lines are included in the application source count; the Besu count remains separate. Besu and installed dependencies retain their own licenses. [Provenance](docs/PROVENANCE.md) records these distinctions and pins the Besu release, commit, and download hash.
 
