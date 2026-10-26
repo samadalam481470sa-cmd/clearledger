@@ -26,6 +26,7 @@ On the original Windows workspace, `Start-ClearLedger.ps1` can use the Node runt
 ## Implemented behavior
 
 - EIP-712 signatures bind payer, recipient, asset, amount, nonce, deadline, chain, and router.
+- EOA and deployed ERC-1271 wallet authorization share one router view, checked at API acceptance and again at dispatch/execution. Wallet authorization can be revoked; existing routers need redeployment with the new ABI/address. Twenty-two contract-wallet checks and the full local suite pass; remote CI is pending; see [authorization behavior](docs/API.md#contract-wallet-authorization-and-retries).
 - The payer approves a token allowance; a role-authorized relayer pays native gas and executes settlement.
 - Payer-scoped payment IDs and nonces prevent replay on chain. Unique intent records and fingerprints make API retries idempotent.
 - Token roles control issuance, account eligibility, maximum supply, and emergency pause.
@@ -45,7 +46,7 @@ On the original Windows workspace, `Start-ClearLedger.ps1` can use the Node runt
 
 | Path | Responsibility |
 | --- | --- |
-| `contracts/` | Original DemoUSD and SettlementRouter contracts |
+| `contracts/` | DemoUSD and SettlementRouter, with an attributed signature-check adaptation |
 | `src/` | API, durable journal, EVM adapter, settlement worker |
 | `web/` | React dashboard |
 | `tests/` | EVM, accounting, recovery, and HTTP integration tests |
@@ -77,9 +78,9 @@ The [dependency maintenance record](docs/DEPENDENCIES.md) documents patched vali
 
 ## More than 100,000 source lines
 
-The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **627,638 nonblank source lines**: 4,726 original and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
+The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **627,955 nonblank source lines**: 5,043 application and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
 
-Original application code is MIT-licensed. Besu and installed dependencies retain their own licenses. [Provenance](docs/PROVENANCE.md) pins the release, commit, and download hash.
+Application code is MIT-licensed, including a clearly attributed OpenZeppelin-derived signature-check adaptation. Its lines are included in the application source count; the Besu count remains separate. Besu and installed dependencies retain their own licenses. [Provenance](docs/PROVENANCE.md) records these distinctions and pins the Besu release, commit, and download hash.
 
 ## Four-validator development mode
 

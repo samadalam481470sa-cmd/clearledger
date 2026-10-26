@@ -6,6 +6,7 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import "@openzeppelin/contracts/interfaces/IERC1271.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /// @notice Payer-authorized, noncustodial settlement for approved demo assets.
@@ -76,6 +77,26 @@ contract SettlementRouter is AccessControl, Pausable, ReentrancyGuard, EIP712 {
             p.paymentId, p.payer, p.payee, p.token, p.amount, p.nonce, p.deadline)));
     }
 
+    /// @notice Point-in-time signature check; does not reserve funds or a nonce.
+    /// @dev Contract-wallet validity may change before settlement executes.
+    function isValidPaymentSignature(Payment calldata p, bytes calldata signature)
+        public view returns (bool)
+    {
+        // OpenZeppelin Contracts v5.4.0 SignatureChecker address-validation pattern
+        // (MIT; see licenses/OpenZeppelin-MIT.txt). Kept local to avoid its
+        // Cancun-only Bytes import while preserving this project's Paris target.
+        bytes32 paymentHash = hashPayment(p);
+        if (p.payer.code.length == 0) {
+            (address recovered, ECDSA.RecoverError error, ) = ECDSA.tryRecover(paymentHash, signature);
+            return error == ECDSA.RecoverError.NoError && recovered == p.payer;
+        }
+        (bool success, bytes memory result) = p.payer.staticcall(
+            abi.encodeCall(IERC1271.isValidSignature, (paymentHash, signature))
+        );
+        return success && result.length >= 32 &&
+            abi.decode(result, (bytes32)) == bytes32(IERC1271.isValidSignature.selector);
+    }
+
     function settle(Payment calldata p, bytes calldata signature)
         external onlyRole(SETTLER_ROLE) whenNotPaused nonReentrant
     {
@@ -89,7 +110,7 @@ contract SettlementRouter is AccessControl, Pausable, ReentrancyGuard, EIP712 {
         uint256 day = block.timestamp / 1 days;
         uint256 spent = dailySpent[p.payer][p.token][day] + p.amount;
         if (p.amount > policy.perPayment || spent > policy.perDay) revert LimitExceeded();
-        if (ECDSA.recover(hashPayment(p), signature) != p.payer)
+        if (!isValidPaymentSignature(p, signature))
             revert InvalidSignature();
 
         // All effects and the token transfer revert together on failure.

@@ -4,7 +4,7 @@ This is unaudited portfolio software for test assets.
 
 | Threat | Implemented control | Boundary |
 | --- | --- | --- |
-| Forged or altered payment | EIP-712 and OpenZeppelin ECDSA | EOA signatures only; no ERC-1271 yet |
+| Forged or altered payment | EIP-712 with EOA recovery or deployed-wallet ERC-1271 STATICCALL | Wallet policy can revoke validity; API/dispatch/execution checks are point-in-time |
 | Replay on another chain/router | Domain separation | Cloned environments still need key hygiene |
 | Duplicate request or lost response | Unique intent and persisted signed bytes; file-backed process-recovery checks | Single worker, no multi-region guarantee |
 | Replay under another payment ID | Payer nonce | Clients must coordinate concurrent signing |
@@ -23,8 +23,13 @@ This is unaudited portfolio software for test assets.
 | Misstated settled volume after review | Exact journal-derived per-asset settled/review totals | Volume is not balance/reserves; status membership can change while paging |
 | Local database mutation | On-chain transaction provenance | SQLite audit log itself is mutable |
 | Local host compromise | Temporary demo keys; generated files ignored | No HSM/KMS integration |
+| Hostile contract-wallet validation | STATICCALL and strict padded ERC-1271 magic return check | No independent gas/returndata-griefing bound or arbitrary-wallet availability guarantee |
 
 The local demo exposes an ephemeral same-origin dashboard token and signs with a temporary server-held payer wallet. It must remain on loopback. RPC mode omits those endpoints. Neither mode is designed for direct public exposure.
+
+ERC-1271 wallet checks originate from the router in acceptance and settlement. STATICCALL prevents the checker from changing state, but the wallet's current policy may depend on state and can change after acceptance. Both initial and replayed POSTs need live RPC/current authorization; the stored signature is never replaced on replay. Authenticated collection/history GETs do not revalidate signatures. Empty opaque bytes are structurally allowed for wallet policy; empty EOA signatures are invalid. The shared signature view establishes neither funds/nonce reservation nor overall settlement eligibility.
+
+This new wallet support uses an attributed Paris-compatible address-only adaptation of OpenZeppelin's validation pattern; local tests pass and remote CI remains pending. It does not demonstrate a Safe deployment, counterfactual ERC-6492 validation, ERC-4337 operation, multisignature governance, or protection against a wallet consuming excessive gas/return data. It still trusts RPC responses. Previous router deployments need a new deployment and ABI/address; historical bytecode hashes and dependency-audit records describe their earlier version.
 
 RPC mode defaults to a 5,000 ms timeout per HTTP exchange. `RPC_TIMEOUT_MS` accepts integers from 1 through 60,000. The transport makes one attempt for each exchange so retry decisions remain visible to the durable worker. A logical ethers RPC call may involve multiple exchanges; this setting is not a total-call deadline. Five controlled HTTP-proxy tests verify short 503/drop/timeout scenarios and response loss after transaction acceptance, not indefinite outages or all remote-node behaviors.
 

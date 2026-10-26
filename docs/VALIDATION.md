@@ -182,6 +182,13 @@ This is one bounded local-EVM transport/process-recovery case, not an autonomous
 - Published source [`71677da01dbf7603d3c7b2cff209471736052970`](https://github.com/samadalam481470sa-cmd/clearledger/commit/71677da01dbf7603d3c7b2cff209471736052970), tree `4801c7089a06b36894e61d90f0a7315dee4aa8be`, passed [regular CI `40281421049`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40281421049), job `121435349785`: **230 passes/zero failures/zero skips**, 107,341.346119 ms, plus fresh npm ci, typecheck, Solidity 0.8.30/Vite 7.3.7 build and source count 627,638. The install log independently reported 33 audit entries (1 low, 5 moderate, 22 high, 5 critical).
 - The same source passed [Besu run `40281420917`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40281420917), job `121435348729`: agreement at block 1; 125 dUSD at 23; three-node progress 24→26; two healthy nodes holding height/hash 26 for approximately 20,098.792 ms/20 samples; restoration finalized the same pending `0x36d61bc0e6c0acb88b188d0a762b47a197f582fbeafdc629284b8ac35b54e404` for 37.5 dUSD at 27 once. Recovery verified two journals, payer nonce 2, balance 162.5 dUSD, zero reconciliation exceptions, and all-four catch-up at 30. Whole scenario 239,255 ms is single-host scripted evidence, not a benchmark or recovery SLO. Completed run conclusions, every step, and logs were verified.
 
+## ERC-1271 authorization
+
+- Implemented shared router signature validation: EOA `tryRecover` or deployed-wallet STATICCALL with at least 32 return bytes and an exact padded ERC-1271 magic word. The attributed address-only OpenZeppelin adaptation retains the Paris EVM target.
+- Acceptance/replay require live RPC/current validity; dispatch/execution check again. Replays do not replace stored signatures. Wallet revocation can reject queued work or revert prepared transactions without undoing an already-mined transfer. Empty opaque wallet bytes are structurally allowed within the 4096-byte maximum; empty EOA signatures fail.
+- Twenty-two targeted real-EVM wallet checks passed in 21,015.4173 ms, and five targeted EOA/API cases passed in 58,887.4269 ms. Strict typecheck and Solidity 0.8.30/Paris plus Vite 7.3.7 build passed. The full local suite completed **253 cases: 252 passes, zero failures, one explicit POSIX skip on Windows**, exit 0, in 183,121.5447 ms. Remote CI remains pending. Earlier test/bytecode records remain evidence for their recorded version; the new router must be redeployed with an updated ABI/address. The application counter includes the attributed adaptation, with Besu counted separately.
+- Current count is 627,955 nonblank lines: application 46 files/5,330 physical/5,043 nonblank and Besu 4,484 files/714,385 physical/622,912 nonblank. Wallet behavior is proven on the local EVM; the Besu workflow still tests EOA settlement through the updated router, not a deployed contract wallet. No Safe deployment, ERC-6492 counterfactual support, ERC-4337 operation, multisignature governance, independent RPC proof, finality, or bounded gas/returndata-griefing guarantee is established by this implementation.
+
 ## Public source verification — October 25, 2026
 
 The project is public at [samadalam481470sa-cmd/clearledger](https://github.com/samadalam481470sa-cmd/clearledger). The user-created repository was verified as public with connected write access. Source commit [`762dd075d4b3dbe8d04a0e88fa24550818f734a7`](https://github.com/samadalam481470sa-cmd/clearledger/commit/762dd075d4b3dbe8d04a0e88fa24550818f734a7) contains all 6,785 reviewed tracked files.
@@ -204,11 +211,11 @@ Browser-origin access remains denied. No alternative browser route was used, so 
 
 ## Reproduced source count
 
-The current initial-confirmation-increment source count is 627,638 nonblank source lines, including comments and tests:
+The current ERC-1271-increment source count is 627,955 nonblank source lines, including comments and tests:
 
 | Source | Files | Physical lines | Nonblank lines |
 | --- | ---: | ---: | ---: |
-| Original application | 44 | 4,989 | 4,726 |
+| Application, including attributed adaptation | 46 | 5,330 | 5,043 |
 | Attributed Besu snapshot | 4,484 | 714,385 | 622,912 |
 
 The script's exclusions and methodology are recorded in `docs/source-count.json`; the size is not a claim of independently authored executable statements.

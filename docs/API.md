@@ -9,7 +9,7 @@ The service binds to `127.0.0.1`. Send `Authorization: Bearer <API_KEY>` on `/ap
 | GET | `/api/payments` | Cursor page of sanitized payment records |
 | GET | `/api/journals` | Cursor page of transfer journal records |
 | GET | `/api/totals` | Exact per-asset settled/review transfer volume |
-| POST | `/api/payments` | Signed EOA payment: 202 new, 200 identical retry |
+| POST | `/api/payments` | EOA/ERC-1271 authorization: 202 new, 200 identical retry |
 | POST | `/api/reconcile` | Check canonical receipts and flag mismatches |
 | GET | `/api/bootstrap` | Demo-only temporary dashboard token |
 | POST | `/api/demo/payment` | Demo-only signing; decimal `amount` string |
@@ -30,7 +30,7 @@ Payment pages omit stored signatures, raw signed transactions, and internal fing
 
 ## Sign an instruction
 
-Run this TypeScript example from the project root with the required environment variables. Never commit their values.
+The following example uses an EOA. Run it from the project root with the required environment variables. Never commit their values.
 
 ```ts
 import { Wallet, id } from 'ethers';
@@ -63,6 +63,16 @@ console.log(response.status, await response.json());
 ```
 
 Read the current payer nonce before creating each authorization. The payer needs token eligibility, sufficient balance, and an approved router allowance. The API allows deadlines no more than seven days in the future. The router itself enforces expiry.
+
+### Contract-wallet authorization and retries
+
+For a deployed ERC-1271 wallet, set `payment.payer` to the wallet address and supply the opaque signature bytes its policy accepts for the EIP-712 payment digest. The API structurally allows 0–4096 bytes (`0x` is empty); empty bytes can be valid for a contract policy but do not authorize an EOA. Wallet-controlled token eligibility, balance, allowance, and nonce remain necessary.
+
+Acceptance, including an identical POST replay, calls the updated router's public `isValidPaymentSignature(payment, signature)` view. It requires live RPC and current wallet authorization. The router invokes the wallet through STATICCALL, so the wallet sees the router as `msg.sender` in both this view and settlement. A signature-only view result does not reserve funds/nonces or establish policy, allowance, deadline, or settlement eligibility.
+
+The dispatch preflight and mined execution recheck authorization. Revocation can fail a queued intent or revert an already-signed native transaction; it does not revoke a transfer already mined. An identical replay preserves the original stored signature rather than replacing it with newly supplied bytes. If that signature is revoked, resubmitting a new valid signature for the same intent does not rotate its authorization. Use authenticated `GET /api/payments` and `/api/journals` for stored history without revalidating signatures, including while wallet authorization or RPC is unavailable.
+
+Existing deployments require a new router deployment and updated ABI/address; do not reuse prior bytecode hashes as evidence for this version. This is generic deployed-wallet validation, without demonstrated Safe deployment, ERC-6492 counterfactual wallets, ERC-4337 operation, or multisignature governance. See [validation](VALIDATION.md#erc-1271-authorization) for measured evidence and limits.
 
 ## RPC mode
 

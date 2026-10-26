@@ -14,7 +14,7 @@ export const paymentSchema = z.object({
 }).strict().refine(p => p.payer !== p.payee, 'Self-payment forbidden');
 export const submissionSchema = z.object({
   payment: paymentSchema,
-  signature: z.string().regex(/^0x([0-9a-fA-F]{2}){1,4096}$/)
+  signature: z.string().regex(/^0x([0-9a-fA-F]{2}){0,4096}$/)
 }).strict();
 export type Payment = z.infer<typeof paymentSchema>;
 export const paymentTypes = { Payment: [

@@ -1,5 +1,5 @@
-import { keccak256, verifyTypedData, type JsonRpcProvider, type Wallet, type TypedDataDomain, type TransactionReceipt } from 'ethers';
-import { digest, domain, paymentKey, paymentSchema, paymentTypes, submissionSchema, type Payment } from './payment.ts';
+import { keccak256, type JsonRpcProvider, type Wallet, type TypedDataDomain, type TransactionReceipt } from 'ethers';
+import { digest, domain, paymentKey, paymentSchema, submissionSchema, type Payment } from './payment.ts';
 import { Store, type RecordRow } from './store.ts';
 
 function isHash(value: unknown): value is string {
@@ -22,9 +22,10 @@ export class PaymentService {
 
   async accept(body: unknown) {
     const { payment, signature } = submissionSchema.parse(body);
-    // Externally owned account signatures; smart-contract wallet support is a roadmap item.
-    const signer = verifyTypedData(this.signingDomain, paymentTypes, payment, signature);
-    if (signer !== payment.payer) throw new Error('Signature does not authorize this payment');
+    // The router performs the same EOA/ERC-1271 check used during execution,
+    // including its own caller context for contract-wallet validation.
+    if (await this.router.isValidPaymentSignature.staticCall(payment, signature) !== true)
+      throw new Error('Signature does not authorize this payment');
     const hash = digest(payment, this.signingDomain);
     const existing = this.store.get(paymentKey(payment));
     if (!existing) {

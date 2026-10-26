@@ -75,6 +75,15 @@ test('tampered signature cannot authorize a different amount', async () => {
   await assert.rejects(() => service.accept(input), /Signature/);
   await assert.rejects(() => direct(input));
 });
+test('an empty opaque signature cannot authorize an EOA payer', async () => {
+  const input = { ...await signed(), signature: '0x' };
+  assert.equal(await chain.router.isValidPaymentSignature(input.payment, input.signature), false);
+  await assert.rejects(() => service.accept(input), /Signature/);
+  await assert.rejects(() => direct(input));
+  assert.equal(store.list().length, 0);
+  assert.equal(store.journals().length, 0);
+  assert.equal(await chain.router.nonces(chain.payer.address), 0n);
+});
 test('another wallet cannot spend payer allowance', async () => {
   await assert.rejects(() => directSignedWrongSigner());
 });

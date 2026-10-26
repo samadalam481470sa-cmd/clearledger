@@ -16,7 +16,7 @@ Shutdown drain ordering now passes Windows unit/HTTP verification and Linux real
 ## Advanced application work
 
 - Replace the legacy development EVM with a maintained Cancun-compatible runner; the scoped Zod/Vite/compiler-helper updates leave 33 Ganache-tree audit entries requiring review.
-- Add ERC-1271 contract-wallet authorization with explicit revocation semantics.
+- Verify wallet-specific integrations and policy rotation beyond the generic ERC-1271 checker; Safe, ERC-6492, ERC-4337, and multisignature deployment behavior remain unproven.
 - Add PostgreSQL-backed jobs and a relayer lease before allowing multiple workers.
 - Add controlled fee replacement and stuck-nonce resolution with an audit trail.
 - Introduce signer interfaces for KMS/HSM integrations without embedded secrets.
@@ -66,3 +66,7 @@ No paid infrastructure, real financial accounts, customer data, production keys,
 ## Dependency maintenance
 
 - Zod 4.6.7, Vite 7.3.7, and a scoped tmp 0.2.7 override address four affected-package entries while preserving the pinned Solidity compiler and identical artifacts. All remaining audit locations are in Ganache or its bundled tree. Typecheck/build passed, and the final locked dependency set passed 230 local cases (229 passes, zero failures, one explicit Windows POSIX skip) in 194,907.9415 ms. Source `71677da01dbf7603d3c7b2cff209471736052970` passed regular CI `40281421049` (all 230 tests/typecheck/build/count and fresh install) and Besu acceptance `40281420917` (settlement/quorum-loss/recovery). Details and primary advisory links are in `docs/DEPENDENCIES.md`.
+
+## ERC-1271 verification
+
+- Implemented one router view for EOA/deployed-wallet authorization, with current-validity checks at API acceptance/replay and dispatch/execution. The attributed address-only OpenZeppelin adaptation retains Paris compatibility; signature bytes may be empty for contract policy, within 4096 bytes. Replays retain the original signature, and revocation cannot undo mined transfers. Twenty-two targeted wallet cases, typecheck/build, and 253 local cases (252 passes, zero failures, one Windows POSIX skip) passed. Remote CI remains pending. Current count is 627,955 nonblank lines: 5,043 application and 622,912 Besu, including comments/tests. Updated routers require redeployment; generic checker support does not demonstrate Safe/6492/4337 or multisignature deployment, finality, or gas/returndata-griefing protection.
