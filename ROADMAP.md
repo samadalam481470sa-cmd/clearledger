@@ -4,14 +4,14 @@ Prioritize verified payment correctness and demonstrable engineering over source
 
 ## Next increments
 
-1. Complete Linux verification of the implemented actual RPC CLI signal-drain case, then extend bounded autonomous recovery toward longer outages and soak validation.
+1. Extend the verified bounded actual RPC CLI autonomous recovery toward longer outages and soak validation.
 2. Extend the verified bounded two-validator-stop scenario to other failure timings, malicious peers, arbitrary partitions, and independent-host failures.
 3. Consider reviewed token-metadata governance beyond the configured display registry; unconfigured assets retain exact base units.
 4. Add a durable event indexer with checkpoints, canonical-block validation, and controlled replay.
 5. Design journal reversal/rebuild for reorganization recovery while preserving the audit trail.
 6. Verify dashboard interaction and accessibility after browser access is available.
 
-Shutdown drain ordering passes Windows unit/HTTP verification and Linux real-SIGTERM helper integration. Actual RPC CLI autonomous crash recovery passes locally; its POSIX signal integration requires Linux CI verification; graceful handling does not cover force-kill or blocked JavaScript.
+Shutdown drain ordering passes Windows unit/HTTP verification and Linux real-SIGTERM helper integration. Actual RPC CLI autonomous crash recovery and POSIX signal-drain/restart integration pass Linux CI; graceful handling does not cover force-kill or blocked JavaScript.
 
 ## Advanced application work
 
@@ -79,3 +79,7 @@ No paid infrastructure, real financial accounts, customer data, production keys,
 ## Configured asset metadata
 
 - Implemented optional strict chain/token display descriptors, explicit demo dUSD metadata, active-chain/source reporting, a visible registry, and exact BigInt decimal formatting. Unknown/wrong-chain assets and failed display-field checks retain raw base units. Startup validates/normalizes address checksums; frontend checks unknown fields/nonzero 20-byte syntax and compares addresses case-insensitively without EIP-55 verification. The known-token legacy demo fallback requires absent `assetMetadata`; a present empty/invalid registry disables it. Local verification completed 342 cases (341 passes, zero failures, one Windows POSIX skip), typecheck and Solidity/Vite build; 53 server/HTTP and 49 client/presentation targeted checks also passed. Count is 628,547 nonblank lines (5,635 application and 622,912 Besu, including comments/tests). Source `f8bdd82df8d465e93b350451a1ca415f2ed2976a` passed Linux CI `40318971722` (all 342 tests/zero skips, typecheck/build/count), with completed conclusion, all steps and logs verified; no new Besu run or browser QA is claimed. Operator configuration does not prove token identity, value, backing, reserves, or settlement eligibility.
+
+## Actual RPC CLI verification
+
+- Source `f5588c4e586ec01d272774d0ec6343ad74c8280d` passed Linux CI `40323737574` with all 344 tests/zero skips, typecheck/build/count. Actual CLI crash/restart preserved one mined-but-unjournaled transaction through four autonomous receipt attempts before and after termination, then settled two payments once. Actual POSIX SIGTERM held the process until a genuine receipt drained into SQLite, exited naturally, preserved history/replay across restart, and settled a new instruction once. Both scenarios reconcile two payments with zero exceptions. Initial CI failure on concurrent acceptance during a held RPC remains documented; concurrent stall availability, longer outages/soaks, other failure timings, Besu/browser and production guarantees remain outside this increment. Current count is 629,038 nonblank source lines: 6,126 application and 622,912 attributed Besu, including comments/tests. Completed run, all steps and logs were verified.
