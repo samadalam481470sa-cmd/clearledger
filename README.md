@@ -26,7 +26,7 @@ On the original Windows workspace, `Start-ClearLedger.ps1` can use the Node runt
 ## Implemented behavior
 
 - EIP-712 signatures bind payer, recipient, asset, amount, nonce, deadline, chain, and router.
-- EOA and deployed ERC-1271 wallet authorization share one router view, checked at API acceptance and again at dispatch/execution. Wallet authorization can be revoked; existing routers need redeployment with the new ABI/address. Twenty-two contract-wallet checks and the full local suite pass; remote CI is pending; see [authorization behavior](docs/API.md#contract-wallet-authorization-and-retries).
+- EOA and deployed ERC-1271 wallet authorization share one router view, checked at API acceptance and again at dispatch/execution. Wallet authorization can be revoked; existing routers need redeployment with the new ABI/address. Twenty-two contract-wallet checks and all 253 Linux CI cases pass; see [authorization behavior](docs/API.md#contract-wallet-authorization-and-retries).
 - The payer approves a token allowance; a role-authorized relayer pays native gas and executes settlement.
 - Payer-scoped payment IDs and nonces prevent replay on chain. Unique intent records and fingerprints make API retries idempotent.
 - Token roles control issuance, account eligibility, maximum supply, and emergency pause.
@@ -64,7 +64,7 @@ npm run build
 npm run source:count
 ```
 
-The latest [Linux CI passed all 230 tests with zero skips](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40281421049), strict typecheck, the Solidity/Vite build, and source counting. The same source passed [Besu settlement and bounded quorum-loss recovery](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40281420917). Browser appearance/interaction remains unverified. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and limits.
+The latest [Linux CI passed all 253 tests with zero skips](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40288453471), strict typecheck, the Solidity/Vite build, and source counting. The same source passed [Besu settlement and bounded quorum-loss recovery](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40288453437). Browser appearance/interaction remains unverified. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and limits.
 
 A bounded receipt-outage test passed a measured 60,705 ms/59 observations in CI across actual worker termination/restart and file-backed SQLite reopen, with both payments settling once after recovery. Retries were driven by serialized IPC commands; this is not an autonomous daemon, Besu-network run, or hours-long soak.
 

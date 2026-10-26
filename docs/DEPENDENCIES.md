@@ -1,6 +1,6 @@
 # Dependency maintenance
 
-Snapshot: October 26, 2026. Versions and integrity hashes are pinned in `package.json` and `package-lock.json`. The [machine-readable audit record](dependency-audit.json) separates resolved findings from the legacy development tree still needing replacement.
+Snapshot: October 26, 2026, for dependency-maintenance source `71677da01dbf7603d3c7b2cff209471736052970`. The subsequent ERC-1271 increment changes the router ABI/bytecode; artifact hashes here apply to this earlier source version. Versions and integrity hashes are pinned in `package.json` and `package-lock.json`. The [machine-readable audit record](dependency-audit.json) separates resolved findings from the legacy development tree still needing replacement.
 
 | Package | Previous | Selected | Reason |
 | --- | --- | --- | --- |
