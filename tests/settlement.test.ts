@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { request } from 'node:http';
 import { randomBytes } from 'node:crypto';
-import { id, parseUnits, Wallet, keccak256 } from 'ethers';
+import { id, parseUnits, Wallet, keccak256, type JsonRpcProvider } from 'ethers';
 import { compile } from '../scripts/compile.ts';
 import { localChain } from '../scripts/local-chain.ts';
 import { domain, paymentTypes, paymentSchema, type Payment } from '../src/payment.ts';
@@ -202,6 +202,48 @@ test('confirmation threshold delays journal finalization', async () => {
   await cautious.tick();
   assert.equal(store.get(accepted.row.id)!.status, 'settled');
 });
+for (const reportedStatus of [0, 1]) {
+  test('wrong-hash status ' + reportedStatus + ' receipt preserves the mined reservation until genuine evidence recovers', async () => {
+    let inconsistent = true;
+    const faultyProvider = {
+      getTransactionReceipt: async (hash: string) => {
+        const receipt = await chain.provider.getTransactionReceipt(hash);
+        return receipt && inconsistent ? { ...receipt, hash: '0x' + 'ab'.repeat(32), status: reportedStatus } : receipt;
+      },
+      broadcastTransaction: chain.provider.broadcastTransaction.bind(chain.provider),
+      getBlockNumber: chain.provider.getBlockNumber.bind(chain.provider),
+      getBlock: chain.provider.getBlock.bind(chain.provider)
+    };
+    const recovering = new PaymentService(store, faultyProvider as unknown as JsonRpcProvider,
+      chain.relayer, chain.router, 31337, await chain.router.getAddress());
+    const first = (await service.accept(await signed())).row;
+    const second = (await service.accept(await signed({ nonce: '1' }))).row;
+    await recovering.tick();
+    const reservation = store.get(first.id)!;
+    assert.equal(reservation.status, 'broadcast');
+    assert.equal(reservation.tx_hash, keccak256(reservation.raw_tx!));
+    assert.equal(store.get(second.id)!.status, 'queued');
+    assert.equal(store.get(second.id)!.raw_tx, null);
+    assert.equal(store.journals().length, 0);
+    assert.equal(await chain.token.balanceOf(chain.payee.address), 125000000n);
+    assert.equal(await chain.router.nonces(chain.payer.address), 1n);
+    await recovering.tick();
+    assert.deepEqual(store.get(first.id), reservation);
+    assert.equal(store.get(second.id)!.raw_tx, null);
+    inconsistent = false;
+    await recovering.tick();
+    assert.equal(store.get(first.id)!.status, 'settled');
+    assert.equal(store.get(first.id)!.tx_hash, reservation.tx_hash);
+    assert.equal(store.get(first.id)!.raw_tx, reservation.raw_tx);
+    assert.equal(store.get(second.id)!.status, 'settled');
+    assert.equal(store.journals().length, 2);
+    assert.equal(store.events().filter(event => event.action === 'failed' || event.action === 'review').length, 0);
+    assert.equal(store.events().filter(event => event.action === 'settled').length, 2);
+    assert.equal(await chain.token.balanceOf(chain.payee.address), 250000000n);
+    assert.equal(await chain.router.nonces(chain.payer.address), 2n);
+    assert.deepEqual((await recovering.reconcile()).exceptions, []);
+  });
+}
 test('reconciliation detects removal of a previously settled block', async () => {
   const beforePayment = await chain.provider.send('evm_snapshot', []);
   const row = await settled(await signed());

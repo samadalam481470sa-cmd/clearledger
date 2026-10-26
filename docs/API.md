@@ -94,6 +94,12 @@ Missing or empty preflight revert data remains retryable even when the RPC libra
 
 A stuck/replaced transaction can block the queue. Fee replacement and administrative resolution are not implemented. Inspect signer nonce and transaction state rather than re-signing an uncertain business payment under another ID.
 
+### Initial receipt confirmation
+
+A receipt can fail or settle a broadcast only after its transaction hash, safe block metadata, canonical block number/hash, and configured confirmation depth agree. Status must be exactly `0` or `1`; unknown status, invalid head data, or inconsistent/malformed identity leaves the intent in broadcast for retry, retaining its signed bytes and nonce priority. Missing or non-array success logs are also retryable. A valid success-log array must contain the configured router's matching `PaymentSettled` event before journaling; an explicit valid empty array or otherwise missing expected event goes to review after confirmation.
+
+These checks still trust RPC responses; they are not independent proofs or a finality guarantee. See [validation](VALIDATION.md#initial-confirmation-integrity) for measured evidence and limits.
+
 ### Reconciliation integrity
 
 Reconciliation validates stored payment/ID/transaction/block metadata and compares receipt identity/status, the canonical block's number/hash, every journal field, and a matching `PaymentSettled` event emitted by the configured router. Mismatches or missing receipt/block data conservatively flag the payment for review while retaining its journal; they do not reverse accounting or independently prove a reorganization.

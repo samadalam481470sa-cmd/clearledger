@@ -2,9 +2,11 @@ import { keccak256, verifyTypedData, type JsonRpcProvider, type Wallet, type Typ
 import { digest, domain, paymentKey, paymentSchema, paymentTypes, submissionSchema, type Payment } from './payment.ts';
 import { Store, type RecordRow } from './store.ts';
 
+function isHash(value: unknown): value is string {
+  return typeof value === 'string' && /^0x[0-9a-fA-F]{64}$/.test(value);
+}
 function sameHash(actual: unknown, expected: string): boolean {
-  return typeof actual === 'string' && /^0x[0-9a-fA-F]{64}$/.test(actual) &&
-    actual.toLowerCase() === expected.toLowerCase();
+  return isHash(actual) && actual.toLowerCase() === expected.toLowerCase();
 }
 
 export class PaymentService {
@@ -13,7 +15,7 @@ export class PaymentService {
   constructor(readonly store: Store, readonly provider: JsonRpcProvider,
     readonly relayer: Wallet, readonly router: any, readonly chainId: number,
     readonly routerAddress: string, readonly confirmations = 1) {
-    if (!Number.isInteger(confirmations) || confirmations < 1) throw new Error('Invalid confirmation count');
+    if (!Number.isSafeInteger(confirmations) || confirmations < 1) throw new Error('Invalid confirmation count');
     this.router = router.connect(relayer);
     this.signingDomain = domain(chainId, routerAddress);
   }
@@ -71,21 +73,29 @@ export class PaymentService {
   }
 
   private async confirm(row: RecordRow) {
-    let receipt = await this.provider.getTransactionReceipt(row.tx_hash!);
+    if (!isHash(row.tx_hash)) return;
+    let receipt = await this.provider.getTransactionReceipt(row.tx_hash);
     if (!receipt) {
       try { await this.provider.broadcastTransaction(row.raw_tx!); }
       catch { /* already known, connection loss, or uncertain outcome: inspect hash */ }
-      receipt = await this.provider.getTransactionReceipt(row.tx_hash!);
+      receipt = await this.provider.getTransactionReceipt(row.tx_hash);
     }
-    if (!receipt) return;
-    if (receipt.status !== 1) {
+    // Inconsistent RPC evidence cannot consume a durable reservation or release
+    // its nonce priority. Both success and revert decisions need the same
+    // transaction identity, canonical inclusion, and configured depth checks.
+    if (!receipt || !sameHash(receipt.hash, row.tx_hash) ||
+      !Number.isSafeInteger(receipt.blockNumber) || receipt.blockNumber < 0 ||
+      !isHash(receipt.blockHash) || (receipt.status !== 0 && receipt.status !== 1) ||
+      (receipt.status === 1 && !Array.isArray(receipt.logs))) return;
+    const latest = await this.provider.getBlockNumber();
+    if (!Number.isSafeInteger(latest) || latest < receipt.blockNumber ||
+      latest - receipt.blockNumber < this.confirmations - 1) return;
+    const canonical = await this.provider.getBlock(receipt.blockNumber);
+    if (!canonical || canonical.number !== receipt.blockNumber || !sameHash(canonical.hash, receipt.blockHash)) return;
+    if (receipt.status === 0) {
       this.store.setStatus(row.id, 'failed', 'Transaction reverted on chain');
       return;
     }
-    const latest = await this.provider.getBlockNumber();
-    if (latest - receipt.blockNumber + 1 < this.confirmations) return;
-    const canonical = await this.provider.getBlock(receipt.blockNumber);
-    if (!canonical || canonical.hash !== receipt.blockHash) return;
     const p: Payment = JSON.parse(row.payload);
     if (!this.matchesSettlement(p, receipt)) {
       this.store.setStatus(row.id, 'review', 'Receipt does not contain the expected settlement event');

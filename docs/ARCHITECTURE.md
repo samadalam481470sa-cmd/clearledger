@@ -24,7 +24,7 @@ stateDiagram-v2
     queued --> failed: deterministic preflight revert
     queued --> broadcast: signed bytes persisted
     broadcast --> broadcast: retry same bytes / await confirmations
-    broadcast --> failed: mined revert
+    broadcast --> failed: canonical revert at configured depth
     broadcast --> settled: matching event and canonical receipt
     broadcast --> review: unexpected receipt
     settled --> review: canonical-chain mismatch
@@ -76,7 +76,9 @@ Supported assets must be reviewed standard tokens without rebasing or transfer f
 
 ## Finality and projection boundaries
 
-Finalization checks confirmation count, matching event fields, and the receipt's canonical block hash. Reconciliation detects a later mismatch and marks the payment for review; it does not automatically reverse or rebuild journals.
+Initial confirmation requires exact receipt status `0` or `1`, a matching transaction hash, safe block metadata/head, canonical block number/hash, and configured confirmation depth before either failed or settled. Inconsistent or malformed RPC evidence remains broadcast for retry with its existing signed bytes and nonce priority. Missing or non-array success logs remain retryable too. Status `1` requires the expected configured-router settlement event to journal; a confirmed valid log array without that event, including an explicit empty array, goes to review. See validation for local and CI evidence. These checks rely on trusted RPC data rather than independent proofs or a finality guarantee.
+
+Reconciliation detects a later mismatch and marks the payment for review; it does not automatically reverse or rebuild journals.
 
 Reconciliation validates stored intent/ID/transaction/block metadata, receipt hash/status/block identity, canonical block number/hash, all journal fields, and the configured router's matching `PaymentSettled` event. Hexadecimal hash comparison ignores letter case. Missing receipt/block data or a mismatch triggers conservative review with the journal retained. RPC exceptions abort without falsely reviewing the affected row; earlier mismatch flags already committed in the scan are not rolled back. See validation for local and CI evidence. This does not make the local database tamper-proof, replace trusted RPC data with independently verified proofs, or implement automatic accounting repair.
 

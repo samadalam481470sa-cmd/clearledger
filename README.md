@@ -63,7 +63,7 @@ npm run build
 npm run source:count
 ```
 
-The latest [Linux CI passed all 127 tests with zero skips](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40242671396), strict typecheck, the Solidity/Vite build, and source counting. It includes real SIGTERM helper integration and HTTP-drain checks. Earlier [Besu acceptance passed the bounded quorum-loss case](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40216704663); no new Besu run is claimed for the lifecycle increment. Browser appearance/interaction remains unverified. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and limits.
+The latest [Linux CI passed all 181 tests with zero skips](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40266156639), strict typecheck, the Solidity/Vite build, and source counting. The same source passed [Besu settlement and bounded quorum-loss recovery](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40266156756). Browser appearance/interaction remains unverified. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and limits.
 
 A bounded receipt-outage test passed a measured 60,705 ms/59 observations in CI across actual worker termination/restart and file-backed SQLite reopen, with both payments settling once after recovery. Retries were driven by serialized IPC commands; this is not an autonomous daemon, Besu-network run, or hours-long soak.
 
@@ -71,9 +71,11 @@ Shutdown coordinates worker and HTTP drains before closing shared resources on S
 
 Reconciliation cross-checks recorded payment/journal provenance with the receipt, canonical block, and configured router's settlement event. Local verification completed 181 cases: 180 passes, zero failures, and one explicit POSIX skip on Windows. Linux CI passed all 181 tests, and the four-validator Besu settlement/quorum-loss/recovery workflow also passed. See [validation](docs/VALIDATION.md#reconciliation-integrity) for evidence and limits. Mismatches flag review while retaining journal history, without automatic accounting reversal.
 
+Initial confirmation leaves inconsistent or malformed RPC receipt data in broadcast for retry. Both success and revert require matching transaction/canonical-block identity and configured confirmation depth before a terminal outcome; success also requires the expected router event. The 47 synthetic checks and two real-EVM recovery regressions pass, along with typecheck and build; the full local suite completed 230 cases (229 passes, zero failures, one explicit Windows POSIX skip) in 176,888.358 ms. Remote CI is pending.
+
 ## More than 100,000 source lines
 
-The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **627,385 nonblank source lines**: 4,473 original and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
+The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **627,638 nonblank source lines**: 4,726 original and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
 
 Original application code is MIT-licensed. Besu and installed dependencies retain their own licenses. [Provenance](docs/PROVENANCE.md) pins the release, commit, and download hash.
 

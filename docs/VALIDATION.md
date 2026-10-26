@@ -165,6 +165,13 @@ This is one bounded local-EVM transport/process-recovery case, not an autonomous
 - The same source passed [Besu run `40266156756`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40266156756), job `121388938419`. Four nodes agreed at block 1; 125 dUSD settled at block 23; three surviving validators progressed 24→26; two healthy nodes held height/hash 26 for 20,094.623468 ms/20 successful samples. Restoring quorum finalized the same pending `0xcacceab8083dedd8bb88026405ebfc84decff16277181fa9e9355133b35bed9a` at block 27 for 37.5 dUSD once: two journals, payer nonce 2, total recipient balance 162.5 dUSD, zero reconciliation exceptions. All four caught up at height 30. Whole scenario 237,414 ms is single-host scripted evidence, not a benchmark, recovery SLO, or multi-host/hostile-peer proof. Completed conclusions, every job step, and logs were verified.
 - CI dependency installation reported 37 vulnerabilities (2 low, 5 moderate, 25 high, 5 critical). This increment does not remediate them; a green correctness/build run is not a dependency security audit.
 
+## Initial confirmation integrity
+
+- Implemented initial receipt validation covers transaction hash, safe receipt block metadata/head, canonical block number/hash, configured confirmation depth, and exact success/revert status before terminal outcomes.
+- Malformed or inconsistent evidence remains broadcast for retry, retaining signed bytes and native-nonce priority. Missing/non-array success logs retry. A confirmed valid success-log array without the expected router event, including an explicit empty array, still goes to review.
+- **47/47 synthetic cases passed** in 590.2756 ms. Two real-EVM wrong-hash recovery cases with reported status `0`/`1` passed together in 10,391.9836 ms (individual cases 4,684.1492 and 3,311.2949 ms). Repeated faulty evidence preserves the original mined 125 dUSD raw/hash and second queued payment; healing journals both once, yielding 250 dUSD and payer nonce 2.
+- Typecheck and Solidity/Vite build passed. The source counter reports **627,638 nonblank lines**: original 44 files/4,989 physical/4,726 nonblank plus unchanged 622,912 upstream nonblank lines, including comments/tests. The full local suite completed **230 cases: 229 passes, zero failures, one explicit POSIX skip on Windows**, exit 0, in 176,888.358 ms. Remote CI remains pending. This validates trusted RPC data rather than independent proof or a finality guarantee.
+
 ## Public source verification — October 25, 2026
 
 The project is public at [samadalam481470sa-cmd/clearledger](https://github.com/samadalam481470sa-cmd/clearledger). The user-created repository was verified as public with connected write access. Source commit [`762dd075d4b3dbe8d04a0e88fa24550818f734a7`](https://github.com/samadalam481470sa-cmd/clearledger/commit/762dd075d4b3dbe8d04a0e88fa24550818f734a7) contains all 6,785 reviewed tracked files.
@@ -187,11 +194,11 @@ Browser-origin access remains denied. No alternative browser route was used, so 
 
 ## Reproduced source count
 
-The current reconciliation-increment source count is 627,385 nonblank source lines, including comments and tests:
+The current initial-confirmation-increment source count is 627,638 nonblank source lines, including comments and tests:
 
 | Source | Files | Physical lines | Nonblank lines |
 | --- | ---: | ---: | ---: |
-| Original application | 43 | 4,721 | 4,473 |
+| Original application | 44 | 4,989 | 4,726 |
 | Attributed Besu snapshot | 4,484 | 714,385 | 622,912 |
 
 The script's exclusions and methodology are recorded in `docs/source-count.json`; the size is not a claim of independently authored executable statements.
