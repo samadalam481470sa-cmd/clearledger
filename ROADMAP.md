@@ -15,7 +15,7 @@ Shutdown drain ordering now passes Windows unit/HTTP verification and Linux real
 
 ## Advanced application work
 
-- Review the dependency advisories reported by CI and replace the legacy development EVM with a maintained Cancun-compatible runner.
+- Replace the legacy development EVM with a maintained Cancun-compatible runner; the scoped Zod/Vite/compiler-helper updates leave 33 Ganache-tree audit entries requiring review.
 - Add ERC-1271 contract-wallet authorization with explicit revocation semantics.
 - Add PostgreSQL-backed jobs and a relayer lease before allowing multiple workers.
 - Add controlled fee replacement and stuck-nonce resolution with an audit trail.
@@ -62,3 +62,7 @@ No paid infrastructure, real financial accounts, customer data, production keys,
 ## Initial confirmation verification
 
 - Implemented matching transaction/canonical-block identity, safe metadata/head, configured depth, and exact status checks before either success or revert becomes terminal. Malformed/inconsistent RPC evidence and missing/non-array success logs retry; valid logs without the expected event retain the review policy. All 47 synthetic checks and two real-EVM wrong-hash recovery cases pass, with typecheck/build; the full local suite passed 229 of 230 cases, zero failures, with one explicit Windows POSIX skip, in 176,888.358 ms. Source `cb844fbfee9a8cbcac948276bfd9726f109250e7` passed regular CI `40268524347` with all 230 tests, zero skips/failures, typecheck/build/count, and Besu run `40268524351` with same-transaction quorum recovery and four-node catch-up. Current count is 627,638 nonblank source lines; trusted RPC remains a boundary.
+
+## Dependency maintenance
+
+- Zod 4.6.7, Vite 7.3.7, and a scoped tmp 0.2.7 override address four affected-package entries while preserving the pinned Solidity compiler and identical artifacts. All remaining audit locations are in Ganache or its bundled tree. Typecheck/build passed, and the final locked dependency set passed 230 local cases (229 passes, zero failures, one explicit Windows POSIX skip) in 194,907.9415 ms. Remote CI remains pending. Details and primary advisory links are in `docs/DEPENDENCIES.md`.

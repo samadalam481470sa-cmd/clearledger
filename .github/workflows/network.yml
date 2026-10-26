@@ -4,6 +4,8 @@ on:
   push:
     paths:
       - .github/workflows/network.yml
+      - package.json
+      - package-lock.json
       - network/**
       - scripts/network.ts
       - scripts/verify-network.ts

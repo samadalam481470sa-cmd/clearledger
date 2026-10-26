@@ -32,6 +32,6 @@ Pagination cursors are validated metadata, not authentication tokens or tamper-p
 
 Four development validators share one Docker host, so a host outage affects all of them. Node permission lists do not provide transaction confidentiality. Personal customer data should not be placed in this demo ledger.
 
-Dependency versions are pinned and locked. Ganache and memdown are legacy development-only tools. On Node 24, Ganache may print a native transport warning and use its JavaScript fallback. A dependency lockfile is not a security audit; replacing the development VM is planned.
+Dependency versions are pinned and locked. The [October 26 maintenance record](DEPENDENCIES.md) documents patched Zod/Vite/compiler-helper versions, audit classification limits, and 33 remaining affected-package entries in Ganache or its bundled tree, including five critical findings. Ganache and memdown are legacy development-only tools. On Node 24, Ganache may print a native transport warning and use its JavaScript fallback. A dependency lockfile is not a security audit; replacing the development VM is planned.
 
 Real-money operation would require independent contract review, secure signer custody, governance, operational validation, and application-specific legal/compliance work. No such readiness is claimed.

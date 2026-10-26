@@ -1,6 +1,6 @@
 # ClearLedger status
 
-Updated: October 25, 2026.
+Updated: October 26, 2026.
 
 ## Scope and constraints
 
@@ -152,6 +152,12 @@ Project writes are confined to the new `outputs/clearledger/` directory and task
 - Current count is **627,638 nonblank source lines**, including comments/tests: original 44 files/4,989 physical/4,726 nonblank; attributed Besu 4,484 files/714,385 physical/622,912 nonblank. The full local suite completed **230 cases: 229 passes, zero failures, one explicit POSIX skip on Windows**, exit 0, in 176,888.358 ms. These checks trust RPC responses and do not establish independent proof, finality, or production guarantees.
 - Published source [`cb844fbfee9a8cbcac948276bfd9726f109250e7`](https://github.com/samadalam481470sa-cmd/clearledger/commit/cb844fbfee9a8cbcac948276bfd9726f109250e7), tree `72c7230b2eb393fa1e15825d228b55fb87e73347`, passed [regular CI `40268524347`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40268524347), job `121396080703`: **230 tests/230 passes/zero failures/zero skips**, 107,953.703949 ms, plus strict typecheck, Solidity/Vite build, and source count 627,638. The two genuine-EVM wrong-hash status `0`/`1` recovery cases passed in 982.114814/975.261129 ms.
 - The same source passed [Besu run `40268524351`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40268524351), job `121396080772`: four-node agreement at block 1, 125 dUSD settlement at 23, three-node progress 24→26, and two healthy nodes holding height/hash 26 for approximately 20,108.078 ms/20 samples. Restored quorum finalized the same pending 37.5 dUSD transaction at block 27 once, with two journals, nonce 2, balance 162.5 dUSD, and zero reconciliation exceptions; all four caught up at 29. Whole scenario 168,394 ms on one Ubuntu Docker host is not a benchmark or recovery SLO. Completed workflow conclusions, every step, and logs were verified. Dependency advisories recorded above remain unresolved.
+
+## Dependency maintenance — verified locally, CI pending
+
+- Pin Zod 4.6.7 and Vite 7.3.7; scope a tmp 0.2.7 override to solc while retaining Solidity 0.8.30. Both complete compiler artifact hashes remain identical to the prior build. The patched helper passed a fileSync create/write/read/cleanup smoke check in task-owned scratch space.
+- Full npm audit entries decreased 37→33 (1 low, 5 moderate, 22 high, 5 critical remain), all located in Ganache or its bundled subtree. Omit-dev audit still reports 27 entries because bundled/extraneous metadata is not a verified runtime exposure inventory. See [dependency maintenance](docs/DEPENDENCIES.md) and [audit snapshot](docs/dependency-audit.json).
+- Dependency manifest changes now trigger the Besu acceptance workflow. Typecheck and Solidity/Vite build passed locally. The final locked dependency set passed **230 local cases: 229 passes, zero failures, one explicit POSIX skip on Windows**, exit 0, in 194,907.9415 ms. Remote CI remains pending. Source count remains 627,638 nonblank lines (4,726 original and 622,912 attributed Besu, including comments/tests).
 
 ## Public source publication — October 25, 2026
 

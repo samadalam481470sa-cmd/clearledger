@@ -1,0 +1,109 @@
+{
+  "recordedDate": "2026-10-26",
+  "method": "npm audit --json; counts are npm affected-package entries, not proof of reachability or exploitability.",
+  "npmVersion": "11.6.2",
+  "changes": [
+    {
+      "package": "zod",
+      "from": "3.25.76",
+      "to": "4.6.7",
+      "scope": "runtime schema validation",
+      "source": "https://github.com/advisories/GHSA-mrhx-c7xc-m3w5"
+    },
+    {
+      "package": "vite",
+      "from": "7.1.12",
+      "to": "7.3.7",
+      "scope": "dashboard build tool",
+      "source": "https://github.com/vitejs/vite/security/advisories/GHSA-rq7h-c2jc-7f22"
+    },
+    {
+      "package": "solc > tmp",
+      "from": "0.0.33",
+      "to": "0.2.7",
+      "scope": "narrow dependency override; solc remains 0.8.30",
+      "source": "https://github.com/advisories/GHSA-7c78-jf6q-g5cm"
+    }
+  ],
+  "fullBefore": {
+    "info": 0,
+    "low": 2,
+    "moderate": 5,
+    "high": 25,
+    "critical": 5,
+    "total": 37
+  },
+  "fullAfter": {
+    "info": 0,
+    "low": 1,
+    "moderate": 5,
+    "high": 22,
+    "critical": 5,
+    "total": 33
+  },
+  "omitDevAfter": {
+    "info": 0,
+    "low": 1,
+    "moderate": 5,
+    "high": 17,
+    "critical": 4,
+    "total": 27
+  },
+  "remainingPackageNames": [
+    "@microsoft/api-extractor",
+    "@microsoft/api-extractor-model",
+    "@microsoft/tsdoc-config",
+    "@rushstack/node-core-library",
+    "@trufflesuite/uws-js-unofficial",
+    "ajv",
+    "bn.js",
+    "brace-expansion",
+    "braces",
+    "browserify-sign",
+    "browserslist",
+    "cipher-base",
+    "cross-spawn",
+    "diff",
+    "elliptic",
+    "ganache",
+    "js-yaml",
+    "json5",
+    "lodash",
+    "micromatch",
+    "minimatch",
+    "mocha",
+    "nanoid",
+    "pbkdf2",
+    "picomatch",
+    "secp256k1",
+    "semver",
+    "serialize-javascript",
+    "sha.js",
+    "terser-webpack-plugin",
+    "validator",
+    "webpack",
+    "ws"
+  ],
+  "remainingLocationRoots": [
+    "node_modules/ganache",
+    "node_modules/ganache/node_modules/"
+  ],
+  "omitDevCaveat": "The 27 remaining omit-dev findings come from bundled/extraneous Ganache lock entries; omission is not a verified RPC-runtime exposure inventory.",
+  "compilerArtifactsSha256": {
+    "DemoUSD": "d366b44325d3bb8eda8ea664ecefebf9461e2c0c83b4bb378dc5cdd4b1f3678f",
+    "SettlementRouter": "352812719a12362783fa1ade812901f2b154dce08925b36e9596c7fd73443c68"
+  },
+  "limits": "Known Ganache findings including critical severity remain. This snapshot is not a security audit or production-readiness certification.",
+  "localVerification": {
+    "tests": 230,
+    "passed": 229,
+    "failed": 0,
+    "skipped": 1,
+    "skipReason": "Real POSIX signal test is explicitly skipped on Windows",
+    "durationMs": 194907.9415,
+    "typecheck": "passed",
+    "build": "passed",
+    "tmpFileSyncSmoke": "passed",
+    "compilerArtifactsUnchanged": true
+  }
+}

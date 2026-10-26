@@ -73,6 +73,8 @@ Reconciliation cross-checks recorded payment/journal provenance with the receipt
 
 Initial confirmation leaves inconsistent or malformed RPC receipt data in broadcast for retry. Both success and revert require matching transaction/canonical-block identity and configured confirmation depth before a terminal outcome; success also requires the expected router event. The 47 synthetic checks and two real-EVM recovery regressions pass, along with typecheck and build; the full local suite completed 230 cases (229 passes, zero failures, one explicit Windows POSIX skip) in 176,888.358 ms. Linux CI passed all 230 tests, and the same source passed the four-validator Besu settlement/recovery scenario.
 
+The [dependency maintenance record](docs/DEPENDENCIES.md) documents patched validation/build dependencies and 33 remaining Ganache-tree audit entries, including critical findings. Successful correctness checks do not establish dependency security.
+
 ## More than 100,000 source lines
 
 The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **627,638 nonblank source lines**: 4,726 original and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
