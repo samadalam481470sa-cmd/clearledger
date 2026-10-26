@@ -80,7 +80,7 @@ A Besu acceptance extension now includes a caller-bound test contract wallet: se
 
 ## More than 100,000 source lines
 
-The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **628,547 nonblank source lines**: 5,635 application and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
+The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **629,038 nonblank source lines**: 6,126 application and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
 
 Application code is MIT-licensed, including a clearly attributed OpenZeppelin-derived signature-check adaptation. Its lines are included in the application source count; the Besu count remains separate. Besu and installed dependencies retain their own licenses. [Provenance](docs/PROVENANCE.md) records these distinctions and pins the Besu release, commit, and download hash.
 

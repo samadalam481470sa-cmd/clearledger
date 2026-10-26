@@ -30,7 +30,10 @@ const store = new Store(process.env.DB_PATH ?? 'data/clearledger.sqlite');
 const service = new PaymentService(store, provider, relayer, router, chainId, address, Number(process.env.CONFIRMATIONS ?? '2'));
 const port = Number(process.env.PORT ?? '4317');
 const server = makeServer({ service, apiKey, port, mode: 'rpc', assetMetadata });
-server.listen(port, '127.0.0.1', () => console.log('ClearLedger RPC mode: http://127.0.0.1:' + port));
+server.listen(port, '127.0.0.1', () => {
+  const boundPort = (server.address() as { port: number }).port;
+  console.log('ClearLedger RPC mode: http://127.0.0.1:' + boundPort);
+});
 const worker = startWorker(() => service.tick(), { onError: () => console.error('Worker waiting for RPC recovery') });
 const shutdown = createShutdown({
   stopWorker: () => worker.stop(),

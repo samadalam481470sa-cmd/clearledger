@@ -209,6 +209,15 @@ This is one bounded local-EVM transport/process-recovery case, not an autonomous
 - Published source [`f8bdd82df8d465e93b350451a1ca415f2ed2976a`](https://github.com/samadalam481470sa-cmd/clearledger/commit/f8bdd82df8d465e93b350451a1ca415f2ed2976a), tree `c89bb2f7649a32b71a91fcdaebaf8bf97b919835`, passed [Linux CI `40318971722`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40318971722), job `121558696063`: **342 tests/342 passes/zero failures/zero skips**, 149,746.572782 ms, plus fresh dependency installation, strict typecheck, Solidity 0.8.30/Paris and Vite 7.3.7 build, and source count 628,547. The completed run conclusion, all job steps, checked-out source head, and logs were verified. Installation still reported 33 audit entries including five critical findings; previous dependency limitations remain. Existing auth/paging context behavior is preserved. Router/worker/network code is unchanged; no new Besu run or browser QA is claimed.
 - Operator descriptors do not independently verify token identity, backing, value, or settlement eligibility. Browser origins remain denied, so display/interaction/accessibility remains unverified.
 
+## Actual RPC CLI recovery and shutdown
+
+- The tests launch actual `src/server.ts` children using authenticated HTTP, file-backed SQLite and ephemeral Ganache; the real scheduler drives receipt retries without IPC/manual ticks. `PORT=0` readiness uses the actual logged bound port. Spawn-time tracking and bounded cleanup retain a live failed-start child in the cleanup registry and prevent deletion beneath it.
+- Autonomous crash recovery requires at least four failed receipt attempts before SIGKILL and four after restarting the same database. The first transfer is already mined but remains broadcast with identical raw bytes/hash and zero journals; a later payment stays queued/unsigned. Healing RPC lets the real worker settle 125 + 7 test dUSD once, with two journals, one accepted/prepared/settled audit per payment, consecutive native nonces, exact balances/payer nonce, HTTP replays, and reconciliation 2/0.
+- The POSIX test pauses an authentic mined receipt response after forwarding, accepts a later intent after the active tick snapshot, and sends SIGTERM. Listener refusal plus a still-live child and broadcast/queued database state must precede releasing the response. It then requires natural exit 0 with first settled/second unsigned, restarts, checks two exact settlements/replay/reconciliation, and exits cleanly a second time. Windows explicitly skips this real-signal path; Linux execution is pending.
+- The local full suite completed **344 cases: 342 passes, zero failures, two explicit POSIX skips on Windows**, exit 0, in 226,389.6719 ms. After refining spawn-time child tracking, the final targeted autonomous CLI case passed in 16,233.62 ms; its measured receipt outage was 7,237 ms with four attempts before and four after restart. Strict typecheck and Solidity 0.8.30/Paris plus Vite 7.3.7 build passed.
+- Reproduced source count: **629,038 nonblank source lines**, including comments/tests: application 54 files/6,471 physical/6,126 nonblank; attributed Besu 4,484 files/714,385 physical/622,912 nonblank.
+- Remote CI is pending. Earlier helper-only signal and 60-second IPC-driven recovery proofs remain separate historical evidence. These bounded CLI cases do not establish prolonged soak, Besu/network/browser behavior, guaranteed exit timing, force-kill gracefulness, or production availability.
+
 ## Public source verification — October 25, 2026
 
 The project is public at [samadalam481470sa-cmd/clearledger](https://github.com/samadalam481470sa-cmd/clearledger). The user-created repository was verified as public with connected write access. Source commit [`762dd075d4b3dbe8d04a0e88fa24550818f734a7`](https://github.com/samadalam481470sa-cmd/clearledger/commit/762dd075d4b3dbe8d04a0e88fa24550818f734a7) contains all 6,785 reviewed tracked files.
@@ -231,11 +240,11 @@ Browser-origin access remains denied. No alternative browser route was used, so 
 
 ## Reproduced source count
 
-The current configured-metadata source count is 628,547 nonblank source lines, including comments and tests:
+The current actual-CLI source count is 629,038 nonblank source lines, including comments and tests:
 
 | Source | Files | Physical lines | Nonblank lines |
 | --- | ---: | ---: | ---: |
-| Application, including attributed adaptation | 51 | 5,967 | 5,635 |
+| Application, including attributed adaptation | 54 | 6,471 | 6,126 |
 | Attributed Besu snapshot | 4,484 | 714,385 | 622,912 |
 
 The script's exclusions and methodology are recorded in `docs/source-count.json`; the size is not a claim of independently authored executable statements.

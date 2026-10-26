@@ -4,14 +4,14 @@ Prioritize verified payment correctness and demonstrable engineering over source
 
 ## Next increments
 
-1. Extend beyond the verified bounded receipt-outage/restart case toward longer outage/recovery and autonomous-worker soak tests; current IPC-driven retries do not establish daemon availability.
+1. Complete Linux verification of the implemented actual RPC CLI signal-drain case, then extend bounded autonomous recovery toward longer outages and soak validation.
 2. Extend the verified bounded two-validator-stop scenario to other failure timings, malicious peers, arbitrary partitions, and independent-host failures.
 3. Consider reviewed token-metadata governance beyond the configured display registry; unconfigured assets retain exact base units.
 4. Add a durable event indexer with checkpoints, canonical-block validation, and controlled replay.
 5. Design journal reversal/rebuild for reorganization recovery while preserving the audit trail.
 6. Verify dashboard interaction and accessibility after browser access is available.
 
-Shutdown drain ordering now passes Windows unit/HTTP verification and Linux real-SIGTERM helper integration. A complete application CLI signal test remains future work; graceful handling does not cover force-kill or blocked JavaScript.
+Shutdown drain ordering passes Windows unit/HTTP verification and Linux real-SIGTERM helper integration. Actual RPC CLI autonomous crash recovery passes locally; its POSIX signal integration requires Linux CI verification; graceful handling does not cover force-kill or blocked JavaScript.
 
 ## Advanced application work
 
