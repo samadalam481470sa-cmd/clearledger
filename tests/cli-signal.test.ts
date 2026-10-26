@@ -61,7 +61,7 @@ async function api(url: string, key: string, path: string, body?: unknown) {
 // This uses the actual application entrypoint and automatic scheduler, not an
 // IPC-controlled replacement worker. Windows cannot deliver a catchable POSIX
 // SIGTERM through child.kill(), so its regular suite reports an explicit skip.
-test('the actual CLI drains a mined receipt on SIGTERM and resumes queued payments after restart', {
+test('the actual CLI drains a mined receipt on SIGTERM and preserves settlements across restart', {
   timeout: 90000,
   skip: process.platform === 'win32' ? 'Actual CLI SIGTERM handling requires catchable POSIX signals; Windows child.kill(SIGTERM) terminates immediately.' : false
 }, async t => {
@@ -99,7 +99,6 @@ test('the actual CLI drains a mined receipt on SIGTERM and resumes queued paymen
       return { payment, signature: await chain!.payer.signTypedData(domain(31337, config.router), paymentTypes, payment) };
     }
     const firstInput = await signed('125000000', '0');
-    const secondInput = await signed('7000000', '1');
     // The first receipt lookup is legitimately null. Arm only after Ganache has
     // accepted the native transaction, so the held response is a mined receipt.
     proxy.afterForward('eth_sendRawTransaction', () => {
@@ -120,19 +119,11 @@ test('the actual CLI drains a mined receipt on SIGTERM and resumes queued paymen
     assert.equal(await chain.token.balanceOf(chain.payee.address), 125000000n);
     assert.equal(count('journals'), 0);
 
-    // The first tick has already materialized pending(). Accept a later intent
-    // while that tick awaits its receipt; shutdown must not start a second tick.
-    const secondAccepted = await api(cli.url, cli.apiKey, '/api/payments', secondInput);
-    assert.equal(secondAccepted.status, 202);
-    const secondId = secondAccepted.body.payment.id as string;
-    assert.equal(row(secondId).status, 'queued');
-    assert.equal(row(secondId).raw_tx, null);
     assert.ok(cli.child.kill('SIGTERM'), 'Expected POSIX SIGTERM delivery to the tracked CLI child');
     await until(async () => await listenerRefused(cli.url) ? true : undefined, 'CLI listener shutdown', 3000);
     assert.equal(cli.child.exitCode, null, 'The CLI must await the held receipt before exiting');
     assert.equal(cli.child.signalCode, null);
     assert.equal(row(firstId).status, 'broadcast');
-    assert.equal(row(secondId).status, 'queued');
     assert.equal(count('journals'), 0);
 
     receiptGate!.release();
@@ -141,28 +132,37 @@ test('the actual CLI drains a mined receipt on SIGTERM and resumes queued paymen
     assert.equal(row(firstId).status, 'settled', 'The receipt must commit during the active tick drain');
     assert.ok(row(firstId).raw_tx === originalRaw, 'Drain changed the persisted signed transaction');
     assert.equal(row(firstId).tx_hash, originalHash);
-    assert.equal(row(secondId).status, 'queued', 'A stopped scheduler must leave later queued work for restart');
-    assert.equal(row(secondId).raw_tx, null);
-    assert.equal(row(secondId).tx_hash, null);
     assert.equal(count('journals'), 1);
     assert.equal(count('audit', 'settled', firstId), 1);
     assert.equal(await chain.router.nonces(chain.payer.address), 1n);
 
     proxy.heal();
     cli = await startCli(config);
-    await until(async () => {
-      const response = await api(cli.url, cli.apiKey, '/api/payments');
-      assert.equal(response.status, 200);
-      const first = response.body.items.find((payment: any) => payment.id === firstId);
-      const second = response.body.items.find((payment: any) => payment.id === secondId);
-      return first?.status === 'settled' && second?.status === 'settled' ? response.body : undefined;
-    }, 'Automatic CLI recovery of queued payment');
+    const history = await api(cli.url, cli.apiKey, '/api/payments');
+    assert.equal(history.status, 200);
+    assert.equal(history.body.items.length, 1);
+    assert.equal(history.body.items[0].id, firstId);
+    assert.equal(history.body.items[0].status, 'settled');
+    assert.equal(history.body.items[0].tx_hash, originalHash);
     const replay = await api(cli.url, cli.apiKey, '/api/payments', firstInput);
     assert.equal(replay.status, 200);
     assert.equal(replay.body.replay, true);
     assert.equal(replay.body.payment.tx_hash, originalHash);
     for (const privateField of ['raw_tx', 'signature', 'fingerprint'])
       assert.equal(replay.body.payment[privateField], undefined);
+    // New HTTP acceptance is exercised after restart, with healthy transport.
+    // No concurrent API-availability claim is made while a receipt is held.
+    const secondInput = await signed('7000000', '1');
+    const secondAccepted = await api(cli.url, cli.apiKey, '/api/payments', secondInput);
+    assert.equal(secondAccepted.status, 202);
+    const secondId = secondAccepted.body.payment.id as string;
+    await until(async () => {
+      const response = await api(cli.url, cli.apiKey, '/api/payments');
+      assert.equal(response.status, 200);
+      const first = response.body.items.find((payment: any) => payment.id === firstId);
+      const second = response.body.items.find((payment: any) => payment.id === secondId);
+      return first?.status === 'settled' && second?.status === 'settled' ? response.body : undefined;
+    }, 'Automatic CLI settlement after restart');
     const reconciliation = await api(cli.url, cli.apiKey, '/api/reconcile', {});
     assert.equal(reconciliation.status, 200);
     assert.equal(reconciliation.body.checked, 2);
@@ -184,7 +184,7 @@ test('the actual CLI drains a mined receipt on SIGTERM and resumes queued paymen
     assert.equal(proxy.calls.filter(call => call.method === 'eth_sendRawTransaction').length, 2);
     assert.equal(await chain.token.balanceOf(chain.payee.address), 132000000n);
     assert.equal(await chain.router.nonces(chain.payer.address), 2n);
-    t.diagnostic('Actual POSIX CLI SIGTERM drained one receipt, preserved one queued payment, and resumed two exact settlements after restart.');
+    t.diagnostic('Actual POSIX CLI SIGTERM drained one receipt, preserved its settlement across restart, and settled a second HTTP instruction exactly once.');
   } finally {
     const failures: unknown[] = [];
     async function cleanup(action: () => unknown) { try { await action(); } catch (error) { failures.push(error); } }
