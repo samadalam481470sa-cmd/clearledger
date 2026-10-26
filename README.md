@@ -64,7 +64,7 @@ npm run build
 npm run source:count
 ```
 
-The latest [Linux CI passed all 253 tests with zero skips](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40288453471), strict typecheck, the Solidity/Vite build, and source counting. The same source passed [Besu settlement and bounded quorum-loss recovery](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40288453437). Browser appearance/interaction remains unverified. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and limits.
+The latest [Linux CI passed all 253 tests with zero skips](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40291818263), strict typecheck, the Solidity/Vite build, and source counting. The same source passed [Besu settlement and bounded quorum-loss recovery](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40291818248). Browser appearance/interaction remains unverified. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and limits.
 
 A bounded receipt-outage test passed a measured 60,705 ms/59 observations in CI across actual worker termination/restart and file-backed SQLite reopen, with both payments settling once after recovery. Retries were driven by serialized IPC commands; this is not an autonomous daemon, Besu-network run, or hours-long soak.
 
@@ -76,7 +76,7 @@ Initial confirmation leaves inconsistent or malformed RPC receipt data in broadc
 
 The [dependency maintenance record](docs/DEPENDENCIES.md) documents patched validation/build dependencies and 33 remaining Ganache-tree audit entries, including critical findings. Successful correctness checks do not establish dependency security.
 
-A Besu acceptance extension now includes a caller-bound test contract wallet: settle 12.5 dUSD after EOA quorum recovery, then revoke a queued 1.25 dUSD authorization before signing and require no new journal/native reservation. Shared fixture compilation passed 22 local-EVM wallet tests and typecheck; live verification remains pending. Prior Besu evidence covers EOA settlement; this tooling increment leaves the router/API unchanged.
+A Besu acceptance extension now includes a caller-bound test contract wallet: settle 12.5 dUSD after EOA quorum recovery, then revoke a queued 1.25 dUSD authorization before signing and require no new journal/native reservation. The extended live Besu workflow passed: three journals, wallet balance 87.5 dUSD, recipient total 175 dUSD, and four-node state agreement at block 45. All 253 regular CI tests also passed. This tooling increment leaves the router/API unchanged and does not test wallet transactions during quorum loss.
 
 ## More than 100,000 source lines
 
