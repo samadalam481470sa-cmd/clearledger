@@ -28,6 +28,22 @@ Payment pages omit stored signatures, raw signed transactions, and internal fing
 
 `GET /api/totals` returns `{ "assets": [{ "token": "0x...", "settledPayments": 1, "settledBaseUnits": "125000000", "reviewPayments": 0, "reviewBaseUnits": "0" }] }`. Asset addresses are lowercase; amounts are exact integer strings calculated from journal rows with BigInt. These are cumulative **transfer volumes**, not token balances, reserves, or valuations. Journaled payments flagged for review are excluded from settled volume and reported separately. The API does not infer token decimals or combine different assets into one money amount.
 
+## Asset display metadata
+
+Optional `ASSET_METADATA` supplies a JSON array of operator-configured descriptors, for example:
+
+```json
+[{"chainId":31337,"token":"0x1111111111111111111111111111111111111111","symbol":"TST","decimals":18}]
+```
+
+The strict registry allows at most 100 entries. Each has a positive safe-integer chain ID, valid nonzero EVM token address normalized to checksum form, unique chain/token pair, integer decimals from 0 through 255, and a 1–16-character ASCII symbol starting with a letter and otherwise using letters, digits, `.`, `_`, or `-`. Invalid configuration is rejected. Demo mode explicitly adds its known token as six-decimal `dUSD`; a configured collision with that chain/token is rejected, and active-chain entries including the demo descriptor must not exceed 100.
+
+`GET /api/overview` returns the active chain's `assetMetadata` array with `source: "configured"` or `"demo"` on each descriptor. The dashboard displays the registry/source and formats known amounts with exact BigInt arithmetic. Unknown/wrong-chain assets and metadata failing its display-field checks retain raw base units. The frontend rejects unknown fields and checks nonzero 20-byte hex address syntax, comparing addresses case-insensitively; it does not verify EIP-55 casing. Configuration startup performs checksum validation/normalization.
+
+For compatibility, an older demo response that omits `assetMetadata` can still format its explicitly known demo token as six-decimal dUSD. A present empty or invalid registry never enables that fallback.
+
+`/api/totals` and payment amounts remain exact base-unit strings. No token metadata is fetched from RPC, and no prices, valuations, or reserve claims are inferred. Configured symbols/decimals are operator assertions rather than independent token verification. Evidence and limitations are recorded in [validation](VALIDATION.md#configured-asset-metadata).
+
 ## Sign an instruction
 
 The following example uses an EOA. Run it from the project root with the required environment variables. Never commit their values.
@@ -87,6 +103,7 @@ Set environment variables in the shell. The app does not automatically load `.en
 | `RELAYER_PRIVATE_KEY` | yes | Development relayer with gas and SETTLER_ROLE |
 | `API_KEY` | yes | At least 32 characters; use high-entropy random bytes |
 | `CONFIRMATIONS` | no | Positive integer; defaults to 2 |
+| `ASSET_METADATA` | no | Strict JSON array of chain/token/symbol/decimals descriptors; display only |
 | `DB_PATH` | no | Defaults to `data/clearledger.sqlite` |
 | `PORT` | no | Defaults to 4317 |
 

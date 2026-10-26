@@ -6,7 +6,7 @@ Prioritize verified payment correctness and demonstrable engineering over source
 
 1. Extend beyond the verified bounded receipt-outage/restart case toward longer outage/recovery and autonomous-worker soak tests; current IPC-driven retries do not establish daemon availability.
 2. Extend the verified bounded two-validator-stop scenario to other failure timings, malicious peers, arbitrary partitions, and independent-host failures.
-3. Add an explicit token-metadata registry before displaying decimal amounts for arbitrary RPC assets; the dashboard currently preserves their exact base units.
+3. Consider reviewed token-metadata governance beyond the configured display registry; unconfigured assets retain exact base units.
 4. Add a durable event indexer with checkpoints, canonical-block validation, and controlled replay.
 5. Design journal reversal/rebuild for reorganization recovery while preserving the audit trail.
 6. Verify dashboard interaction and accessibility after browser access is available.
@@ -74,3 +74,7 @@ No paid infrastructure, real financial accounts, customer data, production keys,
 ## Contract-wallet Besu verification
 
 - Implemented acceptance after EOA quorum recovery with a test-only caller-bound wallet: fund 100 dUSD, settle 12.5 dUSD once, revoke a second queued 1.25 dUSD authorization before signing, and require no new native reservation/journal plus reconciliation 3/0 and final node agreement. Shared fixture compilation passed 22/22 local-EVM tests in 20,106.9988 ms and typecheck; source `e6849cc91a38dd408390973f34f16a1ee2235ab1` passed live Besu `40291818248` with wallet settlement at block 42, queued revocation without a native reservation, reconciliation of three payments with zero exceptions, and state agreement at block 45. Regular CI `40291818263` passed all 253 tests, typecheck, build and source count. No local full-suite/build rerun is claimed; router/API behavior is unchanged. Current count is 628,055 nonblank lines (5,143 application, 622,912 Besu). This does not exercise wallet quorum-loss recovery or demonstrate Safe/multisignature, independent-host, or production operation.
+
+## Configured asset metadata
+
+- Implemented optional strict chain/token display descriptors, explicit demo dUSD metadata, active-chain/source reporting, a visible registry, and exact BigInt decimal formatting. Unknown/wrong-chain assets and failed display-field checks retain raw base units. Startup validates/normalizes address checksums; frontend checks unknown fields/nonzero 20-byte syntax and compares addresses case-insensitively without EIP-55 verification. The known-token legacy demo fallback requires absent `assetMetadata`; a present empty/invalid registry disables it. Local verification completed 342 cases (341 passes, zero failures, one Windows POSIX skip), typecheck and Solidity/Vite build; 53 server/HTTP and 49 client/presentation targeted checks also passed. Count is 628,547 nonblank lines (5,635 application and 622,912 Besu, including comments/tests). Remote CI is pending; no new Besu run or browser QA is claimed. Operator configuration does not prove token identity, value, backing, reserves, or settlement eligibility.

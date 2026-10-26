@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { AssetVolumes, PageNavigation } from './views.tsx';
+import { AssetMetadataRegistry, AssetVolumes, PageNavigation } from './views.tsx';
 import {
-  CursorPager, PAGE_SIZE, formatAssetAmount, pagePath,
+  CursorPager, PAGE_SIZE, assetRegistry, formatAssetAmount, pagePath,
   type AssetTotal, type CursorPage, type JournalRow, type Overview, type PagerState,
   type PaymentRow, type StatusFilter
 } from './dashboard.ts';
@@ -214,6 +214,9 @@ function App() {
   const completed = assets?.reduce((count, asset) => count + asset.settledPayments, 0);
   const review = assets?.reduce((count, asset) => count + asset.reviewPayments, 0);
   const isDemo = data?.mode === 'demo' && Boolean(data.token);
+  const metadata = assetRegistry(data);
+  const displayedPrecision = metadata.status === 'ready' && metadata.entries.length > 0 ? 'Configured per asset' :
+    metadata.status === 'missing' && isDemo ? 'Demo asset: 6 decimals' : 'Exact base units';
   const receiptAmount = selected ? formatAssetAmount(selected.row.payment.amount, selected.row.payment.token, data ?? undefined) : null;
 
   return <div className="shell">
@@ -254,7 +257,7 @@ function App() {
                 <div className="flow-note"><span className="shield">◇</span><div><strong>Replay protection at two layers</strong><p>Idempotent API requests and on-chain nonces keep retries from moving funds twice.</p></div></div>
               </section>
               <section className="panel policy"><div className="panel-heading"><h2>{isDemo ? 'Demo policy' : 'Contract policy'}</h2><span className="dot"></span></div>
-                <dl><div><dt>Per payment</dt><dd>{isDemo ? (data.perPaymentLimit ?? 'See contract') + ' dUSD' : 'Read policy for the asset'}</dd></div><div><dt>Per payer / UTC day</dt><dd>{isDemo ? (data.dailyLimit ?? 'See contract') + ' dUSD' : 'Read policy for the asset'}</dd></div><div><dt>Finalization threshold</dt><dd>{data.confirmations} block{data.confirmations > 1 ? 's' : ''}</dd></div><div><dt>Displayed precision</dt><dd>{isDemo ? 'Demo asset: 6 decimals' : 'Exact base units'}</dd></div></dl>
+                <dl><div><dt>Per payment</dt><dd>{isDemo ? (data.perPaymentLimit ?? 'See contract') + ' dUSD' : 'Read policy for the asset'}</dd></div><div><dt>Per payer / UTC day</dt><dd>{isDemo ? (data.dailyLimit ?? 'See contract') + ' dUSD' : 'Read policy for the asset'}</dd></div><div><dt>Finalization threshold</dt><dd>{data.confirmations} block{data.confirmations > 1 ? 's' : ''}</dd></div><div><dt>Displayed precision</dt><dd>{displayedPrecision}</dd></div></dl>
                 <p className="policy-foot">{isDemo ? 'Demo tokens have no monetary value. Limits apply to the configured demo asset.' : 'Asset limits are enforced by the router. Token decimals and prices are not inferred.'}</p>
               </section>
             </div>
@@ -295,6 +298,7 @@ function App() {
           </section>}
           {page === 'Network' && <><div className="panel network-panel"><div className="panel-heading"><div><h2>Connected execution network</h2><p>Actual runtime information; the four-validator Besu network is a separate launch mode.</p></div><span className="tag">CHAIN {data.chainId}</span></div>
             <dl><div><dt>Runtime</dt><dd>{data.consensus ?? 'External EVM JSON-RPC'}</dd></div><div><dt>Development validators</dt><dd>{data.validators ?? 'Query your node operator'}</dd></div><div><dt>Settlement router</dt><dd className="mono">{data.router}</dd></div><div><dt>Latest block hash</dt><dd className="mono">{data.block?.hash}</dd></div><div><dt>Configured demo asset</dt><dd className="mono">{isDemo ? data.token : 'Asset specified by each payment'}</dd></div></dl></div>
+            <AssetMetadataRegistry overview={data}/>
             <div className="network-cards"><section className="panel"><h2>Consensus foundation</h2><p>Besu 26.10.1 source is included under its upstream license. The network generator creates four independent validator keys for a local QBFT network.</p></section><section className="panel"><h2>Trust boundaries</h2><p>This prototype uses test assets. Account eligibility is a demo control. No real deposits, redemptions, or banking connections are configured.</p></section></div></>}
           <footer><span className="footer-brand">ClearLedger</span><span>Built for verification. Designed to be understood.</span><span>Portfolio prototype · v0.1</span></footer>
         </>}

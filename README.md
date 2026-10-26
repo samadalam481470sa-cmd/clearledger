@@ -39,7 +39,7 @@ On the original Windows workspace, `Start-ClearLedger.ps1` can use the Node runt
 - A matching settlement event, configured confirmation count, and canonical block are required before the transfer journal is finalized.
 - Reconciliation flags recorded settlements whose receipt or block is no longer canonical.
 - Payment and journal APIs support bounded cursor pages, and exact integer transfer-volume totals are grouped by asset. Reconciliation scans all settled pages rather than a recent-record cutoff.
-- A React dashboard browses payment and transfer-journal cursor pages, shows settled/review volume separately per asset, and exposes receipt snapshots, block data, and recent local audit events. Unknown/RPC assets keep their exact base units.
+- A React dashboard browses payment and transfer-journal cursor pages, shows settled/review volume separately per asset, and exposes receipt snapshots, block data, and recent local audit events. Chain-scoped configured metadata enables exact decimal display; unknown assets or metadata failing frontend display checks keep raw base units. Startup validates address checksums; the frontend checks nonzero address syntax without EIP-55 validation. An older demo can format its known token only when the registry is absent; present empty/invalid registries disable that fallback. See [metadata behavior](docs/API.md#asset-display-metadata).
 - A four-validator Besu QBFT network passed real Docker acceptance on GitHub Actions Ubuntu: signed EOA settlement, progress with one validator stopped, a healthy-RPC no-finalization window with two stopped, and same-transaction settlement after quorum restoration.
 
 ## Repository
@@ -80,7 +80,7 @@ A Besu acceptance extension now includes a caller-bound test contract wallet: se
 
 ## More than 100,000 source lines
 
-The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **628,055 nonblank source lines**: 5,143 application and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
+The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **628,547 nonblank source lines**: 5,635 application and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
 
 Application code is MIT-licensed, including a clearly attributed OpenZeppelin-derived signature-check adaptation. Its lines are included in the application source count; the Besu count remains separate. Besu and installed dependencies retain their own licenses. [Provenance](docs/PROVENANCE.md) records these distinctions and pins the Besu release, commit, and download hash.
 

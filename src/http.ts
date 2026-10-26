@@ -5,11 +5,14 @@ import { resolve, extname } from 'node:path';
 import { z, ZodError } from 'zod';
 import { Conflict, PaginationError } from './store.ts';
 import { PaymentService } from './service.ts';
+import { activeAssetMetadata } from './assets.ts';
+import { type AssetMetadata } from '../shared/asset-metadata.ts';
 
 interface HttpOptions {
   service: PaymentService; apiKey: string; port: number; mode: 'demo' | 'rpc';
   demoPayment?: (amount: string) => Promise<unknown>;
   demoInfo?: Record<string, unknown>;
+  assetMetadata?: AssetMetadata[];
 }
 const paginationQuery = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),
@@ -39,6 +42,9 @@ function authenticated(req: IncomingMessage, key: string) {
 
 export function makeServer(options: HttpOptions) {
   const { service, apiKey, mode } = options;
+  const demoToken = mode === 'demo' ? options.demoInfo?.token as string | undefined : undefined;
+  const assetMetadata = options.assetMetadata !== undefined || demoToken !== undefined ?
+    activeAssetMetadata(options.assetMetadata ?? [], service.chainId, demoToken) : [];
   const rate = new Map<string, { started: number; count: number }>();
   const active = new Set<Promise<void>>();
   let draining = false, drained: Promise<void> | undefined;
@@ -77,7 +83,7 @@ export function makeServer(options: HttpOptions) {
           json(res, 200, { mode, chainId: service.chainId, router: service.routerAddress,
             domain: service.signingDomain, block: block ? { number: block.number, hash: block.hash, timestamp: block.timestamp } : null,
             payments, journals: service.store.journals(100), audit: service.store.events(),
-            confirmations: service.confirmations, ...options.demoInfo }); return;
+            confirmations: service.confirmations, ...options.demoInfo, assetMetadata }); return;
         }
         if (req.method === 'GET' && (url.pathname === '/api/payments' || url.pathname === '/api/journals')) {
           const parameters = [...url.searchParams];

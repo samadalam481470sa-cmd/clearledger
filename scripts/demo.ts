@@ -7,7 +7,9 @@ import { PaymentService } from '../src/service.ts';
 import { paymentTypes } from '../src/payment.ts';
 import { makeServer } from '../src/http.ts';
 import { createShutdown, startWorker } from '../src/lifecycle.ts';
+import { parseAssetMetadata } from '../src/assets.ts';
 
+const assetMetadata = parseAssetMetadata(process.env.ASSET_METADATA);
 compile();
 const chain = await localChain();
 const store = new Store();
@@ -33,7 +35,7 @@ async function submitDemo(amount: string) {
 }
 for (const amount of ['1250', '480', '2375.50']) await submitDemo(amount);
 const port = Number(process.env.PORT ?? '4317');
-const server = makeServer({ service, apiKey, port, mode: 'demo', demoPayment: submitDemo,
+const server = makeServer({ service, apiKey, port, mode: 'demo', demoPayment: submitDemo, assetMetadata,
   demoInfo: { token: await chain.token.getAddress(), payer: chain.payer.address, payee: chain.payee.address,
     currency: 'dUSD', decimals: 6, consensus: 'Single-process local EVM', validators: 1,
     perPaymentLimit: '10000', dailyLimit: '25000' }

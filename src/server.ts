@@ -6,12 +6,14 @@ import { PaymentService } from './service.ts';
 import { makeServer } from './http.ts';
 import { createRpcProvider } from './rpc.ts';
 import { createShutdown, startWorker } from './lifecycle.ts';
+import { parseAssetMetadata } from './assets.ts';
 
 function required(name: string) {
   const value = process.env[name];
   if (!value) throw new Error('Set environment variable ' + name);
   return value;
 }
+const assetMetadata = parseAssetMetadata(process.env.ASSET_METADATA);
 const provider = createRpcProvider(required('RPC_URL'), Number(process.env.RPC_TIMEOUT_MS ?? '5000'));
 const network = await provider.getNetwork();
 const chainId = Number(required('CHAIN_ID'));
@@ -27,7 +29,7 @@ mkdirSync('data', { recursive: true });
 const store = new Store(process.env.DB_PATH ?? 'data/clearledger.sqlite');
 const service = new PaymentService(store, provider, relayer, router, chainId, address, Number(process.env.CONFIRMATIONS ?? '2'));
 const port = Number(process.env.PORT ?? '4317');
-const server = makeServer({ service, apiKey, port, mode: 'rpc' });
+const server = makeServer({ service, apiKey, port, mode: 'rpc', assetMetadata });
 server.listen(port, '127.0.0.1', () => console.log('ClearLedger RPC mode: http://127.0.0.1:' + port));
 const worker = startWorker(() => service.tick(), { onError: () => console.error('Worker waiting for RPC recovery') });
 const shutdown = createShutdown({

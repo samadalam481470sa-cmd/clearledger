@@ -198,6 +198,16 @@ This is one bounded local-EVM transport/process-recovery case, not an autonomous
 - The same source passed [Besu `40291818248`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40291818248), job `121468413962`. After EOA quorum recovery, a caller-bound test wallet settled 12.5 dUSD once at block 42 (`0xf5ae0b2158422efd7295c8903b2c0c011da2caefffdac42912ff60fed21d3c9f`); three journals, recipient balance 175 dUSD, wallet balance 87.5 dUSD, and wallet nonce 1. A second queued 1.25 dUSD authorization was revoked and failed before native signing with unchanged relayer nonce, null raw/hash, no extra journal, one failure audit, and reconciliation of three payments with zero exceptions. At common block 45 all four heads/hash agreed and each node passed balance, both nonce domains, processed flags, and invalid-signature reads. The whole 169,536 ms scenario is single-host scripted evidence, not a benchmark or recovery SLO. Completed conclusions, all steps and logs were verified.
 - Current source count is **628,055 nonblank lines**: application 47 files/5,433 physical/5,143 nonblank and Besu 4,484 files/714,385 physical/622,912 nonblank, including comments/tests. Prior 253-test/627,955-count evidence is historical. The wallet phase follows quorum recovery; it is not wallet quorum-loss evidence, a Safe/multisignature demonstration, multi-host validation, or a production guarantee.
 
+## Configured asset metadata
+
+- Implemented strict chain/token descriptors from optional `ASSET_METADATA`, plus an explicit six-decimal dUSD demo descriptor. Configuration validates limits/types/addresses/symbols, rejects duplicate keys/demo collisions, and bounds active-chain entries including demo metadata.
+- Overview exposes active-chain descriptors with configured/demo source; the dashboard uses exact BigInt decimal formatting and displays registry/source. Unknown/wrong-chain assets and metadata failing display-field checks retain raw base units. Frontend validation rejects unknown fields/zero addresses and checks 20-byte address syntax, comparing addresses case-insensitively without EIP-55 validation; startup configuration validates/normalizes checksums. Amounts and per-asset total payloads remain base-unit strings; no metadata RPC lookup or price/reserve inference is added.
+- A legacy demo response can format its explicit known six-decimal dUSD token only when `assetMetadata` is absent; a present empty/invalid registry never enables the fallback.
+- The final local suite completed **342 cases: 341 passes, zero failures, one explicit POSIX skip on Windows**, exit 0, in 184,741.8814 ms. Strict typecheck and the Solidity 0.8.30/Paris plus Vite 7.3.7 build passed. The 53 targeted server/HTTP checks passed in 684.9005 ms; 49 targeted formatter/pager/server-rendered checks passed in 683.2583 ms.
+- Server cases cover strict configuration, checksum normalization, fixed errors without input disclosure, active-chain selection/demo collisions, authenticated overview, and exact large base-unit totals. Client cases cover uint256-scale and 0/255-decimal formatting, duplicates/entry limits/invalid display fields, chain/token binding, legacy fallback, and server-rendered registry/source labels. These are not browser interaction checks.
+- Current count: **628,547 nonblank source lines**: application 51 files/5,967 physical/5,635 nonblank and attributed Besu 4,484 files/714,385 physical/622,912 nonblank, including comments/tests. Remote CI is pending. Existing auth/paging context behavior is preserved. Router/worker/network code is unchanged; no new Besu run or browser QA is claimed.
+- Operator descriptors do not independently verify token identity, backing, value, or settlement eligibility. Browser origins remain denied, so display/interaction/accessibility remains unverified.
+
 ## Public source verification — October 25, 2026
 
 The project is public at [samadalam481470sa-cmd/clearledger](https://github.com/samadalam481470sa-cmd/clearledger). The user-created repository was verified as public with connected write access. Source commit [`762dd075d4b3dbe8d04a0e88fa24550818f734a7`](https://github.com/samadalam481470sa-cmd/clearledger/commit/762dd075d4b3dbe8d04a0e88fa24550818f734a7) contains all 6,785 reviewed tracked files.
@@ -220,11 +230,11 @@ Browser-origin access remains denied. No alternative browser route was used, so 
 
 ## Reproduced source count
 
-The current wallet-acceptance-tooling source count is 628,055 nonblank source lines, including comments and tests:
+The current configured-metadata source count is 628,547 nonblank source lines, including comments and tests:
 
 | Source | Files | Physical lines | Nonblank lines |
 | --- | ---: | ---: | ---: |
-| Application, including attributed adaptation | 47 | 5,433 | 5,143 |
+| Application, including attributed adaptation | 51 | 5,967 | 5,635 |
 | Attributed Besu snapshot | 4,484 | 714,385 | 622,912 |
 
 The script's exclusions and methodology are recorded in `docs/source-count.json`; the size is not a claim of independently authored executable statements.

@@ -1,3 +1,5 @@
+import { ASSET_SYMBOL_PATTERN, MAX_ASSET_METADATA, type AssetMetadata } from '../shared/asset-metadata.ts';
+
 export const PAGE_SIZE = 25;
 export type PaymentStatus = 'queued' | 'broadcast' | 'settled' | 'failed' | 'review';
 export type StatusFilter = PaymentStatus | 'all';
@@ -17,6 +19,7 @@ export interface Overview {
   mode: string; chainId: number; router: string; currency?: string; payer?: string;
   payee?: string; token?: string; validators?: number; consensus?: string;
   perPaymentLimit?: string; dailyLimit?: string; confirmations: number;
+  assetMetadata?: AssetMetadata[];
   block: { number: number; hash: string; timestamp: number } | null;
   payments: PaymentRow[]; journals: JournalRow[];
   audit: { sequence: number; action: string; at: string; payment_id: string; detail: string }[];
@@ -37,12 +40,62 @@ export function pagePath(collection: 'payments' | 'journals', cursor?: string, s
   return collection + '?' + query.toString();
 }
 
-export function formatAssetAmount(amount: string, token: string, overview?: Pick<Overview, 'mode' | 'token'>) {
-  if (overview?.mode !== 'demo' || !overview.token ||
-    token.toLowerCase() !== overview.token.toLowerCase() || !/^\d+$/.test(amount))
+export type AssetContext = Pick<Overview, 'mode' | 'token'> & Partial<Pick<Overview, 'chainId' | 'assetMetadata'>>;
+interface AssetRegistry {
+  status: 'missing' | 'invalid' | 'ready';
+  entries: AssetMetadata[];
+}
+const addressPattern = /^0x[0-9a-fA-F]{40}(?![\s\S])/;
+const metadataKeys = new Set(['chainId', 'token', 'symbol', 'decimals', 'source']);
+const validAddress = (value: unknown): value is string =>
+  typeof value === 'string' && value.length === 42 && addressPattern.test(value) && value !== '0x' + '0'.repeat(40);
+
+/** Validate received display metadata independently of the server configuration. */
+export function assetRegistry(overview?: AssetContext | null): AssetRegistry {
+  if (!overview || overview.assetMetadata === undefined) return { status: 'missing', entries: [] };
+  const registry = overview.assetMetadata;
+  if (!Number.isSafeInteger(overview.chainId) || overview.chainId! <= 0 ||
+    !Array.isArray(registry) || registry.length > MAX_ASSET_METADATA)
+    return { status: 'invalid', entries: [] };
+  const seen = new Set<string>();
+  for (const item of registry) {
+    if (!item || typeof item !== 'object' || Object.keys(item).some(key => !metadataKeys.has(key)) ||
+      !Number.isSafeInteger(item.chainId) || item.chainId <= 0 ||
+      !validAddress(item.token) ||
+      typeof item.symbol !== 'string' || !ASSET_SYMBOL_PATTERN.test(item.symbol) ||
+      !Number.isInteger(item.decimals) || item.decimals < 0 || item.decimals > 255 ||
+      (item.source !== 'configured' && item.source !== 'demo'))
+      return { status: 'invalid', entries: [] };
+    const key = item.chainId + ':' + item.token.toLowerCase();
+    if (seen.has(key)) return { status: 'invalid', entries: [] };
+    seen.add(key);
+  }
+  return { status: 'ready', entries: registry.filter(item => item.chainId === overview.chainId) };
+}
+
+export function assetMetadataFor(token: string, overview?: AssetContext | null):
+  Pick<AssetMetadata, 'symbol' | 'decimals' | 'source'> | undefined {
+  if (!validAddress(token)) return undefined;
+  const registry = assetRegistry(overview);
+  if (registry.status === 'ready')
+    return registry.entries.find(item => item.token.toLowerCase() === token.toLowerCase());
+  // Older demo responses did not include a registry. A present registry, even an
+  // empty or invalid one, never authorizes this compatibility fallback.
+  if (registry.status === 'missing' && overview?.mode === 'demo' && validAddress(overview.token) &&
+    overview.token.toLowerCase() === token.toLowerCase())
+    return { symbol: 'dUSD', decimals: 6, source: 'demo' };
+  return undefined;
+}
+
+export function formatAssetAmount(amount: string, token: string, overview?: AssetContext | null) {
+  const metadata = assetMetadataFor(token, overview);
+  if (!metadata || typeof amount !== 'string' || !/^[0-9]+(?![\s\S])/.test(amount))
     return { value: amount, unit: 'base units' };
-  const n = BigInt(amount), fraction = (n % 1000000n).toString().padStart(6, '0').replace(/0+$/, '');
-  return { value: (n / 1000000n).toString() + (fraction ? '.' + fraction : '.00'), unit: 'dUSD' };
+  const n = BigInt(amount);
+  if (metadata.decimals === 0) return { value: n.toString(), unit: metadata.symbol };
+  const scale = 10n ** BigInt(metadata.decimals);
+  const fraction = (n % scale).toString().padStart(metadata.decimals, '0').replace(/0+$/, '');
+  return { value: (n / scale).toString() + (fraction ? '.' + fraction : '.00'), unit: metadata.symbol };
 }
 
 // Cursor history belongs to one collection/filter/authentication context. Create a
