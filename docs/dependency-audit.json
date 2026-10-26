@@ -105,5 +105,38 @@
     "build": "passed",
     "tmpFileSyncSmoke": "passed",
     "compilerArtifactsUnchanged": true
+  },
+  "publicVerification": {
+    "sourceCommit": "71677da01dbf7603d3c7b2cff209471736052970",
+    "sourceTree": "4801c7089a06b36894e61d90f0a7315dee4aa8be",
+    "regularCi": {
+      "runId": 40281421049,
+      "jobId": 121435349785,
+      "conclusion": "success",
+      "tests": 230,
+      "passed": 230,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 107341.346119,
+      "installAuditEntries": 33
+    },
+    "besu": {
+      "runId": 40281420917,
+      "jobId": 121435348729,
+      "conclusion": "success",
+      "scenarioMs": 239255,
+      "noQuorumObservedMs": 20098.79173099999,
+      "observations": 20,
+      "initialSettlementBlock": 23,
+      "recoveredSettlementBlock": 27,
+      "allValidatorHeads": [
+        30,
+        30,
+        30,
+        30
+      ],
+      "reconciliationExceptions": 0,
+      "scope": "Single-host test-asset network; not a benchmark or recovery SLO"
+    }
   }
 }

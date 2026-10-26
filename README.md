@@ -63,7 +63,7 @@ npm run build
 npm run source:count
 ```
 
-The latest [Linux CI passed all 230 tests with zero skips](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40268524347), strict typecheck, the Solidity/Vite build, and source counting. The same source passed [Besu settlement and bounded quorum-loss recovery](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40268524351). Browser appearance/interaction remains unverified. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and limits.
+The latest [Linux CI passed all 230 tests with zero skips](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40281421049), strict typecheck, the Solidity/Vite build, and source counting. The same source passed [Besu settlement and bounded quorum-loss recovery](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40281420917). Browser appearance/interaction remains unverified. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and limits.
 
 A bounded receipt-outage test passed a measured 60,705 ms/59 observations in CI across actual worker termination/restart and file-backed SQLite reopen, with both payments settling once after recovery. Retries were driven by serialized IPC commands; this is not an autonomous daemon, Besu-network run, or hours-long soak.
 
