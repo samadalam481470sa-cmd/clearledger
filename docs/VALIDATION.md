@@ -230,6 +230,15 @@ This is one bounded local-EVM transport/process-recovery case, not an autonomous
 - Final test cleanup tracks actual tick/request settlement independently of deadline wrappers and retains SQLite if an owner remains unresolved; the permanently-stuck retention branch is structural protection, not a separately fault-injected result. The final real-transport case passed in 6,637.7036 ms with the same captured diagnostic. Strict typecheck and Solidity 0.8.30/Paris plus Vite 7.3.7 build passed; source count is 629,382 nonblank lines (6,470 application and 622,912 attributed Besu, including comments/tests).
 - Published source [`5a1dda885efcfa18493b931aea56e137ff70a98e`](https://github.com/samadalam481470sa-cmd/clearledger/commit/5a1dda885efcfa18493b931aea56e137ff70a98e), tree `3e25eac9a221657212bfdb228ca7d8d7df9aca56`, passed [Linux CI `40443739160`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40443739160), job `121989924923`: **367 tests/367 passes/zero failures/zero skips**, 180,992.6501 ms, plus fresh installation, strict typecheck, Solidity 0.8.30/Paris and Vite 7.3.7 build, and source count 629,382. Completed run conclusion, all job steps, source head and logs were verified. All 22 HTTP classification/control cases passed; the real shared-batch case passed in 6,144.461736 ms and again captured `eth_chainId` plus receipt lookup, top-level `TIMEOUT`, fixed HTTP 503 and two recovered settlements/journals. The scenario duration is not a latency or availability SLO. Installation still reported 33 audit entries including five critical findings; dependency limitations remain. No new Besu run or browser QA is claimed. Previous verification remains historical.
 
+## RPC database deployment context
+
+- Implemented actual-RPC-CLI startup binding to version 1, safe positive chain ID, validated block-0/genesis identity, and normalized nonzero router/relayer addresses. The tuple excludes endpoint URLs and credentials and is checked before HTTP or worker startup.
+- A transactional STRICT singleton allows initialization only for empty unbound payment/journal/audit data and makes same-context restart a no-op. Mismatch, malformed/extra stored context, and nonempty legacy databases refuse fixed-error startup without auto-adoption/rebinding. Existing Store PRAGMAs/DDL run beforehand, so logical preservation is the boundary rather than database-file hash equality.
+- The final local suite passed **431 cases: 429 passes, zero failures, two explicit POSIX skips on Windows**, exit 0, in 184,232.3036 ms. Strict typecheck and Solidity 0.8.30/Paris plus Vite 7.3.7 build passed. Targeted checks passed 63/63 SQLite cases in 708.3588 ms and the actual CLI case in 9,793.1185 ms.
+- SQLite cases cover canonical/safe identity, same-context no-op, all tuple mismatches, nonempty legacy tables, malformed/extra rows, trigger interference, rollback, caller transaction ownership and file reopen. The real RPC CLI case settled 125 test dUSD once, preserved history/context across endpoint/API-key changes, and refused three role-eligible/context-or-legacy-incompatible starts before HTTP readiness with no dispatch or changed logical records.
+- Current count: **629,917 nonblank source lines**, including comments/tests: application 59 files/7,396 physical/7,005 nonblank; attributed Besu 4,484 files/714,385 physical/622,912 nonblank. Remote CI is pending. No new Besu run or browser QA is claimed.
+- Intentional changes require a separate `DB_PATH` and review of legacy/pending state. Direct Store/PaymentService embeddings must explicitly bind; the ephemeral demo is unchanged. Trusted RPC, same-genesis forks, same-address upgrades, local tampering, and multiworker lease safety remain unproven.
+
 ## Public source verification — October 25, 2026
 
 The project is public at [samadalam481470sa-cmd/clearledger](https://github.com/samadalam481470sa-cmd/clearledger). The user-created repository was verified as public with connected write access. Source commit [`762dd075d4b3dbe8d04a0e88fa24550818f734a7`](https://github.com/samadalam481470sa-cmd/clearledger/commit/762dd075d4b3dbe8d04a0e88fa24550818f734a7) contains all 6,785 reviewed tracked files.
@@ -252,11 +261,11 @@ Browser-origin access remains denied. No alternative browser route was used, so 
 
 ## Reproduced source count
 
-The current RPC-error-handling source count is 629,382 nonblank source lines, including comments and tests:
+The current deployment-context source count is 629,917 nonblank source lines, including comments and tests:
 
 | Source | Files | Physical lines | Nonblank lines |
 | --- | ---: | ---: | ---: |
-| Application, including attributed adaptation | 56 | 6,832 | 6,470 |
+| Application, including attributed adaptation | 59 | 7,396 | 7,005 |
 | Attributed Besu snapshot | 4,484 | 714,385 | 622,912 |
 
 The script's exclusions and methodology are recorded in `docs/source-count.json`; the size is not a claim of independently authored executable statements.

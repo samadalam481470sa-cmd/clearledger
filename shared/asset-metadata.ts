@@ -1,5 +1,5 @@
 export const MAX_ASSET_METADATA = 100;
-// Require the actual end of input; JavaScript's $ alone permits a final newline.
+// Spell out the end-of-input requirement without depending on multiline anchors.
 export const ASSET_SYMBOL_PATTERN = /^[A-Za-z][A-Za-z0-9._-]{0,15}(?![\s\S])/;
 
 export interface AssetMetadata {

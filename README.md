@@ -36,6 +36,7 @@ On the original Windows workspace, `Start-ClearLedger.ps1` can use the Node runt
 - File-backed recovery tests kill a real worker process at dispatch/finalization boundaries and verify that restart does not duplicate a transfer or journal row. Persisted broadcasts retain nonce priority even if the wall clock moves backward.
 - Atomic Store transition guards reject conflicting lifecycle/journal updates, while exact repetitions preserve the existing audit history without duplicate entries.
 - Controlled HTTP-proxy tests verify retry after 503 responses, dropped connections, silent transport timeouts, and a lost response after upstream transaction acceptance. RPC-mode HTTP exchanges have a configurable timeout.
+- RPC startup binds each database to its chain, genesis, router and relayer identity. Incompatible deployments and nonempty unbound legacy databases are refused; review [database context guidance](docs/API.md#rpc-database-context) before changing deployments.
 - A matching settlement event, configured confirmation count, and canonical block are required before the transfer journal is finalized.
 - Reconciliation flags recorded settlements whose receipt or block is no longer canonical.
 - Payment and journal APIs support bounded cursor pages, and exact integer transfer-volume totals are grouped by asset. Reconciliation scans all settled pages rather than a recent-record cutoff.
@@ -80,7 +81,7 @@ A Besu acceptance extension now includes a caller-bound test contract wallet: se
 
 ## More than 100,000 source lines
 
-The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **629,382 nonblank source lines**: 6,470 application and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
+The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **629,917 nonblank source lines**: 7,005 application and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
 
 Application code is MIT-licensed, including a clearly attributed OpenZeppelin-derived signature-check adaptation. Its lines are included in the application source count; the Besu count remains separate. Besu and installed dependencies retain their own licenses. [Provenance](docs/PROVENANCE.md) records these distinctions and pins the Besu release, commit, and download hash.
 

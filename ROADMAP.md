@@ -25,6 +25,10 @@ Shutdown drain ordering passes Windows unit/HTTP verification and Linux real-SIG
 - Add telemetry, failure injection, load testing, and measured results.
 - Extend captured RPC timeout handling to additional failure modes, providers, and longer concurrent workloads.
 
+## RPC database context
+
+- Implemented an RPC-entrypoint deployment binding before HTTP/worker startup, keyed by version/chain/genesis/router/relayer. Transactional initialization requires empty unbound payment/journal/audit tables; mismatches, malformed/extra context, and nonempty legacy databases refuse without automatic adoption/rebinding. Context changes require a separate `DB_PATH` and review; existing Store PRAGMAs/DDL mean logical preservation rather than file-hash identity. Local verification passed 63 SQLite cases, one actual-CLI context/refusal/restart case, typecheck/build, and the full 431-case suite (429 passes, two Windows POSIX skips, zero failures). Source count is 629,917 nonblank lines (7,005 application and 622,912 attributed Besu, including comments/tests). Remote CI is pending. Direct embeddings must explicitly bind; trusted RPC, same-genesis forks, same-address code changes, tampering, and multiworker leases remain boundaries.
+
 ## Publication and maintenance
 
 - Publish only to a new public repository created for this task; do not modify unrelated repositories.

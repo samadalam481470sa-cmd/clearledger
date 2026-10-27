@@ -7,6 +7,7 @@ import { makeServer } from './http.ts';
 import { createRpcProvider } from './rpc.ts';
 import { createShutdown, startWorker } from './lifecycle.ts';
 import { parseAssetMetadata } from './assets.ts';
+import { bindDatabaseContext } from './database-context.ts';
 
 function required(name: string) {
   const value = process.env[name];
@@ -17,6 +18,7 @@ const assetMetadata = parseAssetMetadata(process.env.ASSET_METADATA);
 const provider = createRpcProvider(required('RPC_URL'), Number(process.env.RPC_TIMEOUT_MS ?? '5000'));
 const network = await provider.getNetwork();
 const chainId = Number(required('CHAIN_ID'));
+if (!Number.isSafeInteger(chainId) || chainId < 1) throw new Error('Invalid chain ID');
 if (network.chainId !== BigInt(chainId)) throw new Error('Chain ID mismatch');
 const relayer = new Wallet(required('RELAYER_PRIVATE_KEY'), provider);
 const address = required('ROUTER_ADDRESS');
@@ -25,8 +27,22 @@ const router = connectRouter(address, relayer);
 if (!await router.hasRole(await router.SETTLER_ROLE(), relayer.address)) throw new Error('Relayer lacks settlement role');
 const apiKey = required('API_KEY');
 if (apiKey.length < 32) throw new Error('API_KEY must have at least 32 characters');
+const genesis = await provider.getBlock(0).catch(() => {
+  provider.destroy();
+  throw new Error('Could not verify chain genesis');
+});
+if (!genesis || genesis.number !== 0 || !genesis.hash) {
+  provider.destroy();
+  throw new Error('Could not verify chain genesis');
+}
 mkdirSync('data', { recursive: true });
 const store = new Store(process.env.DB_PATH ?? 'data/clearledger.sqlite');
+try {
+  bindDatabaseContext(store.db, { chainId, genesisHash: genesis.hash, router: address, relayer: relayer.address });
+} catch (error) {
+  store.close(); provider.destroy();
+  throw error;
+}
 const service = new PaymentService(store, provider, relayer, router, chainId, address, Number(process.env.CONFIRMATIONS ?? '2'));
 const port = Number(process.env.PORT ?? '4317');
 const server = makeServer({ service, apiKey, port, mode: 'rpc', assetMetadata });

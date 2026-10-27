@@ -118,10 +118,20 @@ Set environment variables in the shell. The app does not automatically load `.en
 | `API_KEY` | yes | At least 32 characters; use high-entropy random bytes |
 | `CONFIRMATIONS` | no | Positive integer; defaults to 2 |
 | `ASSET_METADATA` | no | Strict JSON array of chain/token/symbol/decimals descriptors; display only |
-| `DB_PATH` | no | Defaults to `data/clearledger.sqlite` |
+| `DB_PATH` | no | Defaults to `data/clearledger.sqlite`; RPC startup binds it to one deployment context |
 | `PORT` | no | Defaults to 4317 |
 
 Run `npm start`. A custom DB path needs an existing parent directory. API tokens and keys must not appear in tracked files.
+
+### RPC database context
+
+Before starting HTTP or the worker, the RPC entrypoint binds SQLite to a version-1 tuple: positive safe-integer chain ID, normalized nonzero genesis hash read from actual block 0 (which must report number 0), and normalized nonzero router/relayer addresses. The binding stores no RPC URL, API key, or private key. RPC endpoints and API keys can change while this tuple remains identical.
+
+A `BEGIN IMMEDIATE` transaction manages the STRICT `deployment_context` singleton. An unbound database initializes only when its payment, journal, and audit tables are all empty. An identical-context restart is a no-op. Mismatched, malformed, or extra stored context rows, and a nonempty unbound legacy database, refuse startup with a fixed error rather than adopting or rebinding records.
+
+An intentional deployment/relayer change requires a separate `DB_PATH` and review of legacy or pending data; no automatic migration, deletion, or rebind is provided. Store construction applies its existing PRAGMAs/schema DDL before context binding, so refusal preserves logical records/context rather than guaranteeing an unchanged database-file hash. This check applies to `src/server.ts`; direct `Store`/`PaymentService` embeddings must explicitly bind their deployment context. The ephemeral in-memory demo is unchanged.
+
+The tuple still trusts RPC data and does not distinguish forks sharing a genesis, same-address code upgrades, database tampering, or multiple worker owners. Evidence and limitations are recorded in [validation](VALIDATION.md#rpc-database-deployment-context).
 
 RPC mode bounds each HTTP exchange with `RPC_TIMEOUT_MS` and makes one transport
 attempt. Durable retries happen on subsequent worker ticks. This is a per-request

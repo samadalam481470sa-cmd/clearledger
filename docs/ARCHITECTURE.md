@@ -16,6 +16,14 @@ flowchart LR
 
 The chain determines token ownership. SQLite is an operational projection, not a separate source of asset balances. A transfer journal row pairs a debit account and credit account with the same positive amount, asset, and transaction provenance. This is a transfer journal rather than a complete general ledger: issuance, fiat deposits, FX valuation, and redemption accounting are outside the implemented model.
 
+## RPC database deployment context
+
+Before HTTP or worker startup, the actual RPC CLI binds its database to a version-1 tuple of chain ID, genesis hash, router address, and relayer address. Chain ID must be a positive safe integer; genesis must be a normalized nonzero 32-byte hash obtained from block 0 reporting number 0; addresses are normalized/nonzero. RPC URLs and API/private keys are not stored in this context.
+
+A `BEGIN IMMEDIATE` transaction creates/validates a STRICT `deployment_context` singleton. An unbound database initializes only when payments, journals, and audit are empty. Exact-context restarts are no-ops; a mismatch, malformed/extra stored row, or nonempty unbound legacy data refuses startup without adopting/rebinding it. Store construction still runs its existing PRAGMAs/DDL first: the protection preserves logical records/context, not byte-for-byte database files. Intentional context changes require a separate database path and review of prior/pending data; migration/deletion is not automatic.
+
+This guard belongs to `src/server.ts`; direct Store/PaymentService embeddings must explicitly bind, while the ephemeral in-memory demo remains unchanged. It trusts RPC and does not resolve same-genesis forks, code changes at the same address, local tampering, or a multiworker lease. Evidence and limitations are recorded in [validation](VALIDATION.md#rpc-database-deployment-context).
+
 ## Lifecycle
 
 ```mermaid
