@@ -262,6 +262,16 @@ This is one bounded local-EVM transport/process-recovery case, not an autonomous
 - All 21 ownership cases executed on Linux, including main/sidecar symlinks, POSIX 0600 modes, a failed same-process acquisition retaining BUSY against an independent child, and crash reacquisition. The actual CLI case passed in 9,134.916 ms with two competing starts, one crash/restart, one wrong-context refusal, one valid restart, one settlement/journal/native send, and persistent sidecar retention. Installation still reported 33 audit entries including five critical findings. These controlled observations add no Besu/browser/soak/distributed guarantee and are not performance or recovery SLOs.
 - Current source count remains **630,454 nonblank lines**: application 63 files/7,960 physical/7,542 nonblank; Besu 4,484 files/714,385 physical/622,912 nonblank, including comments/tests. This does not establish distributed/global per-key ownership, multi-database same-key protection, tamper-proofing, hostile file/hard-link race safety, network-filesystem operation, or broader availability guarantees.
 
+## Settlement-log provenance
+
+- The selected increment requires each otherwise matching configured-router `PaymentSettled` candidate to carry valid transaction hash, block hash, and safe block number matching its enclosing receipt. Hash comparisons ignore hexadecimal case.
+- Missing/invalid/mismatched provenance on any matching candidate is inconsistent even alongside coherent candidates, independent of ordering. Initial inconsistency preserves broadcast/raw/hash/nonce priority without journaling. Coherent absence of an expected event still goes to review; unrelated/nonmatching malformed logs do not poison a coherent expected event.
+- Reconciliation of an already-settled inconsistent event flags review and retains the journal without reversal. The scope excludes transaction/log-index validation and raw `removed` validation, since ethers 6.17 receipt formatting drops that field; it remains trusted-RPC validation rather than independent inclusion proof.
+- Synthetic integrity checks passed **145/145** in 1,420.5101 ms: 45 new cases plus 100 prior cases. Strict TypeScript checking passed.
+- Real HTTP JSON-RPC cases passed **3/3** in 10,231.4097 ms, separately changing a log transaction hash, block hash, or block number. Actual ethers formatting preserves the wrong field; repairing only it makes the whole formatted receipt equal to the direct genuine receipt. Repeated faulty evidence keeps the mined first 125 dUSD broadcast/unjournaled, the second queued without native signed bytes, and send counts unchanged. Healing produces two settlements/journals, two native sends, idempotent replay, and reconciliation 2/0. Reapplying only the first receipt's fault flags review without changing either journal or transfer; the coherent other receipt remains settled and review does not auto-heal.
+- The final local full suite completed **501 cases: 496 passes, zero failures, five existing Windows platform skips**, exit 0, in 208,861.8121 ms. No new skip was introduced. Final strict TypeScript checking and Solidity 0.8.30/Paris plus Vite 7.3.7 build passed. Publication and regular/Besu CI remain pending; both workflows will run for the service change, and no new Besu pass is claimed.
+- Count remains **630,760 nonblank source lines**, including comments/tests: application 64 files/8,279 physical/7,848 nonblank plus Besu 4,484 files/714,385 physical/622,912 nonblank. New transport cases use Ganache/in-memory SQLite/manual ticks, not actual CLI, Besu, soak, or UI/history repair. Previous evidence remains historical.
+
 ## Public source verification — October 25, 2026
 
 The project is public at [samadalam481470sa-cmd/clearledger](https://github.com/samadalam481470sa-cmd/clearledger). The user-created repository was verified as public with connected write access. Source commit [`762dd075d4b3dbe8d04a0e88fa24550818f734a7`](https://github.com/samadalam481470sa-cmd/clearledger/commit/762dd075d4b3dbe8d04a0e88fa24550818f734a7) contains all 6,785 reviewed tracked files.
@@ -284,11 +294,11 @@ Browser-origin access remains denied. No alternative browser route was used, so 
 
 ## Reproduced source count
 
-The current database-ownership source count is 630,454 nonblank source lines, including comments and tests:
+The current settlement-log-provenance source count is 630,760 nonblank source lines, including comments and tests:
 
 | Source | Files | Physical lines | Nonblank lines |
 | --- | ---: | ---: | ---: |
-| Application, including attributed adaptation | 63 | 7,960 | 7,542 |
+| Application, including attributed adaptation | 64 | 8,279 | 7,848 |
 | Attributed Besu snapshot | 4,484 | 714,385 | 622,912 |
 
 The script's exclusions and methodology are recorded in `docs/source-count.json`; the size is not a claim of independently authored executable statements.

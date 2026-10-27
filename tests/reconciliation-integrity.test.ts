@@ -34,7 +34,8 @@ afterEach(() => { store.close(); });
 
 function settlementLog(overrides: Partial<Payment> = {}, address = routerAddress) {
   const p = { ...payment, ...overrides };
-  return { address, ...iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
+  return { address, transactionHash: txHash, blockNumber: 17, blockHash,
+    ...iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
     [p.paymentId, p.payer, p.payee, p.token, p.amount, p.nonce]) };
 }
 function service(overrides: Record<string, unknown> = {}) {
@@ -66,6 +67,36 @@ test('coherent receipt, canonical block, journal and router event remain settled
   assert.deepEqual({ row: store.get(paymentId), journal: store.journal(paymentId), audit: store.events() }, before);
   assert.equal(store.journal('unknown'), undefined);
 });
+
+for (const field of ['transactionHash', 'blockHash'] as const) {
+  for (const [description, value] of [
+    ['missing', undefined], ['null', null], ['malformed', '0x1234'],
+    ['nonhex', '0x' + 'zz'.repeat(32)], ['different', '0x' + '99'.repeat(32)]
+  ] as const) {
+    test(description + ' matching-log ' + field + ' triggers review while retaining the existing journal', async () => {
+      if (value === undefined) delete receipt.logs[0][field]; else receipt.logs[0][field] = value;
+      await flagged();
+    });
+  }
+}
+for (const [description, value] of [
+  ['missing', undefined], ['null', null], ['negative', -1], ['fractional', 17.5],
+  ['unsafe', Number.MAX_SAFE_INTEGER + 1], ['string', '17'], ['different', 18]
+] as const) {
+  test(description + ' matching-log block number triggers review while retaining the existing journal', async () => {
+    if (value === undefined) delete receipt.logs[0].blockNumber; else receipt.logs[0].blockNumber = value;
+    await flagged();
+  });
+}
+for (const contradictoryFirst of [false, true]) {
+  test('a contradictory matching candidate prevents reconciliation in ' +
+    (contradictoryFirst ? 'first' : 'last') + ' position', async () => {
+    const coherent = { ...receipt.logs[0] };
+    const contradictory = { ...coherent, blockHash: '0x' + '99'.repeat(32) };
+    receipt.logs = contradictoryFirst ? [contradictory, coherent] : [coherent, contradictory];
+    await flagged();
+  });
+}
 
 for (const [field, value] of Object.entries({
   token: '0x' + '88'.repeat(20), debit_account: payee, credit_account: payer,
@@ -149,6 +180,8 @@ test('valid receipt and canonical hash hex casing does not create a false integr
   store.db.prepare('UPDATE payments SET tx_hash=?,block_hash=? WHERE id=?').run(transaction, recordedBlock, paymentId);
   store.db.prepare('UPDATE journals SET tx_hash=?,block_hash=? WHERE payment_id=?').run(transaction, recordedBlock, paymentId);
   receipt = { ...receipt, hash: '0x' + 'AB'.repeat(32), blockHash: '0x' + 'CD'.repeat(32) };
+  receipt.logs = receipt.logs.map((log: any) => ({ ...log,
+    transactionHash: '0x' + 'aB'.repeat(32), blockHash: '0x' + 'cD'.repeat(32) }));
   canonical = { ...canonical, hash: '0x' + 'CD'.repeat(32) };
   const before = { row: store.get(paymentId), journal: store.journal(paymentId), audit: store.events() };
   const result = await service().reconcile();

@@ -10,6 +10,7 @@ Prioritize verified payment correctness and demonstrable engineering over source
 4. Add a durable event indexer with checkpoints, canonical-block validation, and controlled replay.
 5. Design journal reversal/rebuild for reorganization recovery while preserving the audit trail.
 6. Verify dashboard interaction and accessibility after browser access is available.
+7. Add a validated, non-mutating history projection and guarded rendering for invalid stored payment payloads. Read-only reproduction found invalid JSON throws in `publicRow`, while JSON `null` reaches an unsafe dashboard accessor; no history/UI fix is included in the receipt-log increment.
 
 Shutdown drain ordering passes Windows unit/HTTP verification and Linux real-SIGTERM helper integration. Actual RPC CLI autonomous crash recovery and POSIX signal-drain/restart integration pass Linux CI; graceful handling does not cover force-kill or blocked JavaScript.
 
@@ -30,6 +31,10 @@ Shutdown drain ordering passes Windows unit/HTTP verification and Linux real-SIG
 ## RPC database context
 
 - Implemented an RPC-entrypoint deployment binding before HTTP/worker startup, keyed by version/chain/genesis/router/relayer. Transactional initialization requires empty unbound payment/journal/audit tables; mismatches, malformed/extra context, and nonempty legacy databases refuse without automatic adoption/rebinding. Context changes require a separate `DB_PATH` and review; existing Store PRAGMAs/DDL mean logical preservation rather than file-hash identity. Local verification passed 63 SQLite cases, one actual-CLI context/refusal/restart case, typecheck/build, and the full 431-case suite (429 passes, two Windows POSIX skips, zero failures). Source count is 629,917 nonblank lines (7,005 application and 622,912 attributed Besu, including comments/tests). Source `16938a0c7eafe1021874d4765f22adb45cdd2229` passed Linux CI `40458796370` with all 431 tests/zero skips, typecheck/build/count; completed conclusion, every step and logs were verified. Direct embeddings must explicitly bind; trusted RPC, same-genesis forks, same-address code changes, tampering, and multiworker leases remain boundaries.
+
+## Settlement-log provenance
+
+- Shared three-way receipt-event validation preserves broadcast/nonce priority on inconsistent matching log metadata, while reconciliation flags review and retains journals. Synthetic checks passed 145/145 (45 new), real HTTP JSON-RPC/ethers-formatting cases passed 3/3, and final local verification completed 501 cases (496 passes, zero failures, five existing Windows skips), strict typecheck, and Solidity/Vite build. Count remains 630,760 nonblank lines (7,848 application and 622,912 Besu, including comments/tests); publication and regular/Besu CI remain pending, with no new Besu pass claimed. Ganache/in-memory SQLite/manual-tick cases do not establish actual CLI/Besu/soak behavior. Trusted-RPC boundaries remain; raw `removed` and transaction/log indexes are not newly validated, and review does not auto-heal.
 
 ## Publication and maintenance
 

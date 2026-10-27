@@ -161,6 +161,14 @@ A receipt can fail or settle a broadcast only after its transaction hash, safe b
 
 These checks still trust RPC responses; they are not independent proofs or a finality guarantee. See [validation](VALIDATION.md#initial-confirmation-integrity) for measured evidence and limits.
 
+### Settlement-log provenance
+
+Successful receipt processing distinguishes a coherent expected event, a missing expected event, and inconsistent provenance. A decoded `PaymentSettled` from the configured router with every expected payment field must also carry a valid `transactionHash`, `blockHash`, and safe integer `blockNumber` matching its enclosing receipt. Hash comparisons ignore hexadecimal letter case.
+
+Any otherwise matching candidate with missing, invalid, or mismatched provenance makes the receipt inconsistent, even if another coherent candidate appears before or after it. Initial confirmation keeps such an intent broadcast, preserving signed bytes/hash and native-nonce priority without journaling. A coherent receipt with no expected event retains the review policy. Unrelated/nonmatching malformed logs do not poison a coherent expected event.
+
+Reconciliation flags an already-settled payment with inconsistent log provenance for review and retains its journal without reversal; repairing RPC evidence does not automatically restore review to settled. This does not add transaction-index/log-index validation or rely on a raw RPC `removed` field, which the ethers 6.17 receipt-formatting path drops. RPC data remains trusted rather than independently proved. Local targeted/full-suite checks, strict typecheck, and build pass; publication and regular/Besu CI remain pending in [validation](VALIDATION.md#settlement-log-provenance). The new transport cases use Ganache/in-memory SQLite/manual ticks; no new Besu result is claimed.
+
 ### Reconciliation integrity
 
 Reconciliation validates stored payment/ID/transaction/block metadata and compares receipt identity/status, the canonical block's number/hash, every journal field, and a matching `PaymentSettled` event emitted by the configured router. Mismatches or missing receipt/block data conservatively flag the payment for review while retaining its journal; they do not reverse accounting or independently prove a reorganization.

@@ -35,7 +35,7 @@ beforeEach(() => {
   const log = iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
     [payment.paymentId, payment.payer, payment.payee, payment.token, payment.amount, payment.nonce]);
   receipt = { hash: txHash, blockNumber: 17, blockHash, status: 1,
-    logs: [{ address: routerAddress, ...log }] };
+    logs: [{ address: routerAddress, transactionHash: txHash, blockNumber: 17, blockHash, ...log }] };
   canonical = { number: 17, hash: blockHash };
   latest = 18;
   preflights = 0; signing = 0; blockReads = 0;
@@ -75,6 +75,69 @@ async function remainsUncertain(overrides: Record<string, unknown> = {}) {
   assert.equal(preflights, 0);
   assert.equal(signing, 0);
 }
+
+for (const field of ['transactionHash', 'blockHash'] as const) {
+  for (const [description, value] of [
+    ['missing', undefined], ['null', null], ['malformed', '0x1234'],
+    ['nonhex', '0x' + 'zz'.repeat(32)], ['different', '0x' + 'ef'.repeat(32)]
+  ] as const) {
+    test(description + ' matching-log ' + field + ' preserves the broadcast and queued nonce priority', async () => {
+      if (value === undefined) delete receipt.logs[0][field]; else receipt.logs[0][field] = value;
+      await remainsUncertain();
+    });
+  }
+}
+for (const [description, value] of [
+  ['missing', undefined], ['null', null], ['negative', -1], ['fractional', 17.5],
+  ['unsafe', Number.MAX_SAFE_INTEGER + 1], ['string', '17'], ['different', 18]
+] as const) {
+  test(description + ' matching-log block number preserves the broadcast and queued nonce priority', async () => {
+    if (value === undefined) delete receipt.logs[0].blockNumber; else receipt.logs[0].blockNumber = value;
+    await remainsUncertain();
+  });
+}
+
+for (const field of ['transactionHash', 'blockHash', 'blockNumber'] as const) {
+  for (const missing of [false, true]) {
+    test('healing ' + (missing ? 'missing' : 'different') + ' matching-log ' + field + ' settles the same reservation once', async () => {
+      const coherent = { ...receipt.logs[0] };
+      const before = store.get(firstId)!;
+      if (missing) delete receipt.logs[0][field];
+      else receipt.logs[0][field] = field === 'blockNumber' ? 18 : '0x' + 'ef'.repeat(32);
+      const worker = service();
+      await worker.tick(); await worker.tick();
+      assert.deepEqual(store.get(firstId), before);
+      assert.equal(store.journals().length, 0);
+      receipt.logs = [coherent];
+      await worker.tick(); await worker.tick();
+      assert.equal(store.get(firstId)!.status, 'settled');
+      assert.equal(store.get(firstId)!.tx_hash, before.tx_hash);
+      assert.ok(store.get(firstId)!.raw_tx === before.raw_tx, 'Healing must retain the original signed transaction');
+      assert.equal(store.journals().length, 1);
+      assert.equal(store.events().filter(event => event.action === 'settled').length, 1);
+      assert.equal(store.events().filter(event => event.action === 'review').length, 0);
+    });
+  }
+}
+
+for (const contradictoryFirst of [false, true]) {
+  test('a contradictory matching candidate overrides coherent evidence in ' +
+    (contradictoryFirst ? 'first' : 'last') + ' position', async () => {
+    const coherent = { ...receipt.logs[0] };
+    const contradictory = { ...coherent, transactionHash: '0x' + 'ef'.repeat(32) };
+    receipt.logs = contradictoryFirst ? [contradictory, coherent] : [coherent, contradictory];
+    await remainsUncertain();
+  });
+}
+
+test('a coherent matching event remains accepted alongside unrelated contracts and malformed nonmatching logs', async () => {
+  const coherent = receipt.logs[0];
+  receipt.logs = [{ address: routerAddress, topics: ['0x1234'], data: 'not-abi-data' },
+    { ...coherent, address: payee, transactionHash: '0x' + 'ef'.repeat(32) }, coherent];
+  await service().tick();
+  assert.equal(store.get(firstId)!.status, 'settled');
+  assert.equal(store.journals().length, 1);
+});
 
 for (const status of [0, 1]) {
   for (const [description, hash] of [
@@ -208,6 +271,8 @@ test('matching hash bytes with mixed-case hexadecimal receipt and canonical form
   receipt.hash = '0x' + 'AB'.repeat(32);
   receipt.blockHash = '0x' + 'Cd'.repeat(32);
   canonical.hash = '0x' + 'cD'.repeat(32);
+  receipt.logs[0].transactionHash = '0x' + 'aB'.repeat(32);
+  receipt.logs[0].blockHash = '0x' + 'cD'.repeat(32);
   await service().tick();
   assert.equal(store.get(firstId)!.status, 'settled');
   assert.equal(store.get(firstId)!.tx_hash, txHash);

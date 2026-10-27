@@ -98,24 +98,39 @@ export class PaymentService {
       return;
     }
     const p: Payment = JSON.parse(row.payload);
-    if (!this.matchesSettlement(p, receipt)) {
+    const evidence = this.settlementEvidence(p, receipt);
+    if (evidence === 'inconsistent') return;
+    if (evidence === 'missing') {
       this.store.setStatus(row.id, 'review', 'Receipt does not contain the expected settlement event');
       return;
     }
     this.store.finalize(row.id, receipt.blockNumber, receipt.blockHash);
   }
 
-  private matchesSettlement(p: Payment, receipt: TransactionReceipt): boolean {
-    return Array.isArray(receipt.logs) && receipt.logs.some(log => {
+  private settlementEvidence(p: Payment, receipt: TransactionReceipt): 'matching' | 'inconsistent' | 'missing' {
+    if (!Array.isArray(receipt.logs)) return 'missing';
+    let found = false;
+    for (const log of receipt.logs) {
+      let matches = false;
       try {
-        if (log.address.toLowerCase() !== this.routerAddress.toLowerCase()) return false;
+        if (log.address.toLowerCase() !== this.routerAddress.toLowerCase()) continue;
         const event = this.router.interface.parseLog(log);
-        return event?.name === 'PaymentSettled' && event.args.paymentId === p.paymentId &&
+        matches = event?.name === 'PaymentSettled' && event.args.paymentId === p.paymentId &&
           event.args.payer === p.payer && event.args.payee === p.payee &&
           event.args.token === p.token && event.args.amount.toString() === p.amount &&
           event.args.nonce.toString() === p.nonce;
-      } catch { return false; }
-    });
+      } catch { continue; }
+      if (!matches) continue;
+      // Matching bytes cannot establish inclusion in a different transaction
+      // or block. Any contradictory matching candidate makes this evidence
+      // retryable, even when a coherent candidate appeared earlier in the list.
+      if (!sameHash(log.transactionHash, receipt.hash) ||
+        !Number.isSafeInteger(log.blockNumber) || log.blockNumber < 0 ||
+        log.blockNumber !== receipt.blockNumber || !sameHash(log.blockHash, receipt.blockHash))
+        return 'inconsistent';
+      found = true;
+    }
+    return found ? 'matching' : 'missing';
   }
 
   async reconcile() {
@@ -150,7 +165,7 @@ export class PaymentService {
             journal.debit_account === p.payer && journal.credit_account === p.payee &&
             journal.amount === p.amount && journal.tx_hash === row.tx_hash &&
             journal.block_number === row.block_number && journal.block_hash === row.block_hash &&
-            this.matchesSettlement(p, receipt);
+            this.settlementEvidence(p, receipt) === 'matching';
         }
         if (!matches) {
           exceptions.push(row.id);
