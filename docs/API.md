@@ -131,7 +131,7 @@ Ownership uses the persistent `${canonicalPath}.worker-lock.sqlite` sidecar with
 
 Graceful shutdown drains the worker/HTTP operations and closes Store before releasing ownership last. Startup cleanup follows that ordering too; if cleanup cannot safely close the financial connection, ownership remains until process exit. A crash/forced termination releases the process's OS locks without making that termination graceful.
 
-This is one cooperating RPC CLI per canonical database on a supported local filesystem, not a distributed or global relayer-key lease. Different databases using the same relayer key, malicious file replacement/hard-link races, and network filesystems are unsupported. Direct Store/PaymentService embeddings must explicitly acquire ownership and use its canonical path; the in-memory demo is unchanged. Local targeted/full-suite checks, strict typecheck, and build pass with explicit Windows platform skips; publication/Linux CI remains pending in [validation](VALIDATION.md#rpc-database-ownership).
+This is one cooperating RPC CLI per canonical database on a supported local filesystem, not a distributed or global relayer-key lease. Different databases using the same relayer key, malicious file replacement/hard-link races, and network filesystems are unsupported. Direct Store/PaymentService embeddings must explicitly acquire ownership and use its canonical path; the in-memory demo is unchanged. Local checks and Linux CI pass, including all 21 ownership cases and the actual CLI scenario; Windows has explicit platform skips. See [validation](VALIDATION.md#rpc-database-ownership).
 
 ### RPC database context
 
