@@ -36,7 +36,7 @@ Shutdown drain ordering passes Windows unit/HTTP verification and Linux real-SIG
 - Exclude keys, tokens, databases, dependency installs, generated files, and scratch data.
 - Run remote CI and record actual outcomes.
 - Keep the verified Besu container digest pinned and review dependency advisories.
-- Verify the new exact Node/npm reference and action-source pins in both CI workflows; host-runtime/image mutability remains a documented boundary.
+- Review future action/toolchain upgrades against both CI workflows; exact source pins and version assertions now pass, while host-runtime/image mutability remains a documented boundary.
 - Keep source counts reproducible and original/upstream attribution separate.
 
 No paid infrastructure, real financial accounts, customer data, production keys, or funded-mainnet deployment is authorized.
