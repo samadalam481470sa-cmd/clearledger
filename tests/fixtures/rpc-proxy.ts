@@ -7,6 +7,7 @@ type RpcCall = { method: string; params?: unknown[]; id: unknown; jsonrpc: strin
 /** Test-only transport proxy: all successful calls reach the real development EVM. */
 export async function rpcProxy(upstream: string) {
   const calls: RpcCall[] = [];
+  const methodBatches: string[][] = [];
   const faults = new Map<string, { mode: Fault; remaining: number }>();
   const forwarded = new Map<string, () => void>();
   const pauses = new Map<string, { taken: boolean; enter(): void; wait: Promise<void>; release(): void }>();
@@ -22,6 +23,7 @@ export async function rpcProxy(upstream: string) {
       const payload = JSON.parse(body) as RpcCall | RpcCall[];
       const batch = Array.isArray(payload) ? payload : [payload];
       calls.push(...batch);
+      methodBatches.push(batch.map(call => call.method));
       const fault = batch.map(call => faults.get(call.method)).find(f => f && f.remaining > 0);
       if (fault) {
         fault.remaining--;
@@ -61,6 +63,7 @@ export async function rpcProxy(upstream: string) {
   return {
     url: 'http://127.0.0.1:' + (server.address() as any).port,
     calls,
+    batches() { return methodBatches.map(batch => [...batch]); },
     fail(method: string, mode: Fault, count = Infinity) { faults.set(method, { mode, remaining: count }); },
     afterForward(method: string, action: () => void) { forwarded.set(method, action); },
     // Hold exactly one successful upstream exchange before returning its bytes.

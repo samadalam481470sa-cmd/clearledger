@@ -220,6 +220,15 @@ This is one bounded local-EVM transport/process-recovery case, not an autonomous
 - Published source [`f5588c4e586ec01d272774d0ec6343ad74c8280d`](https://github.com/samadalam481470sa-cmd/clearledger/commit/f5588c4e586ec01d272774d0ec6343ad74c8280d), tree `84f71ca8652e01c0790aaa9488c22cd0896c61dd`, passed [Linux CI `40323737574`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40323737574), job `121574955105`: **344 tests/344 passes/zero failures/zero skips**, 142,461.464079 ms, plus fresh installation, strict typecheck, Solidity 0.8.30/Paris and Vite 7.3.7 build, and source count 629,038. Completed run conclusion, every job step, source head and logs were verified. The actual autonomous CLI test passed in 12,379.5026 ms with a 6,748 ms receipt outage/four attempts on each side of restart; the real POSIX CLI signal test passed in 6,069.587062 ms, including both natural exits, durable reopen/history/replay and the subsequent second settlement. These durations are scenario observations, not latency/recovery SLOs. Installation still reported 33 audit entries including five critical findings.
 - Earlier helper-only signal and 60-second IPC-driven recovery proofs remain separate historical evidence. These bounded CLI cases do not establish prolonged soak, Besu/network/browser behavior, guaranteed exit timing, force-kill gracefulness, or production availability.
 
+## RPC error classification and redaction
+
+- Implemented HTTP 503 mapping for catch-path RPC errors with top-level `TIMEOUT`, `NETWORK_ERROR`, or `SERVER_ERROR`, with fixed `Upstream RPC unavailable; check payment history before retrying` output instead of upstream message/shortMessage. Other application status classification and the distinct shutdown-drain 503 body are unchanged; no automatic HTTP retry, new error field, or `Retry-After` header is added.
+- **22 synthetic classification/redaction cases passed** in 692.4187 ms. The full local log completed **367 cases: 365 passes, zero failures, two explicit Windows POSIX skips**, in 236,799.2566 ms.
+- A real-transport/shared-provider case passed in 8,029.6171 ms. It captured a held batch containing `eth_chainId` and `eth_getTransactionReceipt`, then observed a concurrent acceptance's top-level `TIMEOUT` and the exact fixed 503. The first mined-but-unjournaled payment retained its broadcast status/hash/raw bytes; the second instruction was not accepted. Local collections returned 200 without new RPC requests, and healing/retry produced two settlements, idempotent replay, and reconciliation 2 checked/zero exceptions.
+- A 503 does not establish the transfer outcome. Inspect authenticated stored collections, then replay the same signed payer/payment ID after RPC/current authorization recovers. Collection reads can remain available while overview/health/signature operations need RPC; this is not a general concurrent-availability guarantee.
+- The new real-transport fixture uses memory-backed SQLite and manual service ticks, not the actual autonomous CLI. Its observed shared-batch mechanism is separate from the earlier failed CLI request, whose cause remains uncaptured historical inference. It does not prove general concurrent RPC availability, performance, new Besu/browser behavior, prolonged soak, or production operation.
+- Final test cleanup tracks actual tick/request settlement independently of deadline wrappers and retains SQLite if an owner remains unresolved; the permanently-stuck retention branch is structural protection, not a separately fault-injected result. The final real-transport case passed in 6,637.7036 ms with the same captured diagnostic. Strict typecheck and Solidity 0.8.30/Paris plus Vite 7.3.7 build passed; source count is 629,382 nonblank lines (6,470 application and 622,912 attributed Besu, including comments/tests). Remote CI is pending. Previous verification remains historical.
+
 ## Public source verification — October 25, 2026
 
 The project is public at [samadalam481470sa-cmd/clearledger](https://github.com/samadalam481470sa-cmd/clearledger). The user-created repository was verified as public with connected write access. Source commit [`762dd075d4b3dbe8d04a0e88fa24550818f734a7`](https://github.com/samadalam481470sa-cmd/clearledger/commit/762dd075d4b3dbe8d04a0e88fa24550818f734a7) contains all 6,785 reviewed tracked files.
@@ -242,11 +251,11 @@ Browser-origin access remains denied. No alternative browser route was used, so 
 
 ## Reproduced source count
 
-The current actual-CLI source count is 629,038 nonblank source lines, including comments and tests:
+The current RPC-error-handling source count is 629,382 nonblank source lines, including comments and tests:
 
 | Source | Files | Physical lines | Nonblank lines |
 | --- | ---: | ---: | ---: |
-| Application, including attributed adaptation | 54 | 6,471 | 6,126 |
+| Application, including attributed adaptation | 56 | 6,832 | 6,470 |
 | Attributed Besu snapshot | 4,484 | 714,385 | 622,912 |
 
 The script's exclusions and methodology are recorded in `docs/source-count.json`; the size is not a claim of independently authored executable statements.

@@ -23,7 +23,7 @@ Shutdown drain ordering passes Windows unit/HTTP verification and Linux real-SIG
 - Demonstrate multisignature governance and delayed role changes.
 - Model issuance/redemption accounting and off-chain reserve attestations as explicit simulations.
 - Add telemetry, failure injection, load testing, and measured results.
-- Verify concurrent API behavior during shared RPC stalls, including timeout response classification.
+- Extend captured RPC timeout handling to additional failure modes, providers, and longer concurrent workloads.
 
 ## Publication and maintenance
 

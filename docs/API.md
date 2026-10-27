@@ -14,9 +14,23 @@ The service binds to `127.0.0.1`. Send `Authorization: Bearer <API_KEY>` on `/ap
 | GET | `/api/bootstrap` | Demo-only temporary dashboard token |
 | POST | `/api/demo/payment` | Demo-only signing; decimal `amount` string |
 
-Other statuses include 400 for malformed payloads, 401 authentication, 403 Host/Origin checks, 409 conflicting instructions, 422 rejected instructions, 429 rate limits, and 503 recognized RPC transport errors. Acceptance means queued rather than settled. Poll the returned record in overview for its outcome.
+Other statuses include 400 for malformed payloads, 401 authentication, 403 Host/Origin checks, 409 conflicting instructions, 422 rejected instructions, 429 rate limits, and 503 for recognized upstream RPC errors. Acceptance means queued rather than settled. Read payment history for its outcome; overview also requires RPC.
 
 JSON bodies are limited to 32 KiB. Authenticated API calls are limited to 240 per minute per loopback address. Overview returns bounded previews of up to 100 payments and 100 journal rows. The dashboard uses separate 25-row payment/journal pages and per-asset totals; overview still supplies network details, recent audit events, and explicitly bounded activity counts.
+
+## RPC error responses
+
+Catch-path RPC failures with top-level codes `TIMEOUT`, `NETWORK_ERROR`, or `SERVER_ERROR` return HTTP 503 with this fixed body, preserving the other existing status classifications:
+
+```json
+{"error":"Upstream RPC unavailable; check payment history before retrying"}
+```
+
+Shutdown-drain 503 responses retain their distinct `Service is shutting down` body. This change adds no error fields or `Retry-After` header.
+
+The RPC response omits upstream error messages/short messages, which can contain endpoint details. It does not establish whether a submitted payment was accepted or mined. Check authenticated `GET /api/payments`, `/api/journals`, and `/api/totals` for stored state; those collection reads can remain available during an RPC fault, while overview/health and signature acceptance/replay require upstream access.
+
+For uncertain `POST /api/payments` outcomes, inspect history first. Once RPC/current authorization is available, retry the same signed instructions with the same payer/payment ID rather than authorizing a new ID for the same transfer. Identical replay retains the original stored signature. The demo signing endpoint does not provide durable client replay keys. The HTTP handler adds no automatic retry; existing durable worker retries are separate. Local classification/redaction and controlled real-transport checks pass; evidence and limitations are recorded in [validation](VALIDATION.md#rpc-error-classification-and-redaction).
 
 ## Cursor pages and totals
 
