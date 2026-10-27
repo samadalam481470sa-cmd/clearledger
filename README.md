@@ -10,7 +10,7 @@ Demo USD has no monetary value, reserves, or redemption promise. This project is
 
 ## Run the local demo
 
-Requires Node.js 24+ and npm. Docker and a wallet extension are unnecessary for this mode.
+Requires Node.js 24+ and npm. Docker and a wallet extension are unnecessary for this mode. CI checks the exact reference versions in `.node-version` and `.npm-version`; see [toolchain pins and limits](docs/DEPENDENCIES.md#reference-ci-toolchain).
 
 ```sh
 npm ci

@@ -21,3 +21,18 @@ The compiler is retained because both contracts pin `pragma solidity 0.8.30`. Th
 Reproduce from the locked project with `npm ci`, `npm audit --json`, `npm audit --omit=dev --json`, and `npm ls --omit=dev --all`. Audit commands currently exit 1 because findings remain. Counts can change when advisory data changes. The network workflow now runs when either dependency manifest changes, so compatibility is checked against a fresh dependency install.
 
 Strict TypeScript checking and the Solidity/Vite build passed locally. The final locked dependency set completed 230 local cases: 229 passes, zero failures, one explicit POSIX skip on Windows, in 194,907.9415 ms. The published dependency set passed [regular CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40281421049) with all 230 tests, zero skips/failures, fresh install, typecheck/build/count, and [Besu settlement/recovery acceptance](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40281420917) on the same source. The install log independently reported 33 audit entries. See [validation](VALIDATION.md#dependency-maintenance) for completed evidence. Browser interaction remains unverified.
+
+## Reference CI toolchain
+
+The reference [run `40458796370`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40458796370), job `122038245491`, actually used Node **24.21.0**, npm **11.19.0**, Ubuntu **24.04.5 LTS**, and hosted image **20261012.334.1**. The project now records those Node/npm versions in `.node-version` and `.npm-version`. Both workflows use `node-version-file`, assert the exact Node/npm versions before installing dependencies, and select the `ubuntu-24.04` host label.
+
+Both workflows pin the action source commits previously resolved/executed in that reference run:
+
+| Action | Source commit |
+| --- | --- |
+| [`actions/checkout`](https://github.com/actions/checkout/commit/11d5960a326750d5838078e36cf38b85af677262) | `11d5960a326750d5838078e36cf38b85af677262` |
+| [`actions/setup-node`](https://github.com/actions/setup-node/commit/49933ea5288caeca8642d1e84afbd3f7d6820020) | `49933ea5288caeca8642d1e84afbd3f7d6820020` |
+
+The exact commit objects were verified in the official action repositories through the GitHub API. Checkout uses `persist-credentials: false`; changes to either version file trigger Besu acceptance. Verification of the newly pinned regular and Besu workflows is pending. This configuration-only increment changes no dependencies, lockfile, or global tools, and leaves the source count unchanged. Earlier local results used the bundled Node **24.22.1** and remain evidence for that distinct environment.
+
+The reference log warned that the host forced these v4 actions from their Node 20 runtime to Node 24. Source commit pins do not freeze the action runtime selected by the host, hosted image updates/patches, runner agent, Docker, caches, or registry availability. The observed image version is historical evidence, not an immutable image pin. These controls improve toolchain specificity without establishing bit-for-bit reproducibility or a supply-chain audit; the remaining dependency findings above are unchanged.
