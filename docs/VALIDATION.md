@@ -250,6 +250,16 @@ This is one bounded local-EVM transport/process-recovery case, not an autonomous
 - Configuration/Markdown-only changes leave application/upstream source counts, dependencies, lockfile and global tools unchanged. No browser, independent-host or prolonged-soak result is added.
 - The reference log recorded forced Node 20→24 execution for these v4 actions. Action source pins do not freeze the host-selected action runtime, mutable hosted images/patches, runner agent, Docker, caches, or registry availability. This is not bit-for-bit reproducibility or a supply-chain audit, and existing audit findings remain unresolved by this increment.
 
+## RPC database ownership
+
+- Implemented actual-RPC-CLI ownership before Store/context/HTTP/worker startup, following read-only RPC checks. Store receives the canonical financial path; symlink aliases converge and hardlinked/nonregular financial files, memory paths, and `file:` URIs are rejected.
+- A persistent `${canonicalPath}.worker-lock.sqlite` sidecar in DELETE mode holds `BEGIN EXCLUSIVE` for the process lifetime, without PID/TTL expiry or stale-file deletion. Same-process and cross-process contention use SQLite/OS locking; the sidecar remains after release/crash and must not be renamed/deleted while owned.
+- Cleanup drains worker/HTTP operations and closes Store before ownership release; failed cleanup retains the guard until exit, while crashes release OS locks. Direct Store/PaymentService embeddings require explicit ownership; the in-memory demo is unchanged.
+- Final targeted unit checks completed **21 cases: 18 passes, zero failures, three Windows skips** in 2,228.2214 ms. The skips cover main/sidecar symlinks and POSIX 0600 permissions. Strict typecheck passed; Linux-specific execution remains pending.
+- The actual CLI case passed **1/1** in 8,507.1297 ms (9,626.7895 ms total): two normal/dot-alias competitors exited 1 without HTTP readiness, schema/record changes, or native sends, while the owner autonomously settled 125 dUSD once. SIGKILL plus confirmed process close preserved the sidecar inode; restart retained history/idempotent replay/reconciliation 1 checked/zero exceptions. Eligible wrong-relayer startup refused context binding and a valid restart followed. Final state asserted one journal, one audit per lifecycle event, one native send, recipient 125 dUSD, and payer nonce 1. Worker/root read reviews found no actionable issue.
+- The final local full suite completed **453 cases: 448 passes, zero failures, five explicit Windows skips**, exit 0, in 197,551.1466 ms. The skips comprise two existing POSIX signal cases and three ownership symlink/permission cases. Final strict `tsc --noEmit` and Solidity 0.8.30/Paris plus Vite 7.3.7 build passed. Publication/Linux CI, including platform-specific execution, remains pending; no new remote pass is claimed.
+- Current source count remains **630,454 nonblank lines**: application 63 files/7,960 physical/7,542 nonblank; Besu 4,484 files/714,385 physical/622,912 nonblank, including comments/tests. This does not establish distributed/global per-key ownership, multi-database same-key protection, tamper-proofing, hostile file/hard-link race safety, network-filesystem operation, or broader availability guarantees.
+
 ## Public source verification — October 25, 2026
 
 The project is public at [samadalam481470sa-cmd/clearledger](https://github.com/samadalam481470sa-cmd/clearledger). The user-created repository was verified as public with connected write access. Source commit [`762dd075d4b3dbe8d04a0e88fa24550818f734a7`](https://github.com/samadalam481470sa-cmd/clearledger/commit/762dd075d4b3dbe8d04a0e88fa24550818f734a7) contains all 6,785 reviewed tracked files.
@@ -272,11 +282,11 @@ Browser-origin access remains denied. No alternative browser route was used, so 
 
 ## Reproduced source count
 
-The current deployment-context source count is 629,917 nonblank source lines, including comments and tests:
+The current database-ownership source count is 630,454 nonblank source lines, including comments and tests:
 
 | Source | Files | Physical lines | Nonblank lines |
 | --- | ---: | ---: | ---: |
-| Application, including attributed adaptation | 59 | 7,396 | 7,005 |
+| Application, including attributed adaptation | 63 | 7,960 | 7,542 |
 | Attributed Besu snapshot | 4,484 | 714,385 | 622,912 |
 
 The script's exclusions and methodology are recorded in `docs/source-count.json`; the size is not a claim of independently authored executable statements.

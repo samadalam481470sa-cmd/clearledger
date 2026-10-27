@@ -118,10 +118,20 @@ Set environment variables in the shell. The app does not automatically load `.en
 | `API_KEY` | yes | At least 32 characters; use high-entropy random bytes |
 | `CONFIRMATIONS` | no | Positive integer; defaults to 2 |
 | `ASSET_METADATA` | no | Strict JSON array of chain/token/symbol/decimals descriptors; display only |
-| `DB_PATH` | no | Defaults to `data/clearledger.sqlite`; RPC startup binds it to one deployment context |
+| `DB_PATH` | no | Regular local file; defaults to `data/clearledger.sqlite`, with RPC ownership and deployment-context checks |
 | `PORT` | no | Defaults to 4317 |
 
 Run `npm start`. A custom DB path needs an existing parent directory. API tokens and keys must not appear in tracked files.
+
+### RPC database ownership
+
+After read-only chain/router/role checks, the actual RPC CLI acquires ownership before opening Store, binding context, or starting HTTP/worker activity. It resolves the financial file's canonical path and uses that path for Store, so main-file symlink aliases share ownership. RPC `DB_PATH` rejects `:memory:`, `file:` URIs, nonregular files, and hard-linked financial files.
+
+Ownership uses the persistent `${canonicalPath}.worker-lock.sqlite` sidecar with SQLite `journal_mode=DELETE` and a lifetime `BEGIN EXCLUSIVE` transaction. The sidecar remains after release or a crash; its presence alone does not mean an owner is active. There is no PID/TTL expiration or stale-file deletion. **Do not delete or rename the sidecar while an owner is running.** Restart reuses it; SQLite/OS locking controls acquisition within and across cooperating processes.
+
+Graceful shutdown drains the worker/HTTP operations and closes Store before releasing ownership last. Startup cleanup follows that ordering too; if cleanup cannot safely close the financial connection, ownership remains until process exit. A crash/forced termination releases the process's OS locks without making that termination graceful.
+
+This is one cooperating RPC CLI per canonical database on a supported local filesystem, not a distributed or global relayer-key lease. Different databases using the same relayer key, malicious file replacement/hard-link races, and network filesystems are unsupported. Direct Store/PaymentService embeddings must explicitly acquire ownership and use its canonical path; the in-memory demo is unchanged. Local targeted/full-suite checks, strict typecheck, and build pass with explicit Windows platform skips; publication/Linux CI remains pending in [validation](VALIDATION.md#rpc-database-ownership).
 
 ### RPC database context
 

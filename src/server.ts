@@ -8,6 +8,7 @@ import { createRpcProvider } from './rpc.ts';
 import { createShutdown, startWorker } from './lifecycle.ts';
 import { parseAssetMetadata } from './assets.ts';
 import { bindDatabaseContext } from './database-context.ts';
+import { acquireDatabaseOwnership } from './database-ownership.ts';
 
 function required(name: string) {
   const value = process.env[name];
@@ -36,13 +37,24 @@ if (!genesis || genesis.number !== 0 || !genesis.hash) {
   throw new Error('Could not verify chain genesis');
 }
 mkdirSync('data', { recursive: true });
-const store = new Store(process.env.DB_PATH ?? 'data/clearledger.sqlite');
-try {
-  bindDatabaseContext(store.db, { chainId, genesisHash: genesis.hash, router: address, relayer: relayer.address });
-} catch (error) {
-  store.close(); provider.destroy();
-  throw error;
-}
+const ownership = (() => {
+  try { return acquireDatabaseOwnership(process.env.DB_PATH ?? 'data/clearledger.sqlite'); }
+  catch (error) { provider.destroy(); throw error; }
+})();
+const store = (() => {
+  let opened: Store | undefined;
+  try {
+    opened = new Store(ownership.databasePath);
+    bindDatabaseContext(opened.db, { chainId, genesisHash: genesis.hash, router: address, relayer: relayer.address });
+    return opened;
+  } catch (error) {
+    provider.destroy();
+    // Release only after the financial connection is known to be closed. If
+    // its constructor/close fails, retain ownership until this process exits.
+    if (opened) { opened.close(); ownership.release(); }
+    throw error;
+  }
+})();
 const service = new PaymentService(store, provider, relayer, router, chainId, address, Number(process.env.CONFIRMATIONS ?? '2'));
 const port = Number(process.env.PORT ?? '4317');
 const server = makeServer({ service, apiKey, port, mode: 'rpc', assetMetadata });
@@ -58,7 +70,7 @@ const shutdown = createShutdown({
     server.close(error => error ? reject(error) : resolveClose());
     server.closeIdleConnections();
   }),
-  closeResources: () => { provider.destroy(); store.close(); }
+  closeResources: () => { provider.destroy(); store.close(); ownership.release(); }
 });
 let shuttingDown = false;
 function onSignal() {

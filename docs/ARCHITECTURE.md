@@ -16,6 +16,14 @@ flowchart LR
 
 The chain determines token ownership. SQLite is an operational projection, not a separate source of asset balances. A transfer journal row pairs a debit account and credit account with the same positive amount, asset, and transaction provenance. This is a transfer journal rather than a complete general ledger: issuance, fiat deposits, FX valuation, and redemption accounting are outside the implemented model.
 
+## RPC database ownership
+
+The RPC entrypoint acquires a cooperating-process ownership guard after read-only RPC checks and before Store construction, deployment-context binding, HTTP, or worker startup. The guard canonicalizes the financial file path and passes that same path to Store. Main-file symlink aliases resolve to one target; hard-linked financial files, nonregular files, `:memory:`, and `file:` URIs are rejected.
+
+The persistent `${canonicalPath}.worker-lock.sqlite` sidecar is a separate SQLite database in DELETE journal mode. A lifetime `BEGIN EXCLUSIVE` transaction holds ownership through SQLite's local OS-backed locking, including same-process contention. It does not hold an exclusive transaction on the financial database. The sidecar is retained after release/crash; no PID, TTL, expiration, or stale-file deletion determines ownership. Removing/renaming it while owned can defeat this coordination and is unsupported.
+
+Successful shutdown drains worker/HTTP activity, closes Store, then releases ownership last. Startup cleanup also closes the financial connection first; cleanup failures retain ownership until process exit, and OS lock release handles crashes. Direct embeddings must acquire ownership explicitly and use the canonical database path. The ephemeral demo is unchanged. Local targeted/full-suite verification, strict typecheck, and build pass with explicit Windows platform skips; publication/Linux CI remains pending in [validation](VALIDATION.md#rpc-database-ownership). This is not distributed coordination, a global signer lease across multiple databases, tamper-proofing, network-filesystem support, or protection against malicious file/hard-link replacement races.
+
 ## RPC database deployment context
 
 Before HTTP or worker startup, the actual RPC CLI binds its database to a version-1 tuple of chain ID, genesis hash, router address, and relayer address. Chain ID must be a positive safe integer; genesis must be a normalized nonzero 32-byte hash obtained from block 0 reporting number 0; addresses are normalized/nonzero. RPC URLs and API/private keys are not stored in this context.
@@ -57,7 +65,7 @@ Repeating an already-broadcast reservation with identical bytes/hash, an identic
 
 Finalization compares every existing journal field against the payment, transaction, and requested block provenance instead of silently ignoring a duplicate insert. A settled retry requires the existing journal and block metadata to agree; a missing or conflicting journal is rejected rather than repaired automatically. These are application invariants over a mutable local database, not tamper-proof storage or on-chain proof. Receipt verification remains the service's responsibility.
 
-There is no distributed lease. Only one process may own a relayer key. A stuck or replaced native transaction may block the queue until an operator investigates it.
+The RPC CLI coordinates one cooperating owner per canonical local database. There is no distributed or global relayer-key lease; using one key with multiple databases remains unsupported. A stuck or replaced native transaction may block the queue until an operator investigates it.
 
 ## Wallet authorization
 

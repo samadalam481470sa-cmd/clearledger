@@ -227,6 +227,16 @@ Project writes are confined to the new `outputs/clearledger/` directory and task
 - Configuration-only changes preserve application/upstream source counts, dependencies, lockfile and global tools.
 - The reference host warned of forced Node 20→24 action execution. Commit pins do not freeze host-selected action runtimes, hosted images/patches/agents/Docker, caches, or registry availability, and do not establish bit-for-bit reproducibility or a supply-chain audit. Existing dependency limitations remain.
 
+## RPC database ownership
+
+- Implemented one cooperating RPC CLI owner per canonical local financial file, acquired after read-only RPC checks and before Store/context/HTTP/worker startup. Store uses that canonical path; main-file symlinks converge, while hardlinks, nonregular files, `:memory:`, and `file:` URIs are refused.
+- Ownership is a lifetime DELETE-mode SQLite `BEGIN EXCLUSIVE` transaction in persistent `${canonicalPath}.worker-lock.sqlite`. The sidecar remains after release/crash; there is no PID/TTL expiry or stale-file deletion. It must not be deleted/renamed while owned.
+- Graceful cleanup drains worker/HTTP activity, closes Store, then releases ownership last. Startup cleanup preserves that order; failure retains the guard until process exit/OS lock release. Direct embeddings need manual ownership; the in-memory demo is unchanged.
+- Final targeted unit verification completed **21 cases: 18 passes, zero failures, three Windows skips** (main/sidecar symlinks and POSIX 0600 modes), in 2,228.2214 ms. Strict typecheck passed. Test-worker and root reviews found no actionable issue; Linux-specific behavior is not yet verified by this run.
+- The actual CLI test passed **1/1** in 8,507.1297 ms (9,626.7895 ms total). Two competing normal/dot-alias starts exited 1 without HTTP readiness, schema/record changes, or native sends; the original owner autonomously settled 125 dUSD once. SIGKILL/confirmed close retained the same sidecar inode, and restart preserved history/replay/reconciliation 1/0. An eligible wrong-relayer context refusal was followed by a valid restart. Final evidence: one journal, one audit per lifecycle event, one native send, recipient 125 dUSD, payer nonce 1.
+- The final local full suite completed **453 cases: 448 passes, zero failures, five explicit Windows skips**, exit 0, in 197,551.1466 ms. The skips are the two existing POSIX signal cases plus three ownership symlink/permission cases. Strict `tsc --noEmit` and the Solidity 0.8.30/Paris plus Vite 7.3.7 build passed. Publication and Linux CI, including those platform-specific cases, remain pending; no newest-CI pass is claimed.
+- Current source count remains **630,454 nonblank lines**, including comments/tests: application 63 files/7,960 physical/7,542 nonblank; Besu 4,484 files/714,385 physical/622,912 nonblank. This is not distributed/global signer ownership, multi-database same-key protection, tamper-proofing, hostile file/hard-link race safety, or network-filesystem support.
+
 ## Public source publication — October 25, 2026
 
 - The user created and supplied [samadalam481470sa-cmd/clearledger](https://github.com/samadalam481470sa-cmd/clearledger). Repository ID `1432932875` was verified public, with administrative/push access for the connected account.

@@ -37,6 +37,7 @@ On the original Windows workspace, `Start-ClearLedger.ps1` can use the Node runt
 - Atomic Store transition guards reject conflicting lifecycle/journal updates, while exact repetitions preserve the existing audit history without duplicate entries.
 - Controlled HTTP-proxy tests verify retry after 503 responses, dropped connections, silent transport timeouts, and a lost response after upstream transaction acceptance. RPC-mode HTTP exchanges have a configurable timeout.
 - RPC startup binds each database to its chain, genesis, router and relayer identity. Incompatible deployments and nonempty unbound legacy databases are refused; review [database context guidance](docs/API.md#rpc-database-context) before changing deployments.
+- RPC startup also acquires exclusive ownership of its canonical local database file before opening the ledger or starting HTTP/dispatch. A second cooperating CLI refuses startup; process exit permits restart without deleting the persistent SQLite lock sidecar. Separate databases sharing a relayer key still require operator coordination; see [ownership limits](docs/API.md#rpc-database-ownership).
 - A matching settlement event, configured confirmation count, and canonical block are required before the transfer journal is finalized.
 - Reconciliation flags recorded settlements whose receipt or block is no longer canonical.
 - Payment and journal APIs support bounded cursor pages, and exact integer transfer-volume totals are grouped by asset. Reconciliation scans all settled pages rather than a recent-record cutoff.
@@ -65,7 +66,7 @@ npm run build
 npm run source:count
 ```
 
-The latest [Linux CI passed all 253 tests with zero skips](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40291818263), strict typecheck, the Solidity/Vite build, and source counting. The same source passed [Besu settlement and bounded quorum-loss recovery](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40291818248). Browser appearance/interaction remains unverified. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and limits.
+The last completed [Linux CI passed all 431 tests with zero skips](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40461069825), strict typecheck, the Solidity/Vite build, and source counting. The same source passed [Besu settlement and bounded quorum-loss recovery](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40461069627). The new ownership increment's local suite completed 453 cases (448 passes, five explicit Windows skips, zero failures); typecheck and build passed, and Linux CI is pending. Browser appearance/interaction remains unverified. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and limits.
 
 A bounded receipt-outage test passed a measured 60,705 ms/59 observations in CI across actual worker termination/restart and file-backed SQLite reopen, with both payments settling once after recovery. Retries were driven by serialized IPC commands; this is not an autonomous daemon, Besu-network run, or hours-long soak.
 
@@ -81,7 +82,7 @@ A Besu acceptance extension now includes a caller-bound test contract wallet: se
 
 ## More than 100,000 source lines
 
-The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **629,917 nonblank source lines**: 7,005 application and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
+The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **630,454 nonblank source lines**: 7,542 application and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
 
 Application code is MIT-licensed, including a clearly attributed OpenZeppelin-derived signature-check adaptation. Its lines are included in the application source count; the Besu count remains separate. Besu and installed dependencies retain their own licenses. [Provenance](docs/PROVENANCE.md) records these distinctions and pins the Besu release, commit, and download hash.
 

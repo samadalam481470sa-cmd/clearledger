@@ -18,6 +18,7 @@ Shutdown drain ordering passes Windows unit/HTTP verification and Linux real-SIG
 - Replace the legacy development EVM with a maintained Cancun-compatible runner; the scoped Zod/Vite/compiler-helper updates leave 33 Ganache-tree audit entries requiring review.
 - Verify wallet-specific integrations and policy rotation beyond the generic ERC-1271 checker; Safe, ERC-6492, ERC-4337, and multisignature deployment behavior remain unproven.
 - Add PostgreSQL-backed jobs and a relayer lease before allowing multiple workers.
+- Publish and verify canonical local-file RPC ownership in Linux CI. Final local verification completed 453 cases (448 passes, zero failures, five explicit Windows platform skips), strict typecheck, and Solidity/Vite build, alongside targeted unit/actual-CLI checks. Publication and Linux-specific execution remain pending. Distributed/global signer coordination and same-key use across multiple databases remain future work.
 - Add controlled fee replacement and stuck-nonce resolution with an audit trail.
 - Introduce signer interfaces for KMS/HSM integrations without embedded secrets.
 - Design an explicit migration procedure for legacy unbound ledgers and intentional relayer changes.
