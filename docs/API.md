@@ -161,6 +161,10 @@ bound, not an end-to-end settlement deadline; a tick can make multiple requests.
 
 Broadcast records retain signed bytes and a deterministic hash. A restarted worker handles persisted broadcasts before queued instructions, first looking for the receipt, then possibly rebroadcasting identical bytes. It does not allocate another native nonce while an earlier broadcast is unresolved. Insertion order, rather than creation timestamps, controls ordering within each status group.
 
+The local `broadcast` status means a signed native transaction has been durably reserved; it does not prove that an upstream node received or mined it. A proxy can reject `eth_sendRawTransaction` with 503 before forwarding even though the provider attempted the call. Recovery still uses the stored hash/raw bytes, while a later authorized intent remains queued without signed native transaction bytes.
+
+Targeted actual-CLI verification passed that unpropagated window with four automatic send attempts before force termination and four after confirmed close/SQLite reopen/restart, then healing to two settlements with consecutive native nonces, idempotent replay, and reconciliation. Fresh regular CI remains pending in [validation](VALIDATION.md#unpropagated-rpc-cli-reservation-recovery). This differs from earlier upstream-mined/receipt-fault CLI evidence and the instrumented helper's before-broadcast checkpoint; it is not a before-provider-call claim or a new runtime behavior. No acceptance-503 retry occurred in the local scenario, so that optional test branch is not verified by this result.
+
 Missing or empty preflight revert data remains retryable even when the RPC library labels it `CALL_EXCEPTION`. That avoids treating a transport failure as a rejected payment. A real empty-data revert can consequently remain queued until investigated.
 
 A stuck/replaced transaction can block the queue. Fee replacement and administrative resolution are not implemented. Inspect signer nonce and transaction state rather than re-signing an uncertain business payment under another ID.

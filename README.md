@@ -71,6 +71,8 @@ npm run source:count
 
 A bounded receipt-outage test passed a measured 60,705 ms/59 observations in CI across actual worker termination/restart and file-backed SQLite reopen, with both payments settling once after recovery. Retries were driven by serialized IPC commands; this is not an autonomous daemon, Besu-network run, or hours-long soak.
 
+A new bounded actual-CLI test covers a signed reservation whose repeated send attempts are blocked before upstream acceptance. It checks absent upstream transaction/receipt and unchanged balances/nonces across process termination/restart, then recovery of the identical transaction and queued nonce priority. The local targeted case and typecheck pass; its full CI verification is pending. See [unpropagated recovery](docs/VALIDATION.md#unpropagated-rpc-cli-reservation-recovery).
+
 Shutdown coordinates worker and HTTP drains before closing shared resources on SIGINT/SIGTERM. Linux CI passed all 543 tests, including actual RPC CLI autonomous crash recovery and SIGTERM drain/restart with real HTTP, EVM and SQLite. Windows explicitly skips the two POSIX signal paths. These bounded scenarios do not establish a daemon soak or production availability. See the [shutdown operation](docs/API.md#shutdown) for the cooperative deadline and forced-termination limits.
 
 Reconciliation cross-checks recorded payment/journal provenance with the receipt, canonical block, and configured router's settlement event. That increment's local verification completed 181 cases: 180 passes, zero failures, and one explicit POSIX skip on Windows. Linux CI passed all 181 tests, and the four-validator Besu settlement/quorum-loss/recovery workflow also passed. See [validation](docs/VALIDATION.md#reconciliation-integrity) for evidence and limits. Mismatches flag review while retaining journal history, without automatic accounting reversal.
@@ -83,7 +85,7 @@ A Besu acceptance extension now includes a caller-bound test contract wallet: se
 
 ## More than 100,000 source lines
 
-The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **631,232 nonblank source lines**: 8,320 application and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
+The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **631,441 nonblank source lines**: 8,529 application and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
 
 Application code is MIT-licensed, including a clearly attributed OpenZeppelin-derived signature-check adaptation. Its lines are included in the application source count; the Besu count remains separate. Besu and installed dependencies retain their own licenses. [Provenance](docs/PROVENANCE.md) records these distinctions and pins the Besu release, commit, and download hash.
 

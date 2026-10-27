@@ -285,6 +285,14 @@ This is one bounded local-EVM transport/process-recovery case, not an autonomous
 - The same source passed [Besu CI `40546238745`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40546238745), job `122337512566`: initial four heads at 2; 125 dUSD settled at 24 with one journal; one-validator failure allowed progress 25→27. Two healthy nodes held height/hash 27 for 20,100.219235 ms/20 successful samples with pending `0xcc470f0c68c0f7760dd4430d33f1ab77ecab967a36e47acb1ed0d2584afb5680`. Restoring validator 3 produced three heads at 29 and finalized that same transaction at 28 for 37.5 dUSD with two journals; all four caught up at 31. The wallet settled 12.5 dUSD at 43, yielding three journals, recipient total 175 dUSD, wallet 87.5 dUSD/nonce 1. Queued revocation failed before broadcast with unchanged relayer nonce, reconciliation checked 3/exceptions 0, and final four heads agreed at 46. Whole scenario 270,324 ms is single-Docker-host evidence, not a benchmark or recovery SLO. Both completed conclusions, source heads, all job steps, and logs were verified. Both installs reported 33 audit entries including five critical findings.
 - Current count remains **631,232 nonblank source lines**, including comments/tests: application 68 files/8,776 physical/8,320 nonblank; Besu 4,484 files/714,385 physical/622,912 nonblank. Corrupt-payload proof uses synthetic Store/HTTP/SSR fixtures; separate Besu acceptance covers ordinary settlement/recovery rather than corrupt database/UI behavior. This does not authenticate stored signatures, establish RPC authorization, or newly validate retained top-level metadata/error. Browser layout/events/accessibility remain unverified under origin denial.
 
+## Unpropagated RPC CLI reservation recovery
+
+- The actual RPC CLI case passed **1/1** in 14,787.9084 ms (15,884.8493 ms total), using the existing production scheduler, file-backed SQLite, and ephemeral Ganache. Strict TypeScript checking and the case's contract-fixture compilation passed. There was no new local full-suite or frontend-build run.
+- The provider attempted four sends before SIGKILL/confirmed process close/SQLite reopen and four after restart; the proxy returned 503 before forwarding, with **zero upstream forwards during the fault**. Direct upstream transaction and receipt were absent, and nonce/balance state including relayer pending/latest native counts stayed unchanged. The signed first reservation remained broadcast with identical hash/raw bytes; the second authorized intent stayed queued without native signed bytes, and audit count remained three. No IPC/manual ticks drove these attempts.
+- Healing produced **two forwards/two unique hashes/two settlements/two journals**, consecutive native nonces, six final audit entries (single accepted/prepared/settled events for each payment), idempotent replay, and reconciliation 2 checked/zero exceptions. The first transaction retained its original hash. This verifies a proxy-blocked upstream-unseen boundary, separately from prior upstream-mined/receipt-fault CLI and instrumented before-broadcast/manual-recovery evidence; it does not mean the provider was never called.
+- Local acceptance 503 retry count was zero, so the optional test acceptance-retry branch was not exercised. No runtime HTTP retry behavior was added. This bounded local-EVM case is not Besu/browser verification, prolonged soak, performance, a recovery SLO, or production availability proof.
+- Current count is **631,441 nonblank source lines**: application 69 files/8,990 physical/8,529 nonblank plus Besu 4,484 files/714,385 physical/622,912 nonblank, including comments/tests. Production code/shared helpers/dependencies/lockfile are unchanged; the previous 543-case code/build proof is historical. Fresh regular CI remains pending; no new Besu run is expected from the test/docs/count-only path changes.
+
 ## Public source verification — October 25, 2026
 
 The project is public at [samadalam481470sa-cmd/clearledger](https://github.com/samadalam481470sa-cmd/clearledger). The user-created repository was verified as public with connected write access. Source commit [`762dd075d4b3dbe8d04a0e88fa24550818f734a7`](https://github.com/samadalam481470sa-cmd/clearledger/commit/762dd075d4b3dbe8d04a0e88fa24550818f734a7) contains all 6,785 reviewed tracked files.
@@ -307,11 +315,11 @@ Browser-origin access remains denied. No alternative browser route was used, so 
 
 ## Reproduced source count
 
-The current readable-history source count is 631,232 nonblank source lines, including comments and tests:
+The current unpropagated-CLI source count is 631,441 nonblank source lines, including comments and tests:
 
 | Source | Files | Physical lines | Nonblank lines |
 | --- | ---: | ---: | ---: |
-| Application, including attributed adaptation | 68 | 8,776 | 8,320 |
+| Application, including attributed adaptation | 69 | 8,990 | 8,529 |
 | Attributed Besu snapshot | 4,484 | 714,385 | 622,912 |
 
 The script's exclusions and methodology are recorded in `docs/source-count.json`; the size is not a claim of independently authored executable statements.
