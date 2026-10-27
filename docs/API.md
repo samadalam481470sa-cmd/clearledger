@@ -42,6 +42,16 @@ Payment pages omit stored signatures, raw signed transactions, and internal fing
 
 `GET /api/totals` returns `{ "assets": [{ "token": "0x...", "settledPayments": 1, "settledBaseUnits": "125000000", "reviewPayments": 0, "reviewBaseUnits": "0" }] }`. Asset addresses are lowercase; amounts are exact integer strings calculated from journal rows with BigInt. These are cumulative **transfer volumes**, not token balances, reserves, or valuations. Journaled payments flagged for review are excluded from settled volume and reported separately. The API does not infer token decimals or combine different assets into one money amount.
 
+### Invalid stored payment data
+
+Public payment records validate the stored JSON against the payment schema and require its payer/payment-ID key to match the record ID. Usable records retain the existing `payment` object, normalized in the response only, without an `integrityError` field. Invalid JSON, invalid schema data, or a mismatched key returns `payment: null` and `integrityError: "Stored payment data is invalid; verify the original authorization"`.
+
+The eight retained record fields are `id`, `status`, `tx_hash`, `block_number`, `block_hash`, `error`, `created_at`, and `updated_at`; the row keeps its page position. Clients must allow a null payment and avoid inventing amounts, assets, parties, or authorization fields. The fixed diagnostic does not echo the stored payload or parser/schema details. The explicit public allowlist omits raw payloads, signatures, signed bytes, fingerprints, and unknown columns.
+
+Dashboard table rows and receipt snapshots guard null payments, displaying the fixed warning and unavailable authorization/amount/route/token placeholders while preserving record identity, status, transaction/block metadata, and dates. They do not reconstruct authorization fields from an ID or journal; valid amount/asset formatting is unchanged.
+
+Projection does not modify the database, audit trail, status, or journal. Targeted HTTP checks verify unchanged snapshots/schema and SQLite `total_changes` after GETs. Projection does not prove signature authenticity or validate retained top-level metadata/error. Explicit reconciliation may separately flag a corrupt settled authorization for review while retaining its journal and readable totals. Targeted projection/HTTP/SSR checks and strict typecheck pass; the local full suite completed 543 cases (538 passes, five existing Windows skips, zero failures) and build passed. Publication and regular/Besu CI remain pending in [validation](VALIDATION.md#readable-payment-history). New cases use synthetic Store/HTTP/SSR fixtures, not new EVM verification; browser layout/events/accessibility remain unverified.
+
 ## Asset display metadata
 
 Optional `ASSET_METADATA` supplies a JSON array of operator-configured descriptors, for example:

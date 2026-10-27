@@ -178,8 +178,18 @@ export class PaymentService {
   }
 
   publicRow(row: RecordRow) {
-    const { raw_tx, signature, fingerprint, payload, ...safe } = row;
-    return { ...safe, payment: JSON.parse(payload) as Payment };
+    const safe = { id: row.id, status: row.status, tx_hash: row.tx_hash,
+      block_number: row.block_number, block_hash: row.block_hash, error: row.error,
+      created_at: row.created_at, updated_at: row.updated_at };
+    try {
+      if (typeof row.payload === 'string') {
+        const parsed = paymentSchema.safeParse(JSON.parse(row.payload));
+        if (parsed.success && paymentKey(parsed.data) === row.id)
+          return { ...safe, payment: parsed.data };
+      }
+    } catch { /* A history read must not echo or repair invalid persisted payloads. */ }
+    return { ...safe, payment: null,
+      integrityError: 'Stored payment data is invalid; verify the original authorization' };
   }
 }
 

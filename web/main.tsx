@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AssetMetadataRegistry, AssetVolumes, PageNavigation } from './views.tsx';
+import { PaymentHistoryRow, PaymentReceiptSnapshot, type ReceiptSnapshot } from './payment-history.tsx';
 import {
   CursorPager, PAGE_SIZE, assetRegistry, formatAssetAmount, pagePath,
   type AssetTotal, type CursorPage, type JournalRow, type Overview, type PagerState,
@@ -15,7 +16,6 @@ class ApiError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
 }
 interface RequestOptions { method?: string; body?: unknown; signal?: AbortSignal }
-interface ReceiptSnapshot { row: PaymentRow; capturedAt: string }
 
 /** Each instance belongs to exactly one auth/network/filter context. */
 function useHistory<T>(collection: 'payments' | 'journals', key: string, network: string,
@@ -217,7 +217,6 @@ function App() {
   const metadata = assetRegistry(data);
   const displayedPrecision = metadata.status === 'ready' && metadata.entries.length > 0 ? 'Configured per asset' :
     metadata.status === 'missing' && isDemo ? 'Demo asset: 6 decimals' : 'Exact base units';
-  const receiptAmount = selected ? formatAssetAmount(selected.row.payment.amount, selected.row.payment.token, data ?? undefined) : null;
 
   return <div className="shell">
     <aside>
@@ -265,16 +264,10 @@ function App() {
           {(page === 'Overview' || page === 'Payments') && <section className="panel payment-panel" aria-labelledby="payments-title">
             <div className="panel-heading"><div><h2 id="payments-title">Payment history</h2><p>Signed instructions, recorded outcomes. Up to {PAGE_SIZE} records per page.</p></div><select aria-label="Filter payments by status" value={filter} onChange={event => setFilter(event.target.value as StatusFilter)}><option value="all">All statuses</option>{['settled', 'queued', 'broadcast', 'failed', 'review'].map(status => <option key={status}>{status}</option>)}</select></div>
             {payments.state.error && <div role="alert" className="page-error">Payment page could not refresh: {payments.state.error}. Existing rows are retained.</div>}
-            <div className="table-wrap"><table><thead><tr><th>PAYMENT</th><th>ROUTE</th><th>ASSET / AMOUNT</th><th>STATUS</th><th>BLOCK</th><th></th></tr></thead><tbody>{payments.state.items.map(row => {
-              const value = formatAssetAmount(row.payment.amount, row.payment.token, data);
-              return <tr key={row.id}>
-                <td><strong className="mono">{short(row.payment.paymentId)}</strong><small>{new Date(row.created_at).toLocaleString()}</small></td>
-                <td><strong>{isDemo && data.payer === row.payment.payer ? 'Treasury' : short(row.payment.payer)} <span className="muted">→</span> {isDemo && data.payee === row.payment.payee ? 'Merchant' : short(row.payment.payee)}</strong><small className="mono">{short(row.payment.payer)} → {short(row.payment.payee)}</small></td>
-                <td className="amount"><span className="exact-amount">{value.value}</span> <small>{value.unit}</small><small className="mono" title={row.payment.token}>{short(row.payment.token)}</small></td>
-                <td><span className={'status ' + row.status}><i/>{row.status}</span></td><td className="mono">{row.block_number ?? '—'}</td>
-                <td><button className="text-button" onClick={() => setSelected({ row, capturedAt: new Date().toISOString() })}>Receipt ↗</button></td>
-              </tr>;
-            })}</tbody></table>{payments.state.items.length === 0 && <div className="empty">{payments.state.loading ? 'Loading payment history…' : payments.state.error ? 'Payment history is unavailable.' : 'No payments match this view.'}</div>}</div>
+            <div className="table-wrap"><table><thead><tr><th>PAYMENT</th><th>ROUTE</th><th>ASSET / AMOUNT</th><th>STATUS</th><th>BLOCK</th><th></th></tr></thead><tbody>{payments.state.items.map(row =>
+              <PaymentHistoryRow key={row.id} row={row} overview={data}
+                onOpen={() => setSelected({ row, capturedAt: new Date().toISOString() })}/>
+            )}</tbody></table>{payments.state.items.length === 0 && <div className="empty">{payments.state.loading ? 'Loading payment history…' : payments.state.error ? 'Payment history is unavailable.' : 'No payments match this view.'}</div>}</div>
             <PageNavigation state={payments.state} onNext={() => void payments.pager.current?.next()} onPrevious={() => void payments.pager.current?.previous()} onRefresh={() => { setPaymentRevision(value => value + 1); setRevision(value => value + 1); }}/>
           </section>}
           {page === 'Journal' && <section className="panel payment-panel" aria-labelledby="journal-title">
@@ -305,7 +298,7 @@ function App() {
       </main>
     </div>
     {form && isDemo && <div className="overlay" role="presentation"><section className="modal" role="dialog" aria-modal="true" aria-labelledby="payment-title"><button className="close" aria-label="Close payment form" onClick={() => setForm(false)}>×</button><div className="eyebrow">LOCAL DEMO</div><h2 id="payment-title">Create a payment</h2><p>A temporary demo wallet signs and submits this payment on your local EVM.</p><form onSubmit={pay}><label>From</label><div className="account">Treasury <code>{short(data?.payer)}</code></div><label>To</label><div className="account">Merchant <code>{short(data?.payee)}</code></div><label htmlFor="amount">Amount in demo USD</label><div className="amount-input"><input id="amount" inputMode="decimal" value={amount} onChange={event => setAmount(event.target.value)} autoFocus required disabled={busy || uncertainPayment}/><span>dUSD</span></div><p className="hint">Maximum 10,000 dUSD per payment. No real money moves.</p>{notice && <p role="alert" className={uncertainPayment ? 'error' : ''}>{notice}</p>}<button className="primary full" disabled={busy || uncertainPayment}>{busy ? 'Signing & settling…' : 'Sign and submit payment →'}</button>{uncertainPayment && <button type="button" className="secondary full history-check" onClick={() => { setForm(false); setPage('Payments'); setFilter('all'); refreshLatest(); }}>Check payment history</button>}</form></section></div>}
-    {selected && receiptAmount && <div className="overlay"><section className="modal receipt" role="dialog" aria-modal="true" aria-labelledby="receipt-title"><button className="close" aria-label="Close receipt" onClick={() => setSelected(null)}>×</button><div className="eyebrow">PAYMENT RECEIPT SNAPSHOT</div><h2 id="receipt-title" className="exact-amount">{receiptAmount.value} <small>{receiptAmount.unit}</small></h2><span className={'status ' + selected.row.status}><i/>{selected.row.status}</span><dl>{[['Asset', selected.row.payment.token], ['Payment ID', selected.row.payment.paymentId], ['Payer', selected.row.payment.payer], ['Payee', selected.row.payment.payee], ['Transaction', selected.row.tx_hash ?? 'Not broadcast'], ['Block', String(selected.row.block_number ?? 'Pending')], ['Authorization nonce', selected.row.payment.nonce]].map(([label, value]) => <div key={label}><dt>{label}</dt><dd className="mono">{value}</dd></div>)}</dl>{selected.row.error && <p className="error">{selected.row.error}</p>}<p className="hint">Snapshot opened {new Date(selected.capturedAt).toLocaleString()}. Status may change; refresh payment history and reopen to see the latest record. Reconcile checks recorded blocks against the chain.</p></section></div>}
+    {selected && <PaymentReceiptSnapshot snapshot={selected} overview={data} onClose={() => setSelected(null)}/>}
   </div>;
 }
 createRoot(document.getElementById('root')!).render(<App/>);

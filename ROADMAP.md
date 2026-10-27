@@ -10,7 +10,6 @@ Prioritize verified payment correctness and demonstrable engineering over source
 4. Add a durable event indexer with checkpoints, canonical-block validation, and controlled replay.
 5. Design journal reversal/rebuild for reorganization recovery while preserving the audit trail.
 6. Verify dashboard interaction and accessibility after browser access is available.
-7. Add a validated, non-mutating history projection and guarded rendering for invalid stored payment payloads. Read-only reproduction found invalid JSON throws in `publicRow`, while JSON `null` reaches an unsafe dashboard accessor; no history/UI fix is included in the receipt-log increment.
 
 Shutdown drain ordering passes Windows unit/HTTP verification and Linux real-SIGTERM helper integration. Actual RPC CLI autonomous crash recovery and POSIX signal-drain/restart integration pass Linux CI; graceful handling does not cover force-kill or blocked JavaScript.
 
@@ -35,6 +34,10 @@ Shutdown drain ordering passes Windows unit/HTTP verification and Linux real-SIG
 ## Settlement-log provenance
 
 - Shared three-way receipt-event validation preserves broadcast/nonce priority on inconsistent matching log metadata, while reconciliation flags review and retains journals. Synthetic checks passed 145/145 (45 new), real HTTP JSON-RPC/ethers-formatting cases passed 3/3, and historical Windows verification completed 501 cases (496 passes, zero failures, five existing skips). Source `33c1f09b3309044a9784f1943ffff648b5f5ca66` passed [regular CI `40504395270`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40504395270) with all 501 tests/zero skips, fresh install, typecheck/build/count, and [Besu CI `40504395254`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40504395254) with EOA settlement/quorum recovery plus wallet settlement/revocation/reconciliation. Count remains 630,760 nonblank lines (7,848 application and 622,912 Besu, including comments/tests). Contradictory-log fault injection remains Ganache/in-memory SQLite/manual-tick evidence, separately from the bounded single-host Besu scenario; neither is a soak or SLO. Trusted-RPC boundaries remain; raw `removed` and transaction/log indexes are not newly validated, and review does not auto-heal.
+
+## Readable payment history
+
+- Implemented JSON/schema/key validation, eight-field public metadata allowlist, and guarded history/receipt presentation. Invalid payloads retain identity/status/transaction/block/date metadata with a fixed warning and unavailable authorization/amount/route/token; no ID/journal reconstruction or GET repair occurs. Targeted checks passed 35 projection cases, two authenticated HTTP cases, and five new SSR cases. Final local verification completed 543 cases (538 passes, zero failures, five existing Windows skips) in 211,771.8701 ms, strict typecheck, and Solidity 0.8.30/Paris plus Vite 7.3.7 build (32 Vite modules). GETs preserve snapshots/schema/audit/journals/SQLite `total_changes`, while explicit reconciliation can flag review and retain journals. Count remains 631,232 nonblank lines (8,320 application, 622,912 Besu, including comments/tests); publication and regular/Besu CI remain pending. New synthetic Store/HTTP/SSR evidence does not authenticate signatures, verify retained top-level metadata/error, establish new EVM/RPC authorization, repair storage, or provide browser layout/events/accessibility QA.
 
 ## Publication and maintenance
 

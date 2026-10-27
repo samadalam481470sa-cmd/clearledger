@@ -274,6 +274,15 @@ This is one bounded local-EVM transport/process-recovery case, not an autonomous
 - The same source passed [Besu CI `40504395254`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40504395254), job `122189864900`. Four heads agreed at 1; 125 dUSD settled at 23 with one journal; one-validator failure allowed progress 24→26. Two healthy nodes held height/hash 26 for 20,105.997025 ms/20 successful samples. Restoring validator 3 produced three agreeing heads at 28 and finalized the same pending `0x5d5e5818a7959cdd21a1e8419f96981def7cd8373c777fdfabb58d053953fd38` at 27 for 37.5 dUSD with two journals; all four caught up at 31. The caller-bound ERC-1271 wallet settled 12.5 dUSD at 42, yielding three journals, recipient total 175 dUSD, wallet 87.5 dUSD/nonce 1. Queued revocation failed before broadcast with unchanged relayer nonce, reconciliation checked 3/exceptions 0, and final four heads agreed at 45. Whole scenario 206,576 ms is single-Docker-host evidence, not a benchmark or recovery SLO. Both completed conclusions, source heads, all job steps, and logs were verified. Both installs reported 33 audit entries including five critical findings.
 - Count remains **630,760 nonblank source lines**, including comments/tests: application 64 files/8,279 physical/7,848 nonblank plus Besu 4,484 files/714,385 physical/622,912 nonblank. Contradictory-log fault injection uses Ganache/in-memory SQLite/manual ticks, not actual CLI or Besu fault injection/soak, and does not repair UI/history. The separate Besu result verifies its bounded scenario only; previous evidence remains historical.
 
+## Readable payment history
+
+- Public projection validates stored JSON/schema and payer/payment-ID identity, returning a normalized response copy for valid data or nullable payment/fixed integrity diagnostic for invalid data. Eight allowlisted identity/status/transaction/block/error/timestamp fields remain; payloads, signed bytes, signatures, fingerprints, and unknown columns are omitted.
+- Projection does not repair storage or write status/audit/journal data. It does not authenticate signatures, verify top-level metadata, or establish immutable storage.
+- Targeted projection tests passed **35/35** in 604.7797 ms. Two real authenticated HTTP cases passed in 680.8205 ms, covering every status filter, limit-2 cursor pages, and overview with five invalid plus valid records. GETs leave schema, rows, audit/journal snapshots, and SQLite `total_changes` unchanged. Explicit reconciliation flags corrupt settled data for review, retains its journal, and leaves history/totals readable.
+- Five new server-rendered history/receipt cases passed in 285.9564 ms; combined model/existing-view/new-history checks passed **22/22** in 1,009.0695 ms. Null-payment rows/snapshots retain record ID/status/transaction/block/date metadata, show the fixed warning and unavailable authorization/amount/route/token, and never reconstruct from IDs or journals. Valid demo/configured/unknown-asset formatting controls remain intact.
+- Final local verification completed **543 cases: 538 passes, zero failures, five existing Windows platform skips**, exit 0, in 211,771.8701 ms. Final strict TypeScript checking and Solidity 0.8.30/Paris plus Vite 7.3.7 build passed, including 32 transformed Vite modules.
+- Current count remains **631,232 nonblank source lines**, including comments/tests: application 68 files/8,776 physical/8,320 nonblank; Besu 4,484 files/714,385 physical/622,912 nonblank. Publication and regular/Besu CI remain pending; the service path triggers both workflows. New Store/HTTP/SSR cases are synthetic rather than new EVM/signature/RPC-authorization proof; retained top-level metadata/error is not newly validated. Browser layout/events/accessibility remain unverified under origin denial.
+
 ## Public source verification — October 25, 2026
 
 The project is public at [samadalam481470sa-cmd/clearledger](https://github.com/samadalam481470sa-cmd/clearledger). The user-created repository was verified as public with connected write access. Source commit [`762dd075d4b3dbe8d04a0e88fa24550818f734a7`](https://github.com/samadalam481470sa-cmd/clearledger/commit/762dd075d4b3dbe8d04a0e88fa24550818f734a7) contains all 6,785 reviewed tracked files.
@@ -296,11 +305,11 @@ Browser-origin access remains denied. No alternative browser route was used, so 
 
 ## Reproduced source count
 
-The current settlement-log-provenance source count is 630,760 nonblank source lines, including comments and tests:
+The current readable-history source count is 631,232 nonblank source lines, including comments and tests:
 
 | Source | Files | Physical lines | Nonblank lines |
 | --- | ---: | ---: | ---: |
-| Application, including attributed adaptation | 64 | 8,279 | 7,848 |
+| Application, including attributed adaptation | 68 | 8,776 | 8,320 |
 | Attributed Besu snapshot | 4,484 | 714,385 | 622,912 |
 
 The script's exclusions and methodology are recorded in `docs/source-count.json`; the size is not a claim of independently authored executable statements.

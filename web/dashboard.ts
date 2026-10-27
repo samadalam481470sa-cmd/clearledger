@@ -9,7 +9,8 @@ export interface Payment {
 }
 export interface PaymentRow {
   id: string; status: PaymentStatus; tx_hash: string | null; created_at: string;
-  block_number: number | null; error: string | null; payment: Payment;
+  block_number: number | null; error: string | null; payment: Payment | null;
+  integrityError?: string;
 }
 export interface JournalRow {
   payment_id: string; token: string; debit_account: string; credit_account: string;
