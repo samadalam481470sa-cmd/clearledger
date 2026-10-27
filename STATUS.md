@@ -1,6 +1,6 @@
 # ClearLedger status
 
-Updated: October 26, 2026.
+Updated: October 27, 2026.
 
 ## Scope and constraints
 
@@ -214,7 +214,8 @@ Project writes are confined to the new `outputs/clearledger/` directory and task
 - A `BEGIN IMMEDIATE` transaction creates/validates the STRICT singleton context. Empty unbound payments/journals/audit initialize; exact-context restarts are no-ops. Mismatch, malformed/extra context rows, or nonempty unbound legacy data refuse startup with a fixed error, without adoption/rebinding.
 - Intentional context changes require a separate `DB_PATH` and review of legacy/pending records. Store's prior PRAGMAs/DDL still execute first; refusal preserves logical records/context rather than file-byte identity. Direct Store/PaymentService embeddings must explicitly bind; the in-memory demo is unchanged.
 - The final local suite passed **431 cases: 429 passes, zero failures, two explicit POSIX skips on Windows**, exit 0, in 184,232.3036 ms. Strict typecheck and Solidity 0.8.30/Paris plus Vite 7.3.7 build passed. Targeted checks passed 63/63 SQLite cases in 708.3588 ms and the actual CLI case in 9,793.1185 ms.
-- Current count: **629,917 nonblank source lines**, including comments/tests: application 59 files/7,396 physical/7,005 nonblank; attributed Besu 4,484 files/714,385 physical/622,912 nonblank. Remote CI is pending. Trusted RPC, same-genesis forks, same-address code upgrades, database tampering, and multiworker coordination remain outside this guard.
+- Current count: **629,917 nonblank source lines**, including comments/tests: application 59 files/7,396 physical/7,005 nonblank; attributed Besu 4,484 files/714,385 physical/622,912 nonblank.
+- Published source [`16938a0c7eafe1021874d4765f22adb45cdd2229`](https://github.com/samadalam481470sa-cmd/clearledger/commit/16938a0c7eafe1021874d4765f22adb45cdd2229), tree `2ec6edd3e8485910e5765cecfed3dd6ab08f077f`, passed [Linux CI `40458796370`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40458796370), job `122038245491`: **431 tests/431 passes/zero failures/zero skips**, 175,713.069155 ms, plus fresh installation, strict typecheck, Solidity 0.8.30/Paris and Vite 7.3.7 build, and source count 629,917. Completed run conclusion, every job step, source head and logs were verified. The actual CLI scenario passed in 7,619.666934 ms: one settlement, one compatible endpoint/API-key restart, three refused starts, one total transfer and one untouched legacy queued intent. These are controlled scenarios, not a performance or availability SLO. Installation still reported 33 audit entries including five critical findings; dependency limitations remain. No new Besu run or browser QA is claimed. Trusted RPC, same-genesis forks, same-address code upgrades, database tampering, and multiworker coordination remain outside this guard.
 
 ## Public source publication — October 25, 2026
 

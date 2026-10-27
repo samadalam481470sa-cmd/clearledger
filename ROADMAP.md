@@ -20,6 +20,7 @@ Shutdown drain ordering passes Windows unit/HTTP verification and Linux real-SIG
 - Add PostgreSQL-backed jobs and a relayer lease before allowing multiple workers.
 - Add controlled fee replacement and stuck-nonce resolution with an audit trail.
 - Introduce signer interfaces for KMS/HSM integrations without embedded secrets.
+- Design an explicit migration procedure for legacy unbound ledgers and intentional relayer changes.
 - Demonstrate multisignature governance and delayed role changes.
 - Model issuance/redemption accounting and off-chain reserve attestations as explicit simulations.
 - Add telemetry, failure injection, load testing, and measured results.
@@ -27,7 +28,7 @@ Shutdown drain ordering passes Windows unit/HTTP verification and Linux real-SIG
 
 ## RPC database context
 
-- Implemented an RPC-entrypoint deployment binding before HTTP/worker startup, keyed by version/chain/genesis/router/relayer. Transactional initialization requires empty unbound payment/journal/audit tables; mismatches, malformed/extra context, and nonempty legacy databases refuse without automatic adoption/rebinding. Context changes require a separate `DB_PATH` and review; existing Store PRAGMAs/DDL mean logical preservation rather than file-hash identity. Local verification passed 63 SQLite cases, one actual-CLI context/refusal/restart case, typecheck/build, and the full 431-case suite (429 passes, two Windows POSIX skips, zero failures). Source count is 629,917 nonblank lines (7,005 application and 622,912 attributed Besu, including comments/tests). Remote CI is pending. Direct embeddings must explicitly bind; trusted RPC, same-genesis forks, same-address code changes, tampering, and multiworker leases remain boundaries.
+- Implemented an RPC-entrypoint deployment binding before HTTP/worker startup, keyed by version/chain/genesis/router/relayer. Transactional initialization requires empty unbound payment/journal/audit tables; mismatches, malformed/extra context, and nonempty legacy databases refuse without automatic adoption/rebinding. Context changes require a separate `DB_PATH` and review; existing Store PRAGMAs/DDL mean logical preservation rather than file-hash identity. Local verification passed 63 SQLite cases, one actual-CLI context/refusal/restart case, typecheck/build, and the full 431-case suite (429 passes, two Windows POSIX skips, zero failures). Source count is 629,917 nonblank lines (7,005 application and 622,912 attributed Besu, including comments/tests). Source `16938a0c7eafe1021874d4765f22adb45cdd2229` passed Linux CI `40458796370` with all 431 tests/zero skips, typecheck/build/count; completed conclusion, every step and logs were verified. Direct embeddings must explicitly bind; trusted RPC, same-genesis forks, same-address code changes, tampering, and multiworker leases remain boundaries.
 
 ## Publication and maintenance
 
