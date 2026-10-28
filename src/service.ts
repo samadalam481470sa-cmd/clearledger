@@ -99,6 +99,10 @@ export class PaymentService {
     if (!isHash(row.tx_hash)) return;
     let receipt = await this.provider.getTransactionReceipt(row.tx_hash);
     if (!receipt) {
+      // Recovery may only resend the exact bytes identified by the reservation.
+      // A broken binding retains nonce priority; it cannot authorize another send.
+      if (typeof row.raw_tx !== 'string' || !/^0x(?:[0-9a-fA-F]{2})+$/.test(row.raw_tx) ||
+        !sameHash(keccak256(row.raw_tx), row.tx_hash)) return;
       try { await this.provider.broadcastTransaction(row.raw_tx!); }
       catch { /* already known, connection loss, or uncertain outcome: inspect hash */ }
       receipt = await this.provider.getTransactionReceipt(row.tx_hash);

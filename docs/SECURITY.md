@@ -6,7 +6,7 @@ This is unaudited portfolio software for test assets.
 | --- | --- | --- |
 | Forged or altered payment | EIP-712 with EOA recovery or deployed-wallet ERC-1271 STATICCALL | Wallet policy can revoke validity; API/dispatch/execution checks are point-in-time |
 | Replay on another chain/router | Domain separation | Cloned environments still need key hygiene |
-| Duplicate request or lost response | Unique intent and persisted signed bytes; file-backed process-recovery checks | Single worker, no multi-region guarantee |
+| Duplicate request or lost response | Unique intent, persisted signed bytes, raw/hash coherence before retransmission; file-backed recovery checks | Local coordination, no multi-region or transaction-authorization proof |
 | Replay under another payment ID | Payer nonce | Clients must coordinate concurrent signing |
 | Unauthorized mint/policy update | AccessControl roles | Administrator compromise remains powerful |
 | Blocked recipient | Token account eligibility | No actual identity or sanctions service |
@@ -32,6 +32,8 @@ This is unaudited portfolio software for test assets.
 | Hostile contract-wallet validation | STATICCALL and strict padded ERC-1271 magic return check | No independent gas/returndata-griefing bound or arbitrary-wallet availability guarantee |
 
 The local demo exposes an ephemeral same-origin dashboard token and signs with a temporary server-held payer wallet. It must remain on loopback. RPC mode omits those endpoints. Neither mode is designed for direct public exposure.
+
+With no receipt for the stored hash, recovery checks nonempty byte-aligned `0x` hex raw data and case-insensitive `keccak256` equality before retransmission. Invalid binding retains the broadcast reservation, exact evidence, audit/journals, and nonce priority without sending, replacement, automatic repair, or terminal failure. Existing receipt processing and Store eligibility checks remain unchanged. This does not decode the transaction or verify its signer, destination, chain, calldata/payment authorization, independently prove RPC data, prevent consistent raw/hash tampering, or coordinate the same key across multiple databases. Verification and limits are recorded in [validation](VALIDATION.md#recovered-transaction-hash-binding).
 
 Queued dispatch validates stored JSON/submission structure, canonical logical fields, payer/payment-ID key, and domain fingerprint before RPC/signing. Invalid rows with null raw/hash fields fail atomically with a fixed diagnostic that omits private evidence and parser/schema details; the evidence stays stored. Any queued non-null raw/hash anomaly blocks all new queued allocation, even in a later row, and cannot be overwritten or failed through Store mutations. Existing broadcasts retain recovery priority. Unexpected configuration, storage/audit, and RPC failures remain blocking/retryable. This does not repair storage, authenticate signatures locally, prove external-chain outcomes, or protect against a hostile actor consistently rewriting all evidence. Actual authorization remains the router's responsibility, including opaque ERC-1271 bytes. See [validation](VALIDATION.md#queued-authorization-integrity).
 
