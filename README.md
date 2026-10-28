@@ -70,7 +70,7 @@ npm run build
 npm run source:count
 ```
 
-Durable RPC listener readiness passed 704 local cases (699 passes, five existing Windows skips, zero failures), strict typecheck and Solidity/Vite build; its publication CI is pending. The actual CLI preserved both queued records on occupied-port refusal, released ownership after cleanup, then restarted the same DB and settled one independent instruction once. See [listener validation](docs/VALIDATION.md#rpc-listener-readiness).
+Durable RPC listener readiness passed 704 local cases (699 passes, five existing Windows skips, zero failures), strict typecheck and Solidity/Vite build. Initial Linux CI failed an existing shutdown TCP observer; a test-only probe refinement passed 11 focused cases with one Windows POSIX skip. Repeat publication CI is pending. The actual CLI preserved both queued records on occupied-port refusal, released ownership after cleanup, then restarted the same DB and settled one independent instruction once. See [listener validation](docs/VALIDATION.md#rpc-listener-readiness).
 
 The previous source's [Linux CI passed all 699 tests with zero skips](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40697236925), strict typecheck, the Solidity/Vite build, and source counting. [Four-validator Besu settlement/quorum/wallet acceptance also passed](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40697237263). Concurrent reconciliation now shares one active pass per service with independent caller results and fresh retry after failure; seven unit and three authenticated HTTP cases verify its boundaries. Shared-scan failures use controlled SQLite/RPC evidence, separate from ordinary Besu acceptance. Local Windows verification completed 699 cases (694 passes, five existing platform skips, zero failures). Browser appearance/interaction remains unverified. See [validation](docs/VALIDATION.md) and [current status](STATUS.md) for evidence and limits.
 
@@ -90,7 +90,7 @@ A Besu acceptance extension now includes a caller-bound test contract wallet: se
 
 ## More than 100,000 source lines
 
-The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **633,745 nonblank source lines**: 10,833 application and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
+The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **633,855 nonblank source lines**: 10,943 application and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
 
 Application code is MIT-licensed, including a clearly attributed OpenZeppelin-derived signature-check adaptation. Its lines are included in the application source count; the Besu count remains separate. Besu and installed dependencies retain their own licenses. [Provenance](docs/PROVENANCE.md) records these distinctions and pins the Besu release, commit, and download hash.
 

@@ -2,7 +2,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { createConnection } from 'node:net';
 import { randomBytes } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { id, keccak256, Transaction } from 'ethers';
@@ -12,6 +11,7 @@ import { domain, paymentTypes, type Payment } from '../src/payment.ts';
 import { type RecordRow } from '../src/store.ts';
 import { rpcProxy } from './fixtures/rpc-proxy.ts';
 import { startCli } from './fixtures/cli-server.ts';
+import { listenerRefused } from './fixtures/listener-probe.ts';
 
 async function within<T>(operation: Promise<T>, label: string, timeoutMs = 10000): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -30,23 +30,6 @@ async function until<T>(probe: () => Promise<T | undefined>, label: string, time
     await new Promise<void>(resolvePause => setTimeout(resolvePause, 100));
   }
   throw new Error(label + ' did not become ready');
-}
-
-function listenerRefused(url: string): Promise<boolean> {
-  return new Promise((resolveRefused, reject) => {
-    const endpoint = new URL(url);
-    const socket = createConnection({ host: endpoint.hostname, port: Number(endpoint.port) });
-    function finish(error?: Error, refused = false) {
-      socket.removeAllListeners(); socket.destroy();
-      if (error) reject(error); else resolveRefused(refused);
-    }
-    socket.once('connect', () => finish());
-    socket.once('error', error => {
-      if ((error as NodeJS.ErrnoException).code === 'ECONNREFUSED') finish(undefined, true);
-      else finish(new Error('Could not observe the CLI listener'));
-    });
-    socket.setTimeout(500, () => finish(new Error('CLI listener probe timed out')));
-  });
 }
 
 async function api(url: string, key: string, path: string, body?: unknown) {
