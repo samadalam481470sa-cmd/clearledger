@@ -41,9 +41,15 @@ export class PaymentService {
     if (this.running) return;
     this.running = true;
     try {
-      for (const row of this.store.pending()) {
+      const pending = this.store.pending();
+      const reservedQueued = pending.some(row => row.status === 'queued' &&
+        (row.raw_tx !== null || row.tx_hash !== null));
+      for (const row of pending) {
         // One process and one relayer. A pending broadcast blocks subsequent nonce allocation.
-        if (row.status === 'queued') await this.prepare(row);
+        if (row.status === 'queued') {
+          if (reservedQueued) throw new Error('Queued payment contains transaction reservation data; inspect durable state');
+          await this.prepare(row);
+        }
         const current = this.store.get(row.id)!;
         if (current.status === 'broadcast') {
           try { await this.confirm(current); }
@@ -55,7 +61,23 @@ export class PaymentService {
   }
 
   private async prepare(row: RecordRow) {
-    const p: Payment = JSON.parse(row.payload);
+    let p: Payment | undefined;
+    try {
+      if (typeof row.payload === 'string') {
+        const raw = JSON.parse(row.payload) as Record<keyof Payment, unknown>;
+        const parsed = submissionSchema.safeParse({ payment: raw, signature: row.signature });
+        if (parsed.success && paymentKey(parsed.data.payment) === row.id &&
+          (Object.keys(parsed.data.payment) as (keyof Payment)[])
+            .every(field => raw[field] === parsed.data.payment[field])) p = parsed.data.payment;
+      }
+    } catch { /* Keep parser/schema details and stored private fields out of diagnostics. */ }
+    // Hashing/configuration and storage failures propagate. They are not proof
+    // that an authorization is corrupt, and must not advance the queue.
+    if (!p || !isHash(row.fingerprint) || !sameHash(row.fingerprint, digest(p, this.signingDomain))) {
+      this.store.setStatus(row.id, 'failed',
+        'Stored queued authorization is invalid; verify the original authorization and chain history');
+      return;
+    }
     try {
       await this.router.settle.staticCall(p, row.signature);
     } catch (e: any) {

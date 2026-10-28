@@ -119,7 +119,8 @@ export class Store {
     this.transaction(() => {
       const row = this.requireRow(id);
       if (row.status === 'broadcast' && row.raw_tx === raw && row.tx_hash === hash) return;
-      if (row.status !== 'queued') throw new StateTransitionError('Payment cannot reserve a new broadcast');
+      if (row.status !== 'queued' || row.raw_tx !== null || row.tx_hash !== null)
+        throw new StateTransitionError('Payment cannot reserve a new broadcast');
       this.db.prepare("UPDATE payments SET status='broadcast',raw_tx=?,tx_hash=?,updated_at=? WHERE id=? AND status='queued'")
         .run(raw, hash, new Date().toISOString(), id);
       this.audit(id, 'broadcast-prepared', hash);
@@ -130,7 +131,9 @@ export class Store {
       const row = this.requireRow(id), detail = error.slice(0, 500);
       if (row.status === status && row.error === detail) return;
       const allowed = status === 'failed' ? ['queued', 'broadcast'] : ['broadcast', 'settled'];
-      if (!allowed.includes(row.status)) throw new StateTransitionError('Payment cannot enter ' + status);
+      if (!allowed.includes(row.status) || (row.status === 'queued' &&
+        (row.raw_tx !== null || row.tx_hash !== null)))
+        throw new StateTransitionError('Payment cannot enter ' + status);
       this.db.prepare('UPDATE payments SET status=?,error=?,updated_at=? WHERE id=?')
         .run(status, detail, new Date().toISOString(), id);
       this.audit(id, status, detail);

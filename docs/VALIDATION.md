@@ -294,6 +294,12 @@ This is one bounded local-EVM transport/process-recovery case, not an autonomous
 - Current count is **631,441 nonblank source lines**: application 69 files/8,990 physical/8,529 nonblank plus Besu 4,484 files/714,385 physical/622,912 nonblank, including comments/tests. Production code/shared helpers/dependencies/lockfile are unchanged; the previous 543-case code/build proof is historical. No new Besu result is claimed from the test/docs/count-only path changes.
 - Published source [`994cb94865d1041a3b64b8b148da823e0f045131`](https://github.com/samadalam481470sa-cmd/clearledger/commit/994cb94865d1041a3b64b8b148da823e0f045131), tree `7fb1eb6b38ed4df852c0b8def58e7840b029cb2b`, passed [regular CI `40589709265`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40589709265), job `122490438878`: **544 tests/544 passes/zero failures/zero skips** in 204,157.720103 ms, plus fresh npm ci, strict typecheck, Solidity 0.8.30/Paris and Vite 7.3.7 build, and source count 631,441. The new CLI case passed in 13,402.99604 ms with four failed send attempts per process, zero upstream forwards during the fault, two forwards/two unique hashes after healing, two settlements/journals, and reconciliation 2/0. Acceptance-503 retries remained zero. Node/npm were 24.21.0/11.19.0; installation still reported 33 audit entries including five critical findings. Source head, completed conclusion, every step and logs were verified.
 
+## Queued authorization integrity
+
+- Implemented stored JSON/submission/canonical-field/key/fingerprint validation before new queued preparation. Invalid rows with null raw/hash fields fail atomically with a fixed diagnostic; original evidence is retained and independent queued work can proceed. Any queued raw/hash anomaly blocks all new allocation, including later insertion positions, with complementary Store overwrite/failure guards. Older broadcasts can recover first.
+- Synthetic queue/Store checks passed **68/68** in 8,225.9943 ms: 32 new queued-integrity cases, ten new mutation guards, and 26 prior cases. Coverage includes malformed/private payloads, key/domain/fingerprint/signature structure, opaque empty/max signatures, canonical fields, whitespace/hash-case controls, audit rollback, unexpected hashing errors, reservation anomalies in either position, and older-broadcast recovery. Strict TypeScript checking passed.
+- The actual CLI case passed in 5,476.0632 ms: the corrupted seeded row failed with no preflight/reservation/journal, an independent payer settled 7 dUSD once, and readable history/replay/reconciliation 1/0 retained private evidence. The CLI and 13 existing EVM recovery/transport regressions passed 14/14 in 33,860.8517 ms. Final local suite completed 587 cases (582 passes, five existing Windows platform skips, zero failures), exit 0, in 232,751.5789 ms. Strict typecheck and Solidity 0.8.30/Paris plus Vite 7.3.7 build passed. Publication and regular/Besu CI remain pending. Current count is 631,794 nonblank lines (71 application files/9,354 physical/8,882 nonblank; Besu 4,484/714,385/622,912). Local validation does not authenticate signatures, repair records, or establish external-chain outcomes. Existing read-only normalization remains a response projection rather than permission to dispatch noncanonical stored fields. Browser and broader production limits remain unchanged.
+
 ## Public source verification — October 25, 2026
 
 The project is public at [samadalam481470sa-cmd/clearledger](https://github.com/samadalam481470sa-cmd/clearledger). The user-created repository was verified as public with connected write access. Source commit [`762dd075d4b3dbe8d04a0e88fa24550818f734a7`](https://github.com/samadalam481470sa-cmd/clearledger/commit/762dd075d4b3dbe8d04a0e88fa24550818f734a7) contains all 6,785 reviewed tracked files.
@@ -316,11 +322,11 @@ Browser-origin access remains denied. No alternative browser route was used, so 
 
 ## Reproduced source count
 
-The current unpropagated-CLI source count is 631,441 nonblank source lines, including comments and tests:
+The current queued-integrity source count is 631,794 nonblank source lines, including comments and tests:
 
 | Source | Files | Physical lines | Nonblank lines |
 | --- | ---: | ---: | ---: |
-| Application, including attributed adaptation | 69 | 8,990 | 8,529 |
+| Application, including attributed adaptation | 71 | 9,354 | 8,882 |
 | Attributed Besu snapshot | 4,484 | 714,385 | 622,912 |
 
 The script's exclusions and methodology are recorded in `docs/source-count.json`; the size is not a claim of independently authored executable statements.

@@ -1,6 +1,6 @@
 # ClearLedger status
 
-Updated: October 27, 2026.
+Updated: October 28, 2026.
 
 ## Scope and constraints
 
@@ -270,6 +270,15 @@ Project writes are confined to the new `outputs/clearledger/` directory and task
 - Acceptance 503 retries were zero in this local run, so the optional test acceptance-retry branch was not observed. This does not add runtime HTTP retries or claim before-provider-call interruption, browser verification, prolonged soak, performance, or recovery SLOs.
 - Current count is **631,441 nonblank source lines**, including comments/tests: application 69 files/8,990 physical/8,529 nonblank; Besu 4,484 files/714,385 physical/622,912 nonblank. Production code, shared helpers, dependencies, and lockfile are unchanged; the previous 543-case code/build verification remains historical. No new Besu result is claimed for this test/docs/count-only increment.
 - Published source [`994cb94865d1041a3b64b8b148da823e0f045131`](https://github.com/samadalam481470sa-cmd/clearledger/commit/994cb94865d1041a3b64b8b148da823e0f045131), tree `7fb1eb6b38ed4df852c0b8def58e7840b029cb2b`, passed [regular CI `40589709265`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40589709265), job `122490438878`: **544 tests/544 passes/zero failures/zero skips** in 204,157.720103 ms, plus fresh npm ci, strict typecheck, Solidity 0.8.30/Paris and Vite 7.3.7 build, and source count 631,441. The new CLI case passed in 13,402.99604 ms with four failed send attempts per process, zero upstream forwards during the fault, two forwards/two unique hashes after healing, two settlements/journals, and reconciliation 2/0. Acceptance-503 retries remained zero. Node/npm were 24.21.0/11.19.0; installation still reported 33 audit entries including five critical findings. Source head, completed conclusion, every step and logs were verified.
+
+## Queued authorization integrity
+
+- Before new queued dispatch, the worker checks stored JSON/submission structure, canonical logical payment fields, payer/payment-ID key, and the current-domain fingerprint. Invalid records without raw/hash reservation fields fail atomically with a fixed diagnostic; payload/signature/fingerprint evidence is retained. A later independent valid instruction can proceed.
+- Any queued row with non-null raw or hash fields, including empty/partial values or a later insertion position, blocks all new queued allocation. Existing broadcasts retain recovery priority. Store mutations also reject overwriting or failing such a queued reservation; no automatic repair or re-signing is provided.
+- Empty/opaque ERC-1271 signature structure remains allowed; actual authorization still belongs to router preflight. Unexpected configuration/hash, storage/audit, and RPC failures propagate rather than inventing local corruption. Read-only history normalization remains separate from strict canonical dispatch. A local failure does not prove that no external chain transfer occurred.
+- Targeted SQLite checks passed 68/68 in 8,225.9943 ms, including 32 new queue cases and ten new Store guards alongside 26 existing cases. Strict TypeScript checks passed.
+- The actual CLI regression passed in 5,476.0632 ms: one corrupt seeded queued row failed locally without preflight/signing/broadcast; an independently funded second payer settled 7 dUSD once with one native send/journal and reconciliation 1/0. The bound file was seeded under explicit ownership and closed before CLI launch. Private corrupt payload/signature/fingerprint evidence remained stored; public history stayed readable and redacted. The combined CLI plus 13 existing recovery/transport regressions passed 14/14 in 33,860.8517 ms. Final local suite completed 587 cases (582 passes, five existing Windows platform skips, zero failures), exit 0, in 232,751.5789 ms. Strict typecheck and Solidity 0.8.30/Paris plus Vite 7.3.7 build passed. Publication and regular/Besu CI remain pending.
+- Current count: **631,794 nonblank source lines**, including comments/tests: application 71 files/9,354 physical/8,882 nonblank; attributed Besu 4,484 files/714,385 physical/622,912 nonblank.
 
 ## Public source publication — October 25, 2026
 

@@ -67,6 +67,12 @@ Finalization compares every existing journal field against the payment, transact
 
 The RPC CLI coordinates one cooperating owner per canonical local database. There is no distributed or global relayer-key lease; using one key with multiple databases remains unsupported. A stuck or replaced native transaction may block the queue until an operator investigates it.
 
+## Queued authorization integrity
+
+Before new queued dispatch, local validation checks stored submission structure, canonical logical payment fields, payer/payment-ID key, and current-domain fingerprint. Invalid rows with null raw/hash fields fail through the existing atomic status/audit transition, preserving original evidence and allowing independent work to proceed. This is not local cryptographic signature verification; opaque empty ERC-1271 signatures remain structurally valid and router preflight still checks current policy.
+
+A pending snapshot containing any queued non-null raw/hash field blocks every new queued preparation, regardless of insertion position. Already-broadcast recovery can proceed first; Store mutation guards also reject replacement or failure of that queued reservation. Unexpected configuration/hash, storage/audit, and RPC failures propagate rather than being mislabeled as corrupt authorizations. No stored fields are repaired. Read-only history normalization has a different purpose from strict canonical dispatch; a local failure does not prove the absence of external chain activity. See [validation](VALIDATION.md#queued-authorization-integrity) for verification and limits.
+
 ## Wallet authorization
 
 The router exposes `isValidPaymentSignature(Payment,bytes)` and reuses it internally in settlement. The API calls that same view before storing either a new authorization or an identical POST replay. EOAs use OpenZeppelin `ECDSA.tryRecover`; deployed wallets receive an ERC-1271 STATICCALL from the router. Successful return data must contain at least 32 bytes whose first complete word exactly equals the padded `0x1626ba7e` magic value. Reverts, short responses, wrong magic, and nonzero padding fail the check.

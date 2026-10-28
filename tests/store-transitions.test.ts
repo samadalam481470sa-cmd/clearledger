@@ -50,6 +50,16 @@ test('unknown payment mutations cannot create orphan audit entries', () => {
   assert.equal(store.journals().length, 0);
 });
 
+for (const [reservedRaw, reservedHash] of [[raw, null], [null, tx], [raw, tx], ['', null], [null, '']] as const) {
+  for (const action of ['reserve', 'fail'] as const) test('a queued row with retained transaction evidence cannot ' + action + ': ' + String(reservedRaw !== null) + '/' + String(reservedHash !== null), () => {
+    const id = queued();
+    store.db.prepare('UPDATE payments SET raw_tx=?,tx_hash=? WHERE id=?').run(reservedRaw, reservedHash, id);
+    rejectedWithoutMutation(id, () => action === 'reserve'
+      ? store.broadcast(id, 'replacement-signed-bytes', '0x' + '99'.repeat(32))
+      : store.setStatus(id, 'failed', 'Must not discard a reservation'));
+  });
+}
+
 test('identical broadcast retry preserves the row and emits no duplicate audit', () => {
   const id = at('broadcast');
   const before = snapshot(id);

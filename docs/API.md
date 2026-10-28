@@ -169,6 +169,16 @@ Missing or empty preflight revert data remains retryable even when the RPC libra
 
 A stuck/replaced transaction can block the queue. Fee replacement and administrative resolution are not implemented. Inspect signer nonce and transaction state rather than re-signing an uncertain business payment under another ID.
 
+### Invalid queued authorization
+
+Before preparing a queued transaction, the worker validates stored JSON/submission structure, payer/payment-ID identity, and the fingerprint under its current signing domain. Logical payment fields must already be canonical, as written by normal API acceptance; JSON whitespace/key order and hexadecimal fingerprint casing are immaterial. History may normalize a response copy, but dispatch never silently repairs stored fields.
+
+An invalid queued row with both raw signed bytes and transaction hash null moves to `failed`, atomically with one audit event, using the fixed message `Stored queued authorization is invalid; verify the original authorization and chain history`. Its payload, signature, and fingerprint remain stored and private; a later independent authorization can proceed. This local decision does not establish the outcome of external chain activity.
+
+Any queued row carrying non-null raw/hash data, including empty or partial values, blocks all new queued preparation even when it appears later in insertion order. Older broadcasts may still recover first. The worker rejects the tick with the fixed internal error `Queued payment contains transaction reservation data; inspect durable state`; the CLI retains its generic recovery log. Store also refuses to overwrite or fail that queued reservation. Investigate durable evidence and chain history before changing it; no automated repair, deletion, or replacement transaction is supplied.
+
+Signature structure still permits opaque ERC-1271 bytes, including `0x`; router policy performs actual authorization checks. Unexpected hashing/configuration errors, atomic audit/storage failures, and uncertain RPC errors remain blocking/retryable rather than becoming invented corruption outcomes. Verification is recorded in [validation](VALIDATION.md#queued-authorization-integrity).
+
 ### Initial receipt confirmation
 
 A receipt can fail or settle a broadcast only after its transaction hash, safe block metadata, canonical block number/hash, and configured confirmation depth agree. Status must be exactly `0` or `1`; unknown status, invalid head data, or inconsistent/malformed identity leaves the intent in broadcast for retry, retaining its signed bytes and nonce priority. Missing or non-array success logs are also retryable. A valid success-log array must contain the configured router's matching `PaymentSettled` event before journaling; an explicit valid empty array or otherwise missing expected event goes to review after confirmation.
