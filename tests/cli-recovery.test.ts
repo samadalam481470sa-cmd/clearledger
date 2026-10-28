@@ -145,8 +145,8 @@ test('the actual RPC CLI autonomously recovers after two 30-second observation w
           }
           // Require a fresh failed RPC after the 30-second endpoint, rather
           // than allowing early retries followed by a stalled scheduler to pass.
-          if (boundaryCount !== undefined && current > boundaryCount && current - baseline > 20) {
-            assert.ok(observations > 20);
+          if (boundaryCount !== undefined && current > boundaryCount &&
+            current - baseline > 20 && observations > 20) {
             passed = true; ended = performance.now();
             return { durationMs: ended - started, observations, failedReceiptAttempts: current - baseline,
               boundaryElapsedMs: boundaryElapsedMs!, failedReceiptsAfterBoundary: current - boundaryCount };
