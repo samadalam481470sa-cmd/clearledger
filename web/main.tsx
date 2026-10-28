@@ -12,6 +12,7 @@ import {
 import './style.css';
 import './project-details.css';
 import { ProjectDetails } from './project-details.tsx';
+import { journalPageCsv } from './journal-export.ts';
 
 const short = (value?: string | null) => value ? value.slice(0, 8) + '…' + value.slice(-6) : 'Pending';
 const emptyPage = <T,>(): PagerState<T> => ({ items: [], nextCursor: null, page: 1, loading: false, error: '' });
@@ -250,6 +251,20 @@ function App() {
     }
   }
 
+  function exportCurrentJournalPage() {
+    if (!journals.state.items.length) return;
+    // Only locally received rows are exported; no additional chain reads.
+    const csv = journalPageCsv(journals.state.items);
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'clearledger-journal-page-' + journals.state.page + '.csv';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
   const counts = totalsCounts(totals);
   const isDemo = data?.mode === 'demo' && Boolean(data.token);
   const metadata = assetRegistry(data);
@@ -309,7 +324,7 @@ function App() {
             <PageNavigation state={payments.state} onNext={() => void payments.pager.current?.next()} onPrevious={() => void payments.pager.current?.previous()} onRefresh={() => { setPaymentRevision(value => value + 1); refreshReadResources(); }}/>
           </section>}
           {page === 'Journal' && <section className="panel payment-panel" aria-labelledby="journal-title">
-            <div className="panel-heading"><div><h2 id="journal-title">Transfer journal</h2><p>Historical settlement provenance. Current payment status is shown in Payment history.</p></div><span className="tag">READ-ONLY RECORDS</span></div>
+            <div className="panel-heading"><div><h2 id="journal-title">Transfer journal</h2><p>Historical settlement provenance. Current payment status is shown in Payment history.</p></div><div className="journal-tools"><span className="tag">READ-ONLY RECORDS</span><button className="secondary" type="button" disabled={journals.state.loading || journals.state.items.length === 0} onClick={exportCurrentJournalPage}>↓ Export current page CSV</button></div></div>
             {journals.state.error && <div role="alert" className="page-error">Journal page could not refresh: {journals.state.error}. Existing rows are retained.</div>}
             <div className="table-wrap"><table><thead><tr><th>PAYMENT / ASSET</th><th>DEBIT → CREDIT</th><th>AMOUNT</th><th>RECORDED TRANSACTION</th><th>RECORDED BLOCK</th></tr></thead><tbody>{journals.state.items.map(row => {
               const value = formatAssetAmount(row.amount, row.token, data);
@@ -321,7 +336,7 @@ function App() {
                 <td className="mono">{row.block_number}<small title={row.block_hash}>{short(row.block_hash)}</small></td>
               </tr>;
             })}</tbody></table>{journals.state.items.length === 0 && <div className="empty">{journals.state.loading ? 'Loading transfer journal…' : journals.state.error ? 'Transfer journal is unavailable.' : 'No journal records yet.'}</div>}</div>
-            <p className="journal-note">A journal row records what was finalized at the time. Reconcile detects later chain mismatches and flags the payment for review; this table does not invent a current journal status.</p>
+            <p className="journal-note">A journal row records what was finalized at the time. Reconcile detects later chain mismatches and flags the payment for review; this table does not invent a current journal status. CSV export contains only the currently displayed page, with exact base-unit amounts, not all historical pages or account balances.</p>
             <PageNavigation state={journals.state} onNext={() => void journals.pager.current?.next()} onPrevious={() => void journals.pager.current?.previous()} onRefresh={() => { setJournalRevision(value => value + 1); refreshReadResources(); }}/>
           </section>}
           {page === 'Audit trail' && <section className="panel"><div className="panel-heading"><div><h2>Payment lifecycle</h2><p>Latest local operational events, linked to on-chain receipts.</p></div><span className="tag">{data.audit.length} RECENT EVENTS</span></div>
