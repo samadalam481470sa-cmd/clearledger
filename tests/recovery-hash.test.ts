@@ -1,16 +1,25 @@
 import { beforeEach, afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Interface, keccak256, type JsonRpcProvider, type Wallet } from 'ethers';
+import { Interface, keccak256, Wallet, type JsonRpcProvider } from 'ethers';
 import { Store } from '../src/store.ts';
 import { PaymentService } from '../src/service.ts';
 import { digest, domain, type Payment } from '../src/payment.ts';
 
-// Synthetic bytes isolate retransmission identity, not transaction validity.
-const raw = '0x1234abcd', txHash = keccak256(raw), blockHash = '0x' + 'cd'.repeat(32);
+// Offline-signed bytes keep hash-binding controls compatible with envelope
+// validation. Synthetic receipts still do not claim an executed EVM transfer.
+const blockHash = '0x' + 'cd'.repeat(32);
 const routerAddress = '0x' + '44'.repeat(20);
-const iface = new Interface(['event PaymentSettled(bytes32 indexed paymentId,address indexed payer,address indexed payee,address token,uint256 amount,uint256 nonce)']);
+const iface = new Interface([
+  'function settle((bytes32 paymentId,address payer,address payee,address token,uint256 amount,uint256 nonce,uint256 deadline) p,bytes signature)',
+  'event PaymentSettled(bytes32 indexed paymentId,address indexed payer,address indexed payee,address token,uint256 amount,uint256 nonce)'
+]);
 const payment: Payment = { paymentId: '0x' + '12'.repeat(32), payer: '0x' + '11'.repeat(20),
   payee: '0x' + '22'.repeat(20), token: '0x' + '33'.repeat(20), amount: '125000000', nonce: '0', deadline: '2000000000' };
+const offlineRelayer = new Wallet('0x' + '01'.repeat(32));
+const raw = await offlineRelayer.signTransaction({ type: 2, chainId: 31337, nonce: 7,
+  to: routerAddress, value: 0, data: iface.encodeFunctionData('settle', [payment, '0x1234']),
+  gasLimit: 200000, maxFeePerGas: 2, maxPriorityFeePerGas: 1 });
+const txHash = keccak256(raw);
 const unavailable = new Error('Controlled RPC unavailable');
 let store: Store, service: PaymentService, firstId: string, secondId: string;
 let sent: string[], receiptReads: number, preflights: number, signed: number, receipt: any;
@@ -35,7 +44,8 @@ beforeEach(() => {
   const router = { interface: iface, connect() { return this; }, settle: {
     staticCall: async () => { preflights++; throw unavailable; }
   } };
-  const relayer = { signTransaction: async () => { signed++; throw new Error('Unexpected signing'); } };
+  const relayer = { address: offlineRelayer.address,
+    signTransaction: async () => { signed++; throw new Error('Unexpected signing'); } };
   service = new PaymentService(store, provider as unknown as JsonRpcProvider,
     relayer as unknown as Wallet, router, 31337, routerAddress);
 });

@@ -1,4 +1,4 @@
-import { keccak256, type JsonRpcProvider, type Wallet, type TypedDataDomain, type TransactionReceipt } from 'ethers';
+import { keccak256, Transaction, type JsonRpcProvider, type Wallet, type TypedDataDomain, type TransactionReceipt } from 'ethers';
 import { digest, domain, paymentKey, paymentSchema, submissionSchema, type Payment } from './payment.ts';
 import { Store, type RecordRow } from './store.ts';
 
@@ -62,7 +62,7 @@ export class PaymentService {
     } finally { this.running = false; }
   }
 
-  private async prepare(row: RecordRow) {
+  private storedPayment(row: RecordRow): Payment | undefined {
     let p: Payment | undefined;
     try {
       if (typeof row.payload === 'string') {
@@ -75,7 +75,13 @@ export class PaymentService {
     } catch { /* Keep parser/schema details and stored private fields out of diagnostics. */ }
     // Hashing/configuration and storage failures propagate. They are not proof
     // that an authorization is corrupt, and must not advance the queue.
-    if (!p || !isHash(row.fingerprint) || !sameHash(row.fingerprint, digest(p, this.signingDomain))) {
+    if (!p || !isHash(row.fingerprint) || !sameHash(row.fingerprint, digest(p, this.signingDomain))) return;
+    return p;
+  }
+
+  private async prepare(row: RecordRow) {
+    const p = this.storedPayment(row);
+    if (!p) {
       this.store.setStatus(row.id, 'failed',
         'Stored queued authorization is invalid; verify the original authorization and chain history');
       return;
@@ -97,6 +103,22 @@ export class PaymentService {
     this.store.broadcast(row.id, raw, keccak256(raw));
   }
 
+  private recoveryEnvelopeMatches(row: RecordRow): boolean {
+    if (!Number.isSafeInteger(this.chainId) || this.chainId < 1) return false;
+    const p = this.storedPayment(row);
+    if (!p) return false;
+    try {
+      const transaction = Transaction.from(row.raw_tx!);
+      // Ordinary signed calls only: blob/delegation envelopes have additional
+      // effects that are not part of the persisted payment authorization.
+      return [0, 1, 2].includes(transaction.type!) && transaction.isSigned() &&
+        transaction.chainId === BigInt(this.chainId) &&
+        transaction.from?.toLowerCase() === this.relayer.address.toLowerCase() &&
+        transaction.to?.toLowerCase() === this.routerAddress.toLowerCase() && transaction.value === 0n &&
+        transaction.data.toLowerCase() === this.router.interface.encodeFunctionData('settle', [p, row.signature]).toLowerCase();
+    } catch { return false; }
+  }
+
   private async confirm(row: RecordRow) {
     if (!isHash(row.tx_hash)) return;
     let receipt = await this.provider.getTransactionReceipt(row.tx_hash);
@@ -105,6 +127,7 @@ export class PaymentService {
       // A broken binding retains nonce priority; it cannot authorize another send.
       if (typeof row.raw_tx !== 'string' || !/^0x(?:[0-9a-fA-F]{2})+$/.test(row.raw_tx) ||
         !sameHash(keccak256(row.raw_tx), row.tx_hash)) return;
+      if (!this.recoveryEnvelopeMatches(row)) return;
       try { await this.provider.broadcastTransaction(row.raw_tx!); }
       catch { /* already known, connection loss, or uncertain outcome: inspect hash */ }
       receipt = await this.provider.getTransactionReceipt(row.tx_hash);
