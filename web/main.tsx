@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AssetMetadataRegistry, AssetVolumes, PageNavigation } from './views.tsx';
 import { PaymentHistoryRow, PaymentReceiptSnapshot, type ReceiptSnapshot } from './payment-history.tsx';
+import { startPolling } from './polling.ts';
 import {
   CursorPager, PAGE_SIZE, assetRegistry, formatAssetAmount, pagePath,
   type AssetTotal, type CursorPage, type JournalRow, type Overview, type PagerState,
@@ -66,6 +67,8 @@ function App() {
   const [paymentRevision, setPaymentRevision] = useState(0), [journalRevision, setJournalRevision] = useState(0);
   const session = useRef(0), currentNetwork = useRef('');
   const posts = useRef(new Set<AbortController>());
+  const overviewPoller = useRef<ReturnType<typeof startPolling> | null>(null);
+  const totalsPoller = useRef<ReturnType<typeof startPolling> | null>(null);
 
   const request = useCallback(async <R,>(path: string, options: RequestOptions = {}): Promise<R> => {
     const response = await fetch('/api/' + path, {
@@ -82,6 +85,7 @@ function App() {
 
   function changeToken(next: string) {
     session.current++;
+    overviewPoller.current?.stop(); totalsPoller.current?.stop();
     for (const controller of posts.current) controller.abort();
     posts.current.clear();
     currentNetwork.current = '';
@@ -101,39 +105,56 @@ function App() {
     return () => { active = false; controller.abort(); };
   }, []);
 
-  // One refresh cycle at a time; manual refresh/auth changes abort obsolete work.
+  // RPC-dependent metadata and local accounting refresh independently.
   useEffect(() => {
     if (!key) return;
-    let active = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const controller = new AbortController();
-    const refresh = async () => {
-      try {
-        const overview = await request<Overview>('overview', { signal: controller.signal });
-        if (!active) return;
-        const network = chainContext(overview);
-        if (currentNetwork.current !== network) {
-          currentNetwork.current = network;
+    const activeSession = session.current;
+    const instance = startPolling({
+      load: signal => request<Overview>('overview', { signal }),
+      onValue: overview => {
+        if (session.current !== activeSession) return;
+        const context = chainContext(overview);
+        if (currentNetwork.current !== context) {
+          currentNetwork.current = context;
+          totalsPoller.current?.stop();
+          setTotalsError('');
           setAssets(null); setSelected(null); setForm(false); setUncertainPayment(false);
         }
         setData(overview); setError('');
-        try {
-          const totals = await request<{ assets: AssetTotal[] }>('totals', { signal: controller.signal });
-          if (active) { setAssets(totals.assets); setTotalsError(''); }
-        } catch (e) {
-          if (active && !controller.signal.aborted) setTotalsError(e instanceof Error ? e.message : 'Unable to load asset volumes');
-        }
-      } catch (e) {
-        if (active && !controller.signal.aborted) setError(e instanceof Error ? e.message : 'Unable to refresh overview');
-      } finally {
-        if (active) timer = setTimeout(() => void refresh(), 5000);
+      },
+      onError: error => {
+        if (session.current === activeSession) setError(error instanceof Error ? error.message : 'Unable to refresh overview');
       }
+    });
+    overviewPoller.current = instance;
+    return () => {
+      instance.stop();
+      if (overviewPoller.current === instance) overviewPoller.current = null;
     };
-    void refresh();
-    return () => { active = false; clearTimeout(timer); controller.abort(); };
   }, [key, request, revision]);
 
   const network = data ? chainContext(data) : '';
+  useEffect(() => {
+    if (!key || !network) return;
+    const activeSession = session.current;
+    const instance = startPolling({
+      load: signal => request<{ assets: AssetTotal[] }>('totals', { signal }),
+      onValue: totals => {
+        if (session.current !== activeSession || currentNetwork.current !== network) return;
+        setAssets(totals.assets); setTotalsError('');
+      },
+      onError: error => {
+        if (session.current === activeSession && currentNetwork.current === network)
+          setTotalsError(error instanceof Error ? error.message : 'Unable to load asset volumes');
+      }
+    });
+    totalsPoller.current = instance;
+    return () => {
+      instance.stop();
+      if (totalsPoller.current === instance) totalsPoller.current = null;
+    };
+  }, [key, request, revision, network]);
+
   const payments = useHistory<PaymentRow>('payments', key, network, filter, paymentRevision, request);
   const journals = useHistory<JournalRow>('journals', key, network, 'all', journalRevision, request);
 
@@ -142,12 +163,16 @@ function App() {
     for (const controller of posts.current) controller.abort();
   }, []);
 
-  function refreshLatest() {
+  function refreshReadResources() {
+    overviewPoller.current?.stop(); totalsPoller.current?.stop();
     setRevision(value => value + 1);
+  }
+  function refreshLatest() {
+    refreshReadResources();
     setPaymentRevision(value => value + 1); setJournalRevision(value => value + 1);
   }
   function refreshAfterMutation() {
-    setRevision(value => value + 1);
+    refreshReadResources();
     // New activity can update the latest page, but must not replace an older page.
     if (payments.pager.current?.state.page === 1) setPaymentRevision(value => value + 1);
     if (journals.pager.current?.state.page === 1) setJournalRevision(value => value + 1);
@@ -268,7 +293,7 @@ function App() {
               <PaymentHistoryRow key={row.id} row={row} overview={data}
                 onOpen={() => setSelected({ row, capturedAt: new Date().toISOString() })}/>
             )}</tbody></table>{payments.state.items.length === 0 && <div className="empty">{payments.state.loading ? 'Loading payment history…' : payments.state.error ? 'Payment history is unavailable.' : 'No payments match this view.'}</div>}</div>
-            <PageNavigation state={payments.state} onNext={() => void payments.pager.current?.next()} onPrevious={() => void payments.pager.current?.previous()} onRefresh={() => { setPaymentRevision(value => value + 1); setRevision(value => value + 1); }}/>
+            <PageNavigation state={payments.state} onNext={() => void payments.pager.current?.next()} onPrevious={() => void payments.pager.current?.previous()} onRefresh={() => { setPaymentRevision(value => value + 1); refreshReadResources(); }}/>
           </section>}
           {page === 'Journal' && <section className="panel payment-panel" aria-labelledby="journal-title">
             <div className="panel-heading"><div><h2 id="journal-title">Transfer journal</h2><p>Historical settlement provenance. Current payment status is shown in Payment history.</p></div><span className="tag">READ-ONLY RECORDS</span></div>
@@ -284,7 +309,7 @@ function App() {
               </tr>;
             })}</tbody></table>{journals.state.items.length === 0 && <div className="empty">{journals.state.loading ? 'Loading transfer journal…' : journals.state.error ? 'Transfer journal is unavailable.' : 'No journal records yet.'}</div>}</div>
             <p className="journal-note">A journal row records what was finalized at the time. Reconcile detects later chain mismatches and flags the payment for review; this table does not invent a current journal status.</p>
-            <PageNavigation state={journals.state} onNext={() => void journals.pager.current?.next()} onPrevious={() => void journals.pager.current?.previous()} onRefresh={() => { setJournalRevision(value => value + 1); setRevision(value => value + 1); }}/>
+            <PageNavigation state={journals.state} onNext={() => void journals.pager.current?.next()} onPrevious={() => void journals.pager.current?.previous()} onRefresh={() => { setJournalRevision(value => value + 1); refreshReadResources(); }}/>
           </section>}
           {page === 'Audit trail' && <section className="panel"><div className="panel-heading"><div><h2>Payment lifecycle</h2><p>Latest local operational events, linked to on-chain receipts.</p></div><span className="tag">{data.audit.length} RECENT EVENTS</span></div>
             <div className="timeline">{data.audit.map(event => <div key={event.sequence}><span className="timeline-dot"/><div><strong>{event.action.replaceAll('-', ' ')}</strong><p className="mono">{short(event.payment_id)} · {event.detail}</p></div><time>{new Date(event.at).toLocaleTimeString()}</time></div>)}</div>

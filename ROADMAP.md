@@ -26,6 +26,7 @@ Shutdown drain ordering passes Windows unit/HTTP verification and Linux real-SIG
 - Model issuance/redemption accounting and off-chain reserve attestations as explicit simulations.
 - Add telemetry, failure injection, load testing, and measured results.
 - Extend captured RPC timeout handling to additional failure modes, providers, and longer concurrent workloads.
+- Validate malformed stored journal amounts/tokens before transfer-volume aggregation; current totals assume structurally valid journal values.
 
 ## RPC database context
 
@@ -50,6 +51,10 @@ Shutdown drain ordering passes Windows unit/HTTP verification and Linux real-SIG
 ## Recovered transaction hash binding
 
 - Implemented a byte/hash coherence gate before retransmitting an unresolved broadcast. Invalid evidence retains the reservation and blocks later allocation; existing receipt processing is unchanged. The pre-fix mismatch reproduced two sends across two ticks. Targeted synthetic verification passed 119/119 cases, including 14 new cases, plus strict typecheck. Two real HTTP/Ganache/manual-service cases passed (zero sends during mismatch, original-byte recovery/reconciliation 2/0, genuine-receipt confirmation without retransmission/reconciliation 1/0), plus strict typecheck and Solidity/Vite build. Count is 632,092 nonblank lines (9,180 application and 622,912 attributed Besu, including comments/tests). The full local suite completed 603 cases (598 passes, five existing Windows platform skips, zero failures), exit 0, in 240,919.6395 ms. Source [`26810901ee88755480c98bffbc0116fa05d6f851`](https://github.com/samadalam481470sa-cmd/clearledger/commit/26810901ee88755480c98bffbc0116fa05d6f851) passed [regular CI `40650583555`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40650583555) with all 603 tests/zero skips, fresh install/typecheck/build/count, and [Besu CI `40650583629`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40650583629) for ordinary EOA/quorum/wallet acceptance. Both completed conclusions, source heads, job steps and logs were verified. The corrupted-byte cases remain manual-service HTTP/Ganache evidence, separate from Besu and actual CLI recovery. Transaction-field authorization, consistent database rewriting and global signer coordination remain separate boundaries.
+
+## Independent dashboard refresh
+
+- Decoupled RPC-dependent overview polling from local transfer totals after an initial chain/router context is established. Each resource remains serial and handles its own error/retry lifecycle; auth/manual-refresh/observed network changes suppress obsolete responses. Nine deterministic lifecycle cases and two new HTTP cases passed, plus strict typecheck and Solidity/Vite build. Count is 632,441 nonblank lines (9,529 application and 622,912 attributed Besu, including comments/tests). Final local verification completed **614 cases: 609 passes, zero failures, five existing Windows platform skips**, exit 0, in 242,755.663 ms. Publication and regular CI remain pending; no new Besu run is claimed. Initial RPC connection, browser interaction/accessibility, independent metadata truth, and journal-structure validation remain outside this increment.
 
 ## Publication and maintenance
 
