@@ -147,6 +147,12 @@ Set environment variables in the shell. The app does not automatically load `.en
 
 Run `npm start`. A custom DB path needs an existing parent directory. API tokens and keys must not appear in tracked files.
 
+### RPC listener readiness
+
+The durable RPC CLI awaits successful loopback listening before logging its actual bound port or starting the worker. A bind rejection such as `EADDRINUSE` starts no worker tick or financial transition. Cleanup destroys the provider, closes the financial Store, then releases ownership; if Store close fails, ownership remains until process exit.
+
+Store PRAGMAs/schema and deployment context may already initialize before binding. Failed binding preserves existing logical payment, audit, and journal records, not a byte-identical file or a promise of no SQLite writes. This ordering applies only to durable RPC startup; demo pre-listen seeding and other configuration/migration behavior are unchanged. Four helper cases and the actual-CLI occupied-port/restart regression pass locally; see [validation](VALIDATION.md#rpc-listener-readiness) for full-suite evidence and publication status.
+
 ### RPC database ownership
 
 After read-only chain/router/role checks, the actual RPC CLI acquires ownership before opening Store, binding context, or starting HTTP/worker activity. It resolves the financial file's canonical path and uses that path for Store, so main-file symlink aliases share ownership. RPC `DB_PATH` rejects `:memory:`, `file:` URIs, nonregular files, and hard-linked financial files.

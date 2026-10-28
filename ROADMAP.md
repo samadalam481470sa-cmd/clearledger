@@ -13,6 +13,10 @@ Prioritize verified payment correctness and demonstrable engineering over source
 
 Shutdown drain ordering passes Windows unit/HTTP verification and Linux real-SIGTERM helper integration. Actual RPC CLI autonomous crash recovery and POSIX signal-drain/restart integration pass Linux CI; graceful handling does not cover force-kill or blocked JavaScript.
 
+## RPC listener readiness
+
+- Durable RPC startup now awaits loopback readiness before worker dispatch and releases database ownership only after failed-bind Store cleanup. The baseline reproduced a local failed-status/audit transition before bind refusal; four native HTTP helper cases and one actual CLI occupied-port/refusal/free-port restart case pass. Existing logical records stay unchanged on refusal, then the same DB isolates one corrupt row and settles one independent instruction once with reconciliation 1/0. Strict typecheck/build and 704 local cases pass (699 passes, five existing Windows skips, zero failures); the count is 633,745 nonblank lines (10,833 application and 622,912 attributed Besu, including comments/tests). Publication CI is pending. Pre-bind schema/context writes, demo seeding, broader configuration failures and soak behavior remain outside this increment. See [validation](docs/VALIDATION.md#rpc-listener-readiness).
+
 ## Advanced application work
 
 - Replace the legacy development EVM with a maintained Cancun-compatible runner; the scoped Zod/Vite/compiler-helper updates leave 33 Ganache-tree audit entries requiring review.

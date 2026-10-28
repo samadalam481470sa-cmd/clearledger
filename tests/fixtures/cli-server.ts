@@ -5,7 +5,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 interface CliOptions {
-  db: string; rpc: string; key: string; router: string; apiKey?: string;
+  db: string; rpc: string; key: string; router: string; apiKey?: string; port?: number;
   onSpawn?: (handle: CliHandle) => void;
 }
 export interface CliHandle {
@@ -27,7 +27,7 @@ export async function startCli(options: CliOptions): Promise<CliHandle> {
   const child = spawn(process.execPath, ['--import', 'tsx', 'src/server.ts'], {
     cwd: resolve(dirname(fileURLToPath(import.meta.url)), '../..'),
     env: { ...process.env, RPC_URL: options.rpc, CHAIN_ID: '31337', RELAYER_PRIVATE_KEY: options.key,
-      ROUTER_ADDRESS: options.router, API_KEY: apiKey, DB_PATH: options.db, PORT: '0',
+      ROUTER_ADDRESS: options.router, API_KEY: apiKey, DB_PATH: options.db, PORT: String(options.port ?? 0),
       CONFIRMATIONS: '1', RPC_TIMEOUT_MS: '5000', ASSET_METADATA: '[]', TSX_DISABLE_CACHE: '1',
       TEMP: runtimeTemp, TMP: runtimeTemp, TMPDIR: runtimeTemp },
     stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true

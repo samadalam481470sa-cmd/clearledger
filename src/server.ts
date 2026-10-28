@@ -9,6 +9,7 @@ import { createShutdown, startWorker } from './lifecycle.ts';
 import { parseAssetMetadata } from './assets.ts';
 import { bindDatabaseContext } from './database-context.ts';
 import { acquireDatabaseOwnership } from './database-ownership.ts';
+import { listenLoopback } from './listener.ts';
 
 function required(name: string) {
   const value = process.env[name];
@@ -58,10 +59,16 @@ const store = (() => {
 const service = new PaymentService(store, provider, relayer, router, chainId, address, Number(process.env.CONFIRMATIONS ?? '2'));
 const port = Number(process.env.PORT ?? '4317');
 const server = makeServer({ service, apiKey, port, mode: 'rpc', assetMetadata });
-server.listen(port, '127.0.0.1', () => {
-  const boundPort = (server.address() as { port: number }).port;
-  console.log('ClearLedger RPC mode: http://127.0.0.1:' + boundPort);
-});
+try { await listenLoopback(server, port); }
+catch {
+  provider.destroy();
+  // No worker or HTTP operation started. Retain ownership if Store close fails.
+  store.close();
+  ownership.release();
+  throw new Error('Could not start loopback HTTP listener; check PORT and port availability');
+}
+const boundPort = (server.address() as { port: number }).port;
+console.log('ClearLedger RPC mode: http://127.0.0.1:' + boundPort);
 const worker = startWorker(() => service.tick(), { onError: () => console.error('Worker waiting for RPC recovery') });
 const shutdown = createShutdown({
   stopWorker: () => worker.stop(),
