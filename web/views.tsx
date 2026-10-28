@@ -1,4 +1,17 @@
 import { assetMetadataFor, assetRegistry, formatAssetAmount, type AssetContext, type AssetTotal, type PagerState } from './dashboard.ts';
+import { type TotalsState } from './totals.ts';
+
+/** Present one resource warning; known corruption never falls back to cached volume. */
+export function AssetTotalsPanel({ state, overview }: { state: TotalsState; overview?: AssetContext | null }) {
+  return <>
+    {state.integrityError ? <div role="alert" className="banner danger">{state.integrityError}</div> :
+      state.transportError && <div role="alert" className="banner danger">Asset totals could not refresh: {state.transportError}.{state.assets ? ' Showing the last received totals.' : ''}</div>}
+    {state.assets ? <AssetVolumes assets={state.assets} overview={overview}/> :
+      <section className="panel"><div className="empty">{state.integrityError
+        ? 'Asset totals are unavailable. Verify journal data before using aggregate amounts.'
+        : state.transportError ? 'Asset totals are unavailable.' : 'Loading asset volumes…'}</div></section>}
+  </>;
+}
 
 interface AssetVolumesProps {
   assets: AssetTotal[];

@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { AssetMetadataRegistry, AssetVolumes, PageNavigation } from './views.tsx';
+import { AssetMetadataRegistry, AssetTotalsPanel, PageNavigation } from './views.tsx';
 import { PaymentHistoryRow, PaymentReceiptSnapshot, type ReceiptSnapshot } from './payment-history.tsx';
 import { startPolling } from './polling.ts';
+import { emptyTotals, reduceTotals, totalsCounts, type TotalsReport } from './totals.ts';
 import {
   CursorPager, PAGE_SIZE, assetRegistry, formatAssetAmount, pagePath,
-  type AssetTotal, type CursorPage, type JournalRow, type Overview, type PagerState,
+  type CursorPage, type JournalRow, type Overview, type PagerState,
   type PaymentRow, type StatusFilter
 } from './dashboard.ts';
 import './style.css';
@@ -57,7 +58,7 @@ function useHistory<T>(collection: 'payments' | 'journals', key: string, network
 function App() {
   const [key, setKey] = useState(''), [manualKey, setManualKey] = useState('');
   const [data, setData] = useState<Overview | null>(null);
-  const [assets, setAssets] = useState<AssetTotal[] | null>(null), [totalsError, setTotalsError] = useState('');
+  const [totals, setTotals] = useState(emptyTotals);
   const [page, setPage] = useState('Overview'), [filter, setFilter] = useState<StatusFilter>('all');
   const [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState(false);
   const [form, setForm] = useState(false), [amount, setAmount] = useState('250.00');
@@ -89,8 +90,8 @@ function App() {
     for (const controller of posts.current) controller.abort();
     posts.current.clear();
     currentNetwork.current = '';
-    setData(null); setAssets(null); setSelected(null); setForm(false);
-    setError(''); setTotalsError(''); setNotice(''); setBusy(false); setUncertainPayment(false);
+    setData(null); setTotals(emptyTotals()); setSelected(null); setForm(false);
+    setError(''); setNotice(''); setBusy(false); setUncertainPayment(false);
     setFilter('all'); setManualKey(''); setKey(next.trim());
     setRevision(value => value + 1);
     setPaymentRevision(value => value + 1); setJournalRevision(value => value + 1);
@@ -117,8 +118,7 @@ function App() {
         if (currentNetwork.current !== context) {
           currentNetwork.current = context;
           totalsPoller.current?.stop();
-          setTotalsError('');
-          setAssets(null); setSelected(null); setForm(false); setUncertainPayment(false);
+          setTotals(emptyTotals()); setSelected(null); setForm(false); setUncertainPayment(false);
         }
         setData(overview); setError('');
       },
@@ -138,14 +138,14 @@ function App() {
     if (!key || !network) return;
     const activeSession = session.current;
     const instance = startPolling({
-      load: signal => request<{ assets: AssetTotal[] }>('totals', { signal }),
-      onValue: totals => {
+      load: signal => request<TotalsReport>('totals', { signal }),
+      onValue: report => {
         if (session.current !== activeSession || currentNetwork.current !== network) return;
-        setAssets(totals.assets); setTotalsError('');
+        setTotals(previous => reduceTotals(previous, { type: 'report', report }));
       },
       onError: error => {
         if (session.current === activeSession && currentNetwork.current === network)
-          setTotalsError(error instanceof Error ? error.message : 'Unable to load asset volumes');
+          setTotals(previous => reduceTotals(previous, { type: 'transport-error', error }));
       }
     });
     totalsPoller.current = instance;
@@ -236,8 +236,7 @@ function App() {
     }
   }
 
-  const completed = assets?.reduce((count, asset) => count + asset.settledPayments, 0);
-  const review = assets?.reduce((count, asset) => count + asset.reviewPayments, 0);
+  const counts = totalsCounts(totals);
   const isDemo = data?.mode === 'demo' && Boolean(data.token);
   const metadata = assetRegistry(data);
   const displayedPrecision = metadata.status === 'ready' && metadata.entries.length > 0 ? 'Configured per asset' :
@@ -266,13 +265,12 @@ function App() {
         {data && <>
           {page === 'Overview' && <>
             <div className="stats">
-              <div className="stat"><label>Journaled assets <span>↗</span></label><strong>{assets?.length ?? '—'}</strong><small>Amounts stay separate by token below</small></div>
-              <div className="stat"><label>Completed payments <span>✓</span></label><strong>{completed ?? '—'}<em> settlements</em></strong><small>Journaled records across all assets</small></div>
-              <div className="stat"><label>In review <span>◇</span></label><strong>{review ?? '—'}<em> payments</em></strong><small>Excluded from settled asset volume</small></div>
+              <div className="stat"><label>Journaled assets <span>↗</span></label><strong>{counts.assets ?? '—'}</strong><small>Amounts stay separate by token below</small></div>
+              <div className="stat"><label>Completed payments <span>✓</span></label><strong>{counts.completed ?? '—'}<em> settlements</em></strong><small>Journaled records across all assets</small></div>
+              <div className="stat"><label>In review <span>◇</span></label><strong>{counts.review ?? '—'}<em> payments</em></strong><small>Excluded from settled asset volume</small></div>
               <div className="stat"><label>Latest block <span>⬡</span></label><strong>{data.block?.number.toLocaleString() ?? '—'}</strong><small><span className="dot"></span> Chain {data.chainId} · live RPC data</small></div>
             </div>
-            {totalsError && <div role="alert" className="banner danger">Asset totals could not refresh: {totalsError}.{assets ? ' Showing the last received totals.' : ''}</div>}
-            {assets ? <AssetVolumes assets={assets} overview={data}/> : <section className="panel"><div className="empty">{totalsError ? 'Asset totals are unavailable.' : 'Loading asset volumes…'}</div></section>}
+            <AssetTotalsPanel state={totals} overview={data}/>
             <div className="overview-grid">
               <section className="panel flow"><div className="panel-heading"><div><h2>A payment you can trace</h2><p>From authorization to a balanced journal.</p></div><span className="tag">END-TO-END</span></div>
                 <div className="flow-track">

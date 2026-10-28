@@ -26,7 +26,7 @@ Shutdown drain ordering passes Windows unit/HTTP verification and Linux real-SIG
 - Model issuance/redemption accounting and off-chain reserve attestations as explicit simulations.
 - Add telemetry, failure injection, load testing, and measured results.
 - Extend captured RPC timeout handling to additional failure modes, providers, and longer concurrent workloads.
-- Validate malformed stored journal amounts/tokens before transfer-volume aggregation; current totals assume structurally valid journal values.
+- Extend journal-integrity verification beyond token/amount structure to independently evidenced provenance, omitted/orphaned data and controlled repair procedures.
 
 ## RPC database context
 
@@ -55,6 +55,10 @@ Shutdown drain ordering passes Windows unit/HTTP verification and Linux real-SIG
 ## Independent dashboard refresh
 
 - Decoupled RPC-dependent overview polling from local transfer totals after an initial chain/router context is established. Each resource remains serial and handles its own error/retry lifecycle; auth/manual-refresh/observed network changes suppress obsolete responses. Nine deterministic lifecycle cases and two new HTTP cases passed, plus strict typecheck and Solidity/Vite build. Count is 632,441 nonblank lines (9,529 application and 622,912 attributed Besu, including comments/tests). Final local verification completed **614 cases: 609 passes, zero failures, five existing Windows platform skips**, exit 0, in 242,755.663 ms. Source [`584279db93121fa59ae262bc61d113aa985626c1`](https://github.com/samadalam481470sa-cmd/clearledger/commit/584279db93121fa59ae262bc61d113aa985626c1) passed [regular CI `40654157209`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40654157209) with all 614 tests/zero skips, fresh install/typecheck/build/count. The two HTTP cases and nine deterministic lifecycle cases passed; source head, completed conclusion, all steps and logs were verified. This frontend increment adds no new Besu result, and App wiring remains static-review evidence rather than mounted React/browser verification. Initial RPC connection, browser interaction/accessibility, independent metadata truth, and journal-structure validation remain outside this increment.
+
+## Journal totals integrity
+
+- Implemented canonical positive per-row uint256 amounts and nonzero hex token syntax checks before local volume aggregation; sums may exceed uint256. A malformed included row makes the entire HTTP report unavailable with a fixed diagnostic and no writes, skipped/partial rows or invented zero. Valid success shape remains unchanged and unexpected storage errors keep the existing error path. Backend verification passed 66/66 cases, including 22 malformed HTTP reports with no RPC, leaks or writes. Eight client transition/SSR cases passed, and extended HTTP/client cache plus pagination/history/refresh regressions passed 18/18; strict typecheck passed. The final local suite completed 688 cases (683 passes, five existing Windows platform skips, zero failures), exit 0, in 241,312.9462 ms. Strict typecheck and Solidity/Vite build passed; count is 632,769 nonblank lines (9,857 application and 622,912 attributed Besu, including comments/tests). Publication and regular/Besu CI remain pending. Full journal/payment matching, coherent tampering, omitted/orphaned data and automatic repair remain future work.
 
 ## Publication and maintenance
 

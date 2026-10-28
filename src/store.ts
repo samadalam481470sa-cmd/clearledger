@@ -10,6 +10,9 @@ export interface RecordRow {
 export class Conflict extends Error {}
 export class PaginationError extends Error {}
 export class StateTransitionError extends Error {}
+export class JournalIntegrityError extends Error {
+  constructor() { super('Stored journal data is invalid; totals are unavailable'); }
+}
 interface PageOptions { limit?: number; cursor?: string; status?: Status }
 interface Cursor { version: 1; kind: 'payments' | 'journals'; status: Status | null; upper: number; before: number }
 interface JournalRow {
@@ -198,10 +201,17 @@ export class Store {
   assetTotals() {
     const assets = new Map<string, { token: string; settledPayments: number; settledBaseUnits: bigint; reviewPayments: number; reviewBaseUnits: bigint }>();
     for (const record of this.db.prepare("SELECT j.token,j.amount,p.status FROM journals j JOIN payments p ON p.id=j.payment_id WHERE p.status IN ('settled','review')").iterate()) {
-      const token = String(record.token).toLowerCase();
+      // A malformed included row invalidates the whole report. Coercion could
+      // turn missing/negative/nondecimal amounts into plausible transfer volume.
+      if (typeof record.token !== 'string' || !/^0x[0-9a-fA-F]{40}(?![\s\S])/.test(record.token) ||
+        record.token === '0x' + '0'.repeat(40) || typeof record.amount !== 'string' ||
+        !/^[1-9][0-9]{0,77}(?![\s\S])/.test(record.amount)) throw new JournalIntegrityError();
+      const amount = BigInt(record.amount);
+      if (amount >= 2n ** 256n) throw new JournalIntegrityError();
+      const token = record.token.toLowerCase();
       const total = assets.get(token) ?? { token, settledPayments: 0, settledBaseUnits: 0n, reviewPayments: 0, reviewBaseUnits: 0n };
-      if (record.status === 'settled') { total.settledPayments++; total.settledBaseUnits += BigInt(String(record.amount)); }
-      else { total.reviewPayments++; total.reviewBaseUnits += BigInt(String(record.amount)); }
+      if (record.status === 'settled') { total.settledPayments++; total.settledBaseUnits += amount; }
+      else { total.reviewPayments++; total.reviewBaseUnits += amount; }
       assets.set(token, total);
     }
     return [...assets.values()].sort((a, b) => a.token.localeCompare(b.token)).map(t => ({ ...t,

@@ -320,6 +320,12 @@ This is one bounded local-EVM transport/process-recovery case, not an autonomous
 
 - Published source [`584279db93121fa59ae262bc61d113aa985626c1`](https://github.com/samadalam481470sa-cmd/clearledger/commit/584279db93121fa59ae262bc61d113aa985626c1), tree `8172ffcd6b722114b16d59ddebd3629c17867c43`, passed [regular CI `40654157209`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40654157209), job `122701037341`: **614 passes/zero failures/zero skips** in 215,764.539355 ms, plus fresh npm ci, strict typecheck, Solidity 0.8.30/Paris and Vite 7.3.7 build (33 transformed modules), and source count 632,441. The held/failed-overview and independent-totals-error HTTP cases passed in 102.453793/74.186442 ms, observing local review/settled counts 1/0 during held RPC, redacted overview 503 then recovery at block 22, and totals 422/last-data retention while overview advanced to 23 before totals recovery. All nine deterministic polling cases also passed. Node/npm were 24.21.0/11.19.0; installation still reported 33 audit entries including five critical findings. Source head, completed conclusion, every job step and logs were verified. This client/test/docs increment adds no new Besu result; the prior source-bound network evidence remains historical. App initial-context/callback wiring was reviewed statically; these checks do not mount React or establish browser interaction, visual/accessibility quality, a soak, or an availability SLO.
 
+## Journal totals integrity
+
+- Included settled/review journal token and amount fields are validated before aggregation. Invalid primitive types, malformed/zero token syntax, noncanonical/nonpositive decimals or per-row uint256 overflow raise a fixed dedicated error. The whole HTTP report becomes `{assets:null,integrityError:"Stored journal data is invalid; totals are unavailable"}` with status 200; valid responses remain unchanged. Sums may exceed uint256. No row skipping, partial/zero fallback, parser/private diagnostic, RPC or storage repair is introduced.
+- Synthetic Store and authenticated HTTP verification passed **66/66** in 1,421.3464 ms. The 63 Store cases cover malformed amounts/tokens in both included statuses, BLOB values, newline/prefix/number syntax, exact oversized aggregates and case grouping, empty/excluded histories, independence from payment-payload parsing, unchanged snapshots/schema/audits/SQLite total_changes, and unexpected SQLite failures. Three HTTP cases took 79.5366/11.7583/3.9006 ms, including 22 fixed unavailable reports with zero RPC calls/private leaks/read-induced writes, unchanged valid response shape, controlled fixture repair, authentication and preserved generic SQLite error handling.
+- These are synthetic SQLite/HTTP checks, not executed EVM transfers or actual database recovery. Eight client state/SSR checks passed in 306.4895 ms, covering known-integrity cache/count invalidation, persistence across later transport errors, single fixed unavailable warning without stale/empty/zero figures, transport-only last-good data, valid/empty recovery and context reset. The extended real-HTTP/client reducer contract plus prior pagination/history/independent-refresh cases passed 18/18 in 8,878.3748 ms. Strict typecheck passed. These frontend checks do not mount App or prove browser appearance/events. Final local verification completed **688 cases: 683 passes, zero failures, five existing Windows platform skips**, exit 0, in 241,312.9462 ms. Strict typecheck and Solidity 0.8.30/Paris plus Vite 7.3.7 build passed (34 transformed modules). Current count is **632,769 nonblank lines**: application 80 files/10,376 physical/9,857 nonblank; attributed Besu unchanged at 4,484/714,385/622,912, including comments/tests. Publication and regular/Besu CI remain pending. Full journal/payment matching, missing/orphaned/valid-but-wrong/coherently altered records, signature authenticity, RPC independence and balance/reserve claims are outside the check. Browser interaction/layout/accessibility and production availability remain unverified.
+
 ## Public source verification — October 25, 2026
 
 The project is public at [samadalam481470sa-cmd/clearledger](https://github.com/samadalam481470sa-cmd/clearledger). The user-created repository was verified as public with connected write access. Source commit [`762dd075d4b3dbe8d04a0e88fa24550818f734a7`](https://github.com/samadalam481470sa-cmd/clearledger/commit/762dd075d4b3dbe8d04a0e88fa24550818f734a7) contains all 6,785 reviewed tracked files.
@@ -342,11 +348,11 @@ Browser-origin access remains denied. No alternative browser route was used, so 
 
 ## Reproduced source count
 
-The current independent-dashboard-refresh source count is 632,441 nonblank source lines, including comments and tests:
+The current journal-totals-integrity source count is 632,769 nonblank source lines, including comments and tests:
 
 | Source | Files | Physical lines | Nonblank lines |
 | --- | ---: | ---: | ---: |
-| Application, including attributed adaptation | 76 | 10,024 | 9,529 |
+| Application, including attributed adaptation | 80 | 10,376 | 9,857 |
 | Attributed Besu snapshot | 4,484 | 714,385 | 622,912 |
 
 The script's exclusions and methodology are recorded in `docs/source-count.json`; the size is not a claim of independently authored executable statements.

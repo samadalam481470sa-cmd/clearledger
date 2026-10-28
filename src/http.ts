@@ -3,7 +3,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve, extname } from 'node:path';
 import { z, ZodError } from 'zod';
-import { Conflict, PaginationError } from './store.ts';
+import { Conflict, JournalIntegrityError, PaginationError } from './store.ts';
 import { PaymentService } from './service.ts';
 import { activeAssetMetadata } from './assets.ts';
 import { type AssetMetadata } from '../shared/asset-metadata.ts';
@@ -100,7 +100,13 @@ export function makeServer(options: HttpOptions) {
           return;
         }
         if (req.method === 'GET' && url.pathname === '/api/totals') {
-          json(res, 200, { assets: service.store.assetTotals() }); return;
+          try {
+            json(res, 200, { assets: service.store.assetTotals() });
+          } catch (error) {
+            if (!(error instanceof JournalIntegrityError)) throw error;
+            json(res, 200, { assets: null, integrityError: 'Stored journal data is invalid; totals are unavailable' });
+          }
+          return;
         }
         if (req.method === 'POST' && url.pathname === '/api/payments') {
           const result = await service.accept(await body(req));
