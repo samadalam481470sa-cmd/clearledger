@@ -1,0 +1,32 @@
+/* Project details lives inside the existing signed-test-assets workspace, but its content
+   is public documentation and never requests credentials or payment data. */
+.project-details{--dt-ink:#193c2b;--dt-mute:#597161;--dt-line:#dbe8da;color:var(--dt-ink)}
+.details-kicker{font-size:10px;letter-spacing:2.3px;text-transform:uppercase;font-weight:750;color:#4d7856}
+.details-hero{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(260px,.9fr);gap:35px;align-items:center;min-height:310px;background:radial-gradient(ellipse at 90% 10%,#d2eed5,transparent 60%),linear-gradient(125deg,#fff,#eff7ef);border:1px solid var(--dt-line);border-radius:17px;padding:34px;overflow:hidden}
+.details-hero h2{font-size:clamp(28px,3.6vw,49px);letter-spacing:-.045em;line-height:1.1;margin:14px 0;color:#113e2d}
+.details-hero-copy>p,.details-section-head>p,.details-start p{max-width:720px;line-height:1.7;color:var(--dt-mute);font-size:13px}
+.details-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:23px}
+.details-primary,.details-secondary{display:inline-flex;align-items:center;justify-content:center;padding:12px 15px;border-radius:8px;font-weight:700;font-size:12px;min-height:42px;text-align:center}
+.details-primary{background:#174d35;color:#fff}.details-primary:hover{background:#0e3b27}
+.details-secondary{background:#fff;color:#174d35;border:1px solid #bed4c2}.details-secondary:hover{background:#edf6eb}
+.details-hero-visual{display:grid;grid-template-columns:1fr 1fr;gap:11px;align-content:center}
+.details-hero-visual span{background:#fff;border:1px solid #d5e6d6;border-radius:11px;padding:17px 14px;color:#538262;box-shadow:0 8px 20px #2c5a3613;font-size:12px;font-weight:700}
+.details-hero-visual b{color:#163b2a;font-size:17px;display:block;margin:10px 0 5px}.details-hero-visual small{color:#708879;font-size:11px;font-weight:500;display:block}
+.details-warning{margin-top:22px;padding:18px 21px;border-left:4px solid #b27b35;border-radius:7px;background:#fff6e9;color:#7c512b;font-size:12px;line-height:1.65}.details-warning strong{display:block;font-size:13px;margin-bottom:3px}
+.details-section{margin-top:44px}.details-section h2{font-size:clamp(23px,2.9vw,32px);letter-spacing:-.03em;margin:7px 0 8px;color:#173e2d}
+.details-section-head{margin-bottom:20px}.details-section-head p{margin:0}
+.details-card-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px}
+.details-card{background:#fff;border:1px solid var(--dt-line);padding:22px 20px;border-radius:12px;min-height:162px}
+.details-card h3{font-size:15px;color:#173e2d;margin:0 0 10px}.details-card p{font-size:12px;line-height:1.75;color:var(--dt-mute);margin:0}
+.details-stack{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.details-stack>div{display:flex;flex-direction:column;gap:7px;padding:18px 20px;border-radius:9px;background:#fff;border:1px solid var(--dt-line)}
+.details-stack span{font-size:11px;color:#6d816e}.details-stack strong{font-size:13px;color:#1d4530}
+.details-small{font-size:12px;color:var(--dt-mute);line-height:1.75}
+.details-steps{padding:20px 24px 20px 45px;border:1px solid var(--dt-line);background:#fff;border-radius:12px}
+.details-steps li{line-height:1.7;font-size:13px;color:var(--dt-mute);padding:8px 0}.details-steps strong{color:#214431}
+.details-start{border:1px solid #c9ddc7;border-radius:15px;background:#f0f7ef;padding:26px}
+.details-start pre{background:#12291d;color:#e0ffdd;border-radius:10px;font-size:13px;padding:21px;overflow:auto;line-height:1.8;max-width:800px}
+.details-start a,.details-footer a{color:#176745;text-decoration:underline;text-underline-offset:3px}
+.details-footer{display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;margin:32px 0 15px;padding-top:20px;border-top:1px solid var(--dt-line);font-size:12px;color:#6c8471}
+@media(max-width:1100px){.details-card-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.details-hero{grid-template-columns:1fr}.details-hero-visual{grid-template-columns:repeat(4,minmax(0,1fr))}.details-hero-visual span{padding:12px}.details-hero-visual b{font-size:13px}}
+@media(max-width:700px){.details-hero{padding:23px}.details-card-grid,.details-stack{grid-template-columns:1fr}.details-hero-visual{grid-template-columns:1fr 1fr}.details-card{min-height:0;padding:18px}.details-start{padding:18px}.details-section{margin-top:30px}.details-steps{padding:15px 18px 15px 35px}}
