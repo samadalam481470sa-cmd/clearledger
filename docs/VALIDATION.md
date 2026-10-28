@@ -338,6 +338,13 @@ This is one bounded local-EVM transport/process-recovery case, not an autonomous
 
 - Published source [`8981ed4b5db60ab07cbf724e5eb08b28ff94b131`](https://github.com/samadalam481470sa-cmd/clearledger/commit/8981ed4b5db60ab07cbf724e5eb08b28ff94b131), tree `5728873c79764f9a7e70b1446cd948610119dac0`, passed [regular CI `40692021222`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40692021222), job `122828968498`: **689 passes/zero failures/zero skips** in 260,327.006109 ms, plus fresh npm ci, strict typecheck, Solidity 0.8.30/Paris and Vite 7.3.7 build (34 transformed modules), and source count 633,064. The new actual CLI case passed in 17,003.03725 ms: four blocked sends per process, zero fault forwards, three forwards/unique hashes after healing (one revert/two settlements), two journals and reconciliation 2/0. Revoked/restored replay and fresh wallet ID checks passed; acceptance-503 retries remained zero. Node/npm were 24.21.0/11.19.0; installation still reported 33 audit entries including five critical findings. Source head, completed conclusion, every step and logs were verified. This test/docs/count-only increment adds no new Besu result or runtime behavior; prior source-bound network evidence remains historical.
 
+## Coalesced reconciliation
+
+- The wrapper assigns a deferred shared pass before scanning, clears only that pass on success/rejection, and returns independent result objects/exception arrays. The underlying scan is unchanged. Concurrent joiners inherit its original insertion boundary and mutable status membership; completion is never cached. Existing authentication, rate limiting, RPC redaction, earlier review commits, settlement scheduling and per-request HTTP drain ownership remain.
+- A pre-fix three-caller case observed three receipt reads. The final targeted suite passed **90/90** in 8,223.2106 ms: seven new controlled concurrency cases and 83 existing integrity/pagination cases. Coverage includes one traversal, isolated result mutation, fresh later calls, shared RPC and synchronous Store failure/retry, retained partial review commits, multiple pages/late insertion, separate instances and synchronous provider reentry. The updated existing concurrency case uses an explicit entered checkpoint and confirms one receipt read/one review audit.
+- Three real authenticated HTTP cases passed **3/3** in 646.4996 ms (50.1553/17.4242/11.714 ms), with synthetic SQLite/receipt/RPC controls. Two handlers share one receipt/block query and receive separate service results; unauthorized requests stay 401. A later corrupted journal starts a fresh scan/review. Shared TIMEOUT fans out the fixed503 without private details or false review; the next healthy call scans again. Shutdown drain stays pending until the shared pass finishes and rejects new work with503. These controls do not execute EVM transfers or establish browser interaction; client-disconnect semantics remain covered by existing HTTP lifecycle evidence and static review.
+- Strict typecheck and Solidity 0.8.30/Paris plus Vite 7.3.7 build passed (34 transformed modules). Count is 633,417 nonblank lines (83 application files/11,047 physical/10,505 nonblank; attributed Besu unchanged at 4,484/714,385/622,912, including comments/tests). Final local verification completed **699 cases: 694 passes, zero failures, five existing Windows platform skips**, exit 0, in 264,911.997 ms. Publication and regular/Besu CI remain pending. Per-instance coalescing supplies no cross-instance/process lease, job queue, atomic snapshot, overall deadline, cancellation, independent RPC proof, soak or availability SLO.
+
 ## Public source verification — October 25, 2026
 
 The project is public at [samadalam481470sa-cmd/clearledger](https://github.com/samadalam481470sa-cmd/clearledger). The user-created repository was verified as public with connected write access. Source commit [`762dd075d4b3dbe8d04a0e88fa24550818f734a7`](https://github.com/samadalam481470sa-cmd/clearledger/commit/762dd075d4b3dbe8d04a0e88fa24550818f734a7) contains all 6,785 reviewed tracked files.
@@ -360,11 +367,11 @@ Browser-origin access remains denied. No alternative browser route was used, so 
 
 ## Reproduced source count
 
-The current CLI-wallet-reservation source count is 633,064 nonblank source lines, including comments and tests:
+The current coalesced-reconciliation source count is 633,417 nonblank source lines, including comments and tests:
 
 | Source | Files | Physical lines | Nonblank lines |
 | --- | ---: | ---: | ---: |
-| Application, including attributed adaptation | 81 | 10,679 | 10,152 |
+| Application, including attributed adaptation | 83 | 11,047 | 10,505 |
 | Attributed Besu snapshot | 4,484 | 714,385 | 622,912 |
 
 The script's exclusions and methodology are recorded in `docs/source-count.json`; the size is not a claim of independently authored executable statements.

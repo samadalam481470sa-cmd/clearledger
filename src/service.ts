@@ -8,10 +8,12 @@ function isHash(value: unknown): value is string {
 function sameHash(actual: unknown, expected: string): boolean {
   return isHash(actual) && actual.toLowerCase() === expected.toLowerCase();
 }
+interface ReconciliationResult { checked: number; exceptions: string[]; at: string }
 
 export class PaymentService {
   readonly signingDomain: TypedDataDomain;
   private running = false;
+  private reconciling?: Promise<ReconciliationResult>;
   constructor(readonly store: Store, readonly provider: JsonRpcProvider,
     readonly relayer: Wallet, readonly router: any, readonly chainId: number,
     readonly routerAddress: string, readonly confirmations = 1) {
@@ -159,7 +161,19 @@ export class PaymentService {
     return found ? 'matching' : 'missing';
   }
 
-  async reconcile() {
+  reconcile(): Promise<ReconciliationResult> {
+    if (!this.reconciling) {
+      // Assign before scanning so even synchronous provider/Store reentry joins
+      // this pass. Only this pass may clear its in-flight slot; no result is cached.
+      const run: Promise<ReconciliationResult> = Promise.resolve()
+        .then(() => this.scanReconciliation())
+        .finally(() => { if (this.reconciling === run) this.reconciling = undefined; });
+      this.reconciling = run;
+    }
+    return this.reconciling.then(result => ({ ...result, exceptions: [...result.exceptions] }));
+  }
+
+  private async scanReconciliation(): Promise<ReconciliationResult> {
     let checked = 0;
     const exceptions: string[] = [];
     let cursor: string | undefined;

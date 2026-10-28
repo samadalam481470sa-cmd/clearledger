@@ -239,18 +239,22 @@ test('a journal storage query failure propagates instead of being mislabeled as 
   assert.deepEqual({ row: store.get(paymentId), audit: store.events() }, before);
 });
 
-test('concurrent reconciliation of the same corrupt receipt records one identical review transition', async () => {
+test('concurrent reconciliation shares one scan and records one identical review transition', async () => {
   let release!: () => void;
   const pending = new Promise<void>(resolve => { release = resolve; });
+  let enter!: () => void;
+  const entered = new Promise<void>(resolve => { enter = resolve; });
   let reads = 0;
   const reviewing = service({ getTransactionReceipt: async () => {
     reads++;
+    enter();
     await pending;
     return { ...receipt, hash: '0x' + '99'.repeat(32) };
   } });
   const first = reviewing.reconcile();
   const second = reviewing.reconcile();
-  assert.equal(reads, 2);
+  await entered;
+  assert.equal(reads, 1);
   release();
   const results = await Promise.all([first, second]);
   for (const result of results) assert.deepEqual(result.exceptions, [paymentId]);

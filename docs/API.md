@@ -219,6 +219,12 @@ RPC exceptions propagate without marking the affected payment for review merely 
 
 SQLite block integers outside JavaScript's safe integer range are invalid provenance. The exact SQLite value remains unchanged, but JavaScript/JSON reads of that invalid metadata can be approximate; API output must not be treated as an exact representation of it.
 
+### Concurrent reconciliation
+
+Simultaneous reconciliation calls on one `PaymentService` instance share its active scan, with a separate result object and exception array for each caller. A joining caller receives that scan's initial insertion boundary and changing status-membership semantics, not a fresh private snapshot. Completion or rejection clears the active scan; the next call starts fresh, with no completed-result cache. RPC failure propagates to all waiters, and prior review flags already committed by the scan remain.
+
+Every HTTP request retains its authentication/rate checks and awaits the shared scan. Disconnecting one client does not cancel the scan or remove its handler from shutdown draining. Response shapes are unchanged. Separate instances/processes are not coordinated: this is neither a distributed lease/job queue nor a transactional snapshot, overall scan deadline, or availability SLO. Verification and limits are recorded in [validation](VALIDATION.md#coalesced-reconciliation).
+
 ## Shutdown
 
 RPC and demo entrypoints handle SIGINT and SIGTERM through one guarded, idempotent shutdown path with a default 20-second cooperative budget. New requests receive 503 and `Connection: close` while shutdown stops the listener, waits for the serialized worker's active tick, and drains actual HTTP handler promises before closing the provider/chain and SQLite. A disconnected client does not cancel a handler awaiting RPC; that operation remains part of the drain until its last possible write has completed.
