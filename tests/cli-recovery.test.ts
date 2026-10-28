@@ -34,14 +34,23 @@ async function api(cli: CliHandle, path: string, body?: unknown) {
     headers: { Authorization: 'Bearer ' + cli.apiKey, 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(7000) });
 }
+async function within<T>(pending: Promise<T>, timeoutMs: number) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([pending, new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('Active CLI outage observation exceeded its phase budget')), timeoutMs);
+    })]);
+  } finally { clearTimeout(timer); }
+}
 
-test('the actual RPC CLI autonomously recovers a dropped-send receipt outage across process termination', { timeout: 90000 }, async t => {
+test('the actual RPC CLI autonomously recovers after two 30-second observation windows within one receipt outage', { timeout: 150000 }, async t => {
   compile();
   const children: CliHandle[] = [];
-  const dataRoot = resolve('data');
+  const dataRoot = resolve('../../work');
   let directory: string | undefined, reader: Projection | undefined;
   let chain: Awaited<ReturnType<typeof localChain>> | undefined;
   let proxy: Awaited<ReturnType<typeof rpcProxy>> | undefined;
+  let completed = false;
   try {
     chain = await localChain();
     proxy = await rpcProxy(chain.provider._getConnection().url);
@@ -54,6 +63,7 @@ test('the actual RPC CLI autonomously recovers a dropped-send receipt outage acr
     const originalPid = cli.child.pid;
     const block = await chain.provider.getBlock('latest');
     const initialPayerBalance = await chain.token.balanceOf(chain.payer.address);
+    const initialPayerNativeNonce = await chain.provider.getTransactionCount(chain.payer.address, 'pending');
     async function signed(amount: string, nonce: string) {
       const payment: Payment = { paymentId: id(randomBytes(16).toString('hex')), payer: chain!.payer.address,
         payee: chain!.payee.address, token: String(chain!.token.target), amount, nonce, deadline: String(block!.timestamp + 3600) };
@@ -66,8 +76,8 @@ test('the actual RPC CLI autonomously recovers a dropped-send receipt outage acr
     proxy.fail('eth_sendRawTransaction', 'forward-then-drop', 1);
     proxy.afterForward('eth_sendRawTransaction', () => {
       if (outageStarted !== undefined) return;
-      outageStarted = performance.now(); receiptBaseline = receiptCount();
       proxy!.fail('eth_getTransactionReceipt', 'http-503');
+      outageStarted = performance.now(); receiptBaseline = receiptCount();
     });
     for (const input of [firstInput, secondInput]) {
       const response = await api(cli, 'payments', input);
@@ -79,13 +89,17 @@ test('the actual RPC CLI autonomously recovers a dropped-send receipt outage acr
       assert.equal(accepted.payment.signature, undefined);
     }
     reader = new Projection(db);
-    await until(() => outageStarted !== undefined && receiptCount() - receiptBaseline >= 4 &&
+    await until(() => outageStarted !== undefined &&
       reader!.get(firstId)?.status === 'broadcast', 'The autonomous first CLI did not retry receipt lookup');
     const original = reader.get(firstId)!;
     assert.ok(original.raw_tx && original.tx_hash, 'The CLI must persist signed bytes before network transmission');
     const originalRaw = original.raw_tx, originalHash = original.tx_hash;
     const nativeNonce = Transaction.from(originalRaw).nonce;
     assert.equal(keccak256(originalRaw), originalHash);
+    const projection = () => JSON.stringify({ first: reader!.get(firstId), second: reader!.get(secondId),
+      journals: reader!.journals(), audit: reader!.events() });
+    const originalProjection = projection();
+    const expectedRelayerBalance = await chain.provider.getBalance(chain.relayer.address);
     async function uncertain() {
       const first = reader!.get(firstId)!, second = reader!.get(secondId)!;
       assert.equal(first.status, 'broadcast');
@@ -95,31 +109,77 @@ test('the actual RPC CLI autonomously recovers a dropped-send receipt outage acr
       assert.equal(second.raw_tx, null); assert.equal(second.tx_hash, null);
       assert.equal(reader!.journals().length, 0);
       const events = reader!.events();
+      assert.equal(events.length, 3);
       assert.equal(events.filter(event => event.action === 'accepted').length, 2);
       assert.equal(events.filter(event => event.action === 'broadcast-prepared').length, 1);
       assert.equal(events.filter(event => event.action === 'settled').length, 0);
+      assert.ok(projection() === originalProjection, 'Receipt retries changed the exact private SQLite projection');
       const sends = proxy!.calls.filter(call => call.method === 'eth_sendRawTransaction');
       assert.equal(sends.length, 1);
       assert.ok(sends[0].params?.[0] === originalRaw, 'RPC observed unexpected signed transaction bytes');
       assert.equal(await chain!.token.balanceOf(chain!.payee.address), 125000000n);
+      assert.equal(await chain!.token.balanceOf(chain!.payer.address), initialPayerBalance - 125000000n);
       assert.equal(await chain!.router.nonces(chain!.payer.address), 1n);
       assert.equal(await chain!.provider.getTransactionCount(chain!.relayer.address, 'pending'), nativeNonce + 1);
+      assert.equal(await chain!.provider.getTransactionCount(chain!.payer.address, 'pending'), initialPayerNativeNonce);
+      assert.equal(await chain!.provider.getBalance(chain!.relayer.address), expectedRelayerBalance);
+      const receipt = await chain!.provider.getTransactionReceipt(originalHash);
+      assert.equal(receipt?.status, 1); assert.equal(receipt?.hash, originalHash);
     }
-    await uncertain();
-    const beforeRestart = receiptCount() - receiptBaseline;
+    async function observeOutage(phase: 'before-restart' | 'after-restart') {
+      const started = performance.now(), deadline = started + 45000, baseline = receiptCount();
+      let observations = 0, boundaryCount: number | undefined, boundaryElapsedMs: number | undefined, passed = false;
+      let ended: number | undefined;
+      try {
+        for (;;) {
+          const remaining = deadline - performance.now();
+          assert.ok(remaining > 0, 'Active receipt outage did not meet its observations within 45 seconds');
+          assert.equal(cli.child.exitCode, null, 'The observed CLI process exited during the active outage');
+          assert.equal(cli.child.signalCode, null);
+          await within(uncertain(), remaining);
+          observations++;
+          const elapsed = performance.now() - started, current = receiptCount();
+          assert.ok(elapsed <= 45000, 'Active receipt outage exceeded its 45-second observation budget');
+          if (elapsed >= 30000 && boundaryCount === undefined) {
+            boundaryCount = current; boundaryElapsedMs = elapsed;
+          }
+          // Require a fresh failed RPC after the 30-second endpoint, rather
+          // than allowing early retries followed by a stalled scheduler to pass.
+          if (boundaryCount !== undefined && current > boundaryCount && current - baseline > 20) {
+            assert.ok(observations > 20);
+            passed = true; ended = performance.now();
+            return { durationMs: ended - started, observations, failedReceiptAttempts: current - baseline,
+              boundaryElapsedMs: boundaryElapsedMs!, failedReceiptsAfterBoundary: current - boundaryCount };
+          }
+          await new Promise(resolvePause => setTimeout(resolvePause, Math.min(1000, Math.max(1, deadline - performance.now()))));
+        }
+      } finally {
+        ended ??= performance.now();
+        t.diagnostic(JSON.stringify({ phase, passed, durationMs: Math.floor(ended - started), observations,
+          failedReceiptAttempts: receiptCount() - baseline, boundaryElapsedMs: boundaryElapsedMs === undefined ? null : Math.floor(boundaryElapsedMs),
+          failedReceiptsAfterBoundary: boundaryCount === undefined ? 0 : receiptCount() - boundaryCount }));
+      }
+    }
+    assert.ok(performance.now() >= outageStarted!);
+    const firstWindow = await observeOutage('before-restart');
     await cli.kill(); // OS termination skips the real CLI's shutdown/SQLite close.
     const terminated = await cli.exited;
-    assert.ok(terminated.signal === 'SIGKILL' || terminated.code !== 0, 'Expected abrupt child termination');
+    assert.ok(terminated.signal === 'SIGKILL' || (terminated.code !== null && terminated.code !== 0), 'Expected abrupt child termination');
+    const previousClosedAt = performance.now();
     reader.close(); reader = new Projection(db);
     await uncertain();
-    const restartBaseline = receiptCount();
+    const restartStartupBaseline = receiptCount();
     cli = await startCli({ ...config, apiKey: cli.apiKey });
+    const restartedReadyAt = performance.now();
+    const startupReceiptAttempts = receiptCount() - restartStartupBaseline;
     assert.notEqual(cli.child.pid, originalPid);
-    await until(() => receiptCount() - restartBaseline >= 4, 'The restarted autonomous CLI did not retry receipt lookup');
-    await uncertain();
-    const afterRestart = receiptCount() - restartBaseline;
+    const secondWindow = await observeOutage('after-restart');
     const outageDurationMs = performance.now() - outageStarted!;
-    assert.ok(beforeRestart >= 4 && afterRestart >= 4);
+    const observedWindowMs = firstWindow.durationMs + secondWindow.durationMs;
+    const restartDowntimeMs = restartedReadyAt - previousClosedAt; // Closed-to-ready gap, excluded from both windows.
+    assert.ok(firstWindow.durationMs >= 30000 && secondWindow.durationMs >= 30000);
+    assert.ok(firstWindow.failedReceiptAttempts > 20 && secondWindow.failedReceiptAttempts > 20);
+    assert.ok(observedWindowMs >= 60000);
 
     proxy.heal();
     await until(() => reader!.get(firstId)?.status === 'settled' && reader!.get(secondId)?.status === 'settled',
@@ -150,8 +210,12 @@ test('the actual RPC CLI autonomously recovers a dropped-send receipt outage acr
     assert.equal(reader.journals().length, 2);
     assert.equal(reader.events().length, 6);
     assert.equal(await chain.token.balanceOf(chain.payee.address), 132000000n);
-    t.diagnostic(JSON.stringify({ outageDurationMs: Math.floor(outageDurationMs), receiptAttemptsBeforeRestart: beforeRestart,
-      receiptAttemptsAfterRestart: afterRestart, settledPayments: 2, journalRows: 2, reconciled: result.checked }));
+    t.diagnostic(JSON.stringify({ outageDurationMs: Math.floor(outageDurationMs), observedWindowMs: Math.floor(observedWindowMs),
+      restartDowntimeMs: Math.floor(restartDowntimeMs), startupReceiptAttempts,
+      receiptAttemptsBeforeRestart: firstWindow.failedReceiptAttempts, receiptAttemptsAfterRestart: secondWindow.failedReceiptAttempts,
+      observationsBeforeRestart: firstWindow.observations, observationsAfterRestart: secondWindow.observations,
+      settledPayments: 2, journalRows: 2, reconciled: result.checked }));
+    completed = true;
   } finally {
     const failures: unknown[] = [];
     async function cleanup(action: () => unknown) { try { await action(); } catch (error) { failures.push(error); } }
@@ -159,7 +223,7 @@ test('the actual RPC CLI autonomously recovers a dropped-send receipt outage acr
     await cleanup(() => reader?.close());
     await cleanup(() => proxy?.close());
     await cleanup(() => chain?.close());
-    if (directory) await cleanup(() => {
+    if (directory && completed && failures.length === 0) await cleanup(() => {
       assert.ok(children.every(cli => cli.child.exitCode !== null || cli.child.signalCode !== null), 'Do not remove files under a live CLI');
       assert.equal(dirname(resolve(directory!)), dataRoot);
       assert.ok(directory!.startsWith(join(dataRoot, 'cli-recovery-test-')));
