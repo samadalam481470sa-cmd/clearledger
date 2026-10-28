@@ -13,7 +13,7 @@ import { join } from 'node:path';
 test('Project Details explains source code, implemented features, and readiness limits without a session', () => {
   const html = renderToStaticMarkup(createElement(ProjectDetails));
   for (const text of ['ClearLedger', 'EIP-712', 'Reconcile', 'SQLite',
-    'React 19', 'Node.js 24', 'Solidity', 'QBFT', 'not a payment processor',
+    'React 19', 'Node.js 24', 'Solidity', 'QBFT', 'not a production payment processor',
     'production', 'npm run demo']) {
     assert.ok(html.toLowerCase().includes(text.toLowerCase()), 'Missing project detail: ' + text);
   }
