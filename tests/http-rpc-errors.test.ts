@@ -11,6 +11,8 @@ import { type PaymentService } from '../src/service.ts';
 const apiKey = 'http-rpc-error-test-' + 'a'.repeat(32);
 const unavailable = { error: 'Upstream RPC unavailable; check payment history before retrying' };
 const markers = ['INTERNAL_RPC_CREDENTIAL_SENTINEL', 'RAW_TRANSACTION_SENTINEL', 'RPC_INFO_SENTINEL'];
+const storageFailure = { error: 'Storage operation failed; check payment history before retrying' };
+const storageMarkers = ['PRIVATE_SQLITE_PATH_SENTINEL', 'PRIVATE_SQLITE_STATEMENT_SENTINEL', 'PRIVATE_SQLITE_BINDING_SENTINEL'];
 type Thrower = () => never;
 
 function serviceFixture(throwFailure: Thrower) {
@@ -66,6 +68,25 @@ for (const code of ['TIMEOUT', 'NETWORK_ERROR', 'SERVER_ERROR']) for (const rout
       for (const marker of [...markers, 'synthetic-secret', 'rpc.invalid', code])
         assert.ok(!result.text.includes(marker), 'Response exposed synthetic internal RPC details');
       assert.equal(fixture.calls(), 1, 'HTTP must not retry an operation with an uncertain outcome');
+    }, route.demo ? async () => fixture.invoke() : undefined);
+  });
+}
+
+for (const route of routes) {
+  test('ERR_SQLITE_ERROR on ' + route.name + ' returns a fixed redacted 500 without retrying', { timeout: 5000 }, async () => {
+    const code = 'ERR_SQLITE_ERROR';
+    const error = Object.assign(new Error(storageMarkers[0]), {
+      code, shortMessage: storageMarkers[1], info: { statement: storageMarkers[2],
+        authorization: 'PRIVATE_STORED_AUTHORIZATION_SENTINEL' }
+    });
+    const fixture = serviceFixture(() => { throw error; });
+    await withHttp(fixture.service, async url => {
+      const result = await request(url, route.path, route.body);
+      assert.equal(result.status, 500);
+      assert.deepEqual(JSON.parse(result.text), storageFailure);
+      for (const marker of [...storageMarkers, 'PRIVATE_STORED_AUTHORIZATION_SENTINEL', code])
+        assert.ok(!result.text.includes(marker), 'Response exposed synthetic private storage details');
+      assert.equal(fixture.calls(), 1, 'HTTP must not retry a storage operation with an uncertain outcome');
     }, route.demo ? async () => fixture.invoke() : undefined);
   });
 }

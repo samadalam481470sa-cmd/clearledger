@@ -14,9 +14,21 @@ The service binds to `127.0.0.1`. Send `Authorization: Bearer <API_KEY>` on `/ap
 | GET | `/api/bootstrap` | Demo-only temporary dashboard token |
 | POST | `/api/demo/payment` | Demo-only signing; decimal `amount` string |
 
-Other statuses include 400 for malformed payloads, 401 authentication, 403 Host/Origin checks, 409 conflicting instructions, 422 rejected instructions, 429 rate limits, and 503 for recognized upstream RPC errors. Acceptance means queued rather than settled. Read payment history for its outcome; overview also requires RPC.
+Other statuses include 400 for malformed payloads, 401 authentication, 403 Host/Origin checks, 409 conflicting instructions, 422 rejected instructions, 429 rate limits, 500 for recognized native SQLite errors, and 503 for recognized upstream RPC errors. Acceptance means queued rather than settled. Read payment history for its outcome; overview also requires RPC.
 
 JSON bodies are limited to 32 KiB. Authenticated API calls are limited to 240 per minute per loopback address. Overview returns bounded previews of up to 100 payments and 100 journal rows. The dashboard uses separate 25-row payment/journal pages and per-asset totals; overview still supplies network details, recent audit events, and explicitly bounded activity counts.
+
+## SQLite HTTP errors
+
+Catch-path errors with top-level `code: "ERR_SQLITE_ERROR"` return HTTP 500 with this fixed body, after existing malformed-input/conflict classification:
+
+```json
+{"error":"Storage operation failed; check payment history before retrying"}
+```
+
+The response omits native messages, short messages and SQL/trigger details. The handler makes no automatic retry and does not infer whether acceptance committed before a later storage operation failed. Once storage is usable, inspect payment/journal history and reconcile as appropriate; replay the original signed payer/payment ID rather than creating a fresh instruction for the same transfer. The demo endpoint creates fresh IDs and has no durable client replay key.
+
+This branch recognizes only the top-level native code. Closed-handle `ERR_INVALID_STATE`, nested codes and generic errors retain their existing paths; it is not an all-error redaction or storage-availability guarantee. The existing dashboard already treats 422/500/503 submission errors as uncertain outcomes, so this adds no client retry behavior. See [validation](VALIDATION.md#sqlite-http-errors).
 
 ## RPC error responses
 

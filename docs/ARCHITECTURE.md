@@ -100,6 +100,10 @@ through `RPC_TIMEOUT_MS`) with one transport attempt. A silent upstream therefor
 releases the current HTTP exchange so the worker can retry from durable state on
 a later tick. A timeout never proves that a submitted transaction was rejected.
 
+## HTTP storage failures
+
+The HTTP boundary classifies a top-level native `ERR_SQLITE_ERROR` as 500 with a fixed history-check diagnostic, after existing malformed-input/conflict classification. Native SQL/trigger and short-message details do not enter that response. A failed acceptance transaction can roll back, while a subsequent dispatch transaction can fail after acceptance committed; the response makes no outcome inference and adds no retry. The existing client uncertainty behavior, durable worker and other error paths remain separate. Closed-handle/nested/generic failures are outside this narrow native-code mapping. See [validation](VALIDATION.md#sqlite-http-errors).
+
 ## Authorization and policy
 
 The EIP-712 domain is ClearLedger version 1 with chain ID and verifying contract. Instructions contain payment ID, payer, payee, token, amount, nonce, and deadline. The contract requires valid EOA/ERC-1271 authorization, current payer nonce, unused payer-scoped ID, and an unexpired deadline.

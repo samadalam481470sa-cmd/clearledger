@@ -134,8 +134,10 @@ export function makeServer(options: HttpOptions) {
       res.end(readFileSync(path));
     } catch (e: any) {
       const status = e instanceof Conflict ? 409 : e instanceof ZodError || e instanceof SyntaxError || e instanceof PaginationError ? 400 :
+        e.code === 'ERR_SQLITE_ERROR' ? 500 :
         e.code === 'NETWORK_ERROR' || e.code === 'SERVER_ERROR' || e.code === 'TIMEOUT' ? 503 : 422;
-      json(res, status, { error: status === 503 ? 'Upstream RPC unavailable; check payment history before retrying' :
+      json(res, status, { error: status === 500 ? 'Storage operation failed; check payment history before retrying' :
+        status === 503 ? 'Upstream RPC unavailable; check payment history before retrying' :
         e instanceof ZodError ? 'Invalid payment payload' : (e.shortMessage ?? e.message ?? 'Request failed').slice(0, 300) });
     }
   };

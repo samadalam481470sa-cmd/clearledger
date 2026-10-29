@@ -94,6 +94,7 @@ test('valid HTTP totals retain exact success shape and recover after controlled 
 
 test('unexpected SQLite errors retain existing HTTP failure handling instead of an integrity report', async () => {
   seed(1); store.db.exec('DROP TABLE journals'); const before = snapshot(), result = await read();
-  assert.equal(result.status, 422); assert.equal(result.body.assets, undefined); assert.equal(result.body.integrityError, undefined);
+  assert.equal(result.status, 500);
+  assert.deepEqual(result.body, { error: 'Storage operation failed; check payment history before retrying' });
   assert.equal(snapshot(), before); assert.equal(rpcCalls, 0);
 });
