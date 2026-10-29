@@ -18,7 +18,7 @@ This is unaudited portfolio software for test assets.
 | API-token theft | Payer signature still required | Resource abuse/replay of valid requests remains possible |
 | Interrupted local writes | SQLite WAL, synchronous FULL, atomic state/audit transactions | No backup automation or arbitrary disk-failure guarantee |
 | Clock rollback during dispatch | Broadcast priority and SQLite insertion order | Single relayer owner still required |
-| Ambiguous RPC preflight failure | Missing/empty revert data remains retryable | Real empty-data reverts can stall queued work |
+| Ambiguous RPC preflight failure | Missing/empty/malformed byte data remains retryable; terminal CALL_EXCEPTION requires nonempty complete hex bytes | Real empty-data reverts can stall queued work; well-formed bytes still rely on trusted RPC |
 | Corrupt queued authorization blocks unrelated work | Local submission/key/fingerprint/canonical-field checks and atomic fixed failure for unreserved rows | Not signature authentication or evidence that no external transfer occurred |
 | Queued state carries a transaction reservation | Global new-allocation gate and Store overwrite/failure guards | Requires operator review; no automatic repair or re-signing |
 | Short HTTP outage or lost broadcast response | Bounded HTTP exchanges, one transport attempt, durable logical retries; controlled proxy tests | Timeout is per HTTP exchange, not an overall RPC/worker deadline; no prolonged-soak claim |

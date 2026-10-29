@@ -90,9 +90,11 @@ export class PaymentService {
       await this.router.settle.staticCall(p, row.signature);
     } catch (e: any) {
       // A transport failure is not a deterministic contract rejection.
-      // ethers also labels some node/transport failures as CALL_EXCEPTION with no
-      // revert data. Keep those queued rather than inventing a terminal rejection.
-      if (e.code !== 'CALL_EXCEPTION' || typeof e.data !== 'string' || e.data.length <= 2) throw e;
+      // ethers also labels some node/transport failures as CALL_EXCEPTION.
+      // Only nonempty complete hex bytes qualify as revert data; malformed
+      // evidence stays queued rather than inventing a terminal rejection.
+      if (e.code !== 'CALL_EXCEPTION' || typeof e.data !== 'string' ||
+        !/^0x(?:[0-9a-fA-F]{2})+(?![\s\S])/.test(e.data)) throw e;
       this.store.setStatus(row.id, 'failed', e.shortMessage ?? 'Contract rejected payment');
       return;
     }
