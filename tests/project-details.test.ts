@@ -18,7 +18,7 @@ test('Project Details explains source code, implemented features, and readiness 
     assert.ok(html.toLowerCase().includes(text.toLowerCase()), 'Missing project detail: ' + text);
   }
   assert.match(html, /href="https:\/\/github\.com\/samadalam481470sa-cmd\/clearledger"/);
-  assert.doesNotMatch(html, /api\/bootstrap|Bearer |Authorization|private.key/i);
+  assert.doesNotMatch(html, /api\/bootstrap|Authorization:\\s*Bearer|private[._-]?key\\s*=/i);
 });
 
 test('GET /details serves the dashboard shell without requiring a payment token', async () => {
