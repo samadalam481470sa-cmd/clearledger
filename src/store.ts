@@ -200,7 +200,25 @@ export class Store {
   }
   assetTotals() {
     const assets = new Map<string, { token: string; settledPayments: number; settledBaseUnits: bigint; reviewPayments: number; reviewBaseUnits: bigint }>();
-    for (const record of this.db.prepare("SELECT j.token,j.amount,p.status FROM journals j JOIN payments p ON p.id=j.payment_id WHERE p.status IN ('settled','review')").iterate()) {
+    // Check posting relationships and read eligible rows in one SQLite snapshot.
+    // An unjournaled review without recorded inclusion remains a valid state.
+    for (const record of this.db.prepare(`
+      SELECT 'invalid' AS kind,NULL AS token,NULL AS amount,NULL AS status
+      WHERE EXISTS (
+        SELECT 1 FROM payments p
+        WHERE (p.status='settled' OR (p.status='review' AND
+          (p.block_number IS NOT NULL OR p.block_hash IS NOT NULL)))
+          AND NOT EXISTS (SELECT 1 FROM journals j WHERE j.payment_id=p.id)
+      ) OR EXISTS (
+        SELECT 1 FROM journals j LEFT JOIN payments p ON p.id=j.payment_id
+        WHERE p.id IS NULL OR p.status IS NULL OR p.status NOT IN ('settled','review')
+      )
+      UNION ALL
+      SELECT 'asset',j.token,j.amount,p.status
+      FROM journals j JOIN payments p ON p.id=j.payment_id
+      WHERE p.status IN ('settled','review')
+    `).iterate()) {
+      if (record.kind === 'invalid') throw new JournalIntegrityError();
       // A malformed included row invalidates the whole report. Coercion could
       // turn missing/negative/nondecimal amounts into plausible transfer volume.
       if (typeof record.token !== 'string' || !/^0x[0-9a-fA-F]{40}(?![\s\S])/.test(record.token) ||

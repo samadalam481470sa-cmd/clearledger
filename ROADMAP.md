@@ -13,6 +13,10 @@ Prioritize verified payment correctness and demonstrable engineering over source
 
 Shutdown drain ordering passes Windows unit/HTTP verification and Linux real-SIGTERM helper integration. Actual RPC CLI autonomous crash recovery and POSIX signal-drain/restart integration pass Linux CI; graceful handling does not cover force-kill or blocked JavaScript.
 
+## Journal relationship integrity
+
+- Totals now reject required missing postings, orphan/out-of-status journals and recorded-review gaps in one SQLite read snapshot, preserving legitimate unposted reviews and the existing fixed unavailable response. Local Store/integrity/pagination cases passed 96/96; authenticated HTTP/Store/client-reducer cases passed 10/10, including missing-history visibility after reconciliation, unchanged reads, cache clearing and recovery. Strict typecheck/build passed. Final local verification completed **797 cases: 792 passes, zero failures, five existing Windows platform skips**, exit 0, in 340,415.6241 ms. Publication CI remains pending for this increment. Count is 634,858 nonblank lines (11,946 application and 622,912 attributed Besu, including comments/tests). Full field matching, payload authentication, schema attestation, coherently omitted pairs and independently evidenced chain completeness remain outside scope. See [validation](docs/VALIDATION.md#journal-relationship-integrity).
+
 ## SQLite HTTP errors
 
 - Top-level `ERR_SQLITE_ERROR` failures now return fixed/redacted HTTP 500 responses, preserving business/RPC classifications and adding no retry. A pre-fix real audit-trigger regression exposed private diagnostic text with 422. Five real SQLite/HTTP+totals cases pass, including acceptance rollback, a later dispatch failure after acceptance committed, same-ID history/replay and controlled recovery. Synthetic router/receipt evidence remains separate from EVM execution; no frontend behavior changed. Typecheck/build passed; the 27-case synthetic HTTP matrix also passed (744.5745 ms); the full local suite completed 765 cases (760 passes, five existing Windows skips, zero failures) in 338,485.1736 ms. Reviewed source [`416bad4037d6babae0686f16ccdf6ccc1853721d`](https://github.com/samadalam481470sa-cmd/clearledger/commit/416bad4037d6babae0686f16ccdf6ccc1853721d) passed [regular CI `40791469257`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40791469257) with all 765 tests/zero skips, fresh install/typecheck/build/count. Native-trigger rollback/committed-acceptance cases, all 27 classification cases and missing-table totals handling passed; source head, completed conclusion, all steps and logs were verified. No new Besu result is claimed. Current count is 634,529 nonblank lines (11,617 application and 622,912 attributed Besu, including comments/tests). Closed-handle/nested/generic exceptions, all-error redaction, repair and storage availability remain outside scope. See [validation](docs/VALIDATION.md#sqlite-http-errors).
@@ -42,7 +46,7 @@ Shutdown drain ordering passes Windows unit/HTTP verification and Linux real-SIG
 - Model issuance/redemption accounting and off-chain reserve attestations as explicit simulations.
 - Add telemetry, failure injection, load testing, and measured results.
 - Extend captured RPC timeout handling to additional failure modes, providers, and longer concurrent workloads.
-- Extend journal-integrity verification beyond token/amount structure to independently evidenced provenance, omitted/orphaned data and controlled repair procedures.
+- Extend journal-integrity verification beyond structural value/relationship checks to independently evidenced provenance, coherent omissions and controlled repair procedures.
 
 ## RPC database context
 

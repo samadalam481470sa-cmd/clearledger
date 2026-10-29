@@ -68,11 +68,13 @@ test('empty journal history remains an empty valid report without fabricated ass
   const before = snapshot(); assert.deepEqual(store.assetTotals(), []); assert.deepEqual(snapshot(), before);
 });
 
-for (const status of ['queued', 'broadcast', 'failed'] as Status[]) test('journal rows outside settled/review remain excluded: ' + status, () => {
+for (const status of ['queued', 'broadcast', 'failed'] as Status[]) test('journal rows attached outside settled/review invalidate totals: ' + status, () => {
   const id = seed(1);
   store.db.prepare('UPDATE payments SET status=? WHERE id=?').run(status, id);
   store.db.prepare('UPDATE journals SET amount=?,token=? WHERE payment_id=?').run('bad', 'bad', id);
-  const before = snapshot(); assert.deepEqual(store.assetTotals(), []); assert.deepEqual(snapshot(), before);
+  const before = snapshot();
+  assert.throws(() => store.assetTotals(), error => error instanceof JournalIntegrityError && error.message === fixed);
+  assert.deepEqual(snapshot(), before);
 });
 
 test('totals validate journal structure without reconstructing or authenticating stored payment payloads', () => {
