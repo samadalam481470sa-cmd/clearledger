@@ -124,7 +124,7 @@ export function makeServer(options: HttpOptions) {
         json(res, 404, { error: 'Route not found' }); return;
       }
       if (req.method !== 'GET') { json(res, 405, { error: 'Method not allowed' }); return; }
-      const path = resolve('dist', '.' + decodeURIComponent(url.pathname === '/' ? '/index.html' : url.pathname));
+      const path = resolve('dist', '.' + decodeURIComponent(url.pathname === '/' || url.pathname === '/details' ? '/index.html' : url.pathname));
       if (!path.startsWith(resolve('dist') + '/') && !path.startsWith(resolve('dist') + '\\')) {
         json(res, 404, { error: 'Not found' }); return;
       }
