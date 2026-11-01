@@ -8,6 +8,14 @@ ClearLedger is a fintech engineering portfolio prototype built on EVM infrastruc
 
 Demo USD has no monetary value, reserves, or redemption promise. This project is unaudited and has no banking integration. The consensus implementation is Besu's work; ClearLedger's original contribution is the payment application and its integration, tests, and documentation.
 
+## Project details
+
+**[Read the ClearLedger project details](docs/PROJECT_DETAILS.md)** for the frontend/backend technology stack, signed settlement flow, on-chain verification, database design, network testing, and release-readiness limits.
+
+The application also has a **Project details** navigation page at **http://127.0.0.1:4317/details** after launching the local workspace with `npm run demo`. This documentation page opens without entering the payment API token. It is informational only; it does not expose wallets or activate financial functions.
+
+> **Release status:** Engineering portfolio prototype with local EVM and four-validator Besu development verification. Not a bank or real-money settlement provider. Production-grade reorganization recovery, extended fault testing, custody/compliance controls, and an independent security review remain outstanding.
+
 ## Run the local demo
 
 Requires Node.js 24+ and npm. Docker and a wallet extension are unnecessary for this mode. CI checks the exact reference versions in `.node-version` and `.npm-version`; see [toolchain pins and limits](docs/DEPENDENCIES.md#reference-ci-toolchain).
