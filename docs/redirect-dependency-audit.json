@@ -1,0 +1,150 @@
+{
+  "recordedAtUtc": "2026-11-03 05:07:59 UTC",
+  "method": "npm audit --json; npm audit --omit=dev --json; npm ls --omit=dev --all --json. Counts are affected-package entries, not demonstrated reachability/exploitability.",
+  "baselineSource": "8c70c99e6fdd91ae4a48f7b8cf16b58bf429009b",
+  "change": {
+    "parent": "solc@0.8.30",
+    "package": "follow-redirects",
+    "from": "1.16.1",
+    "to": "1.16.2",
+    "scope": "Exact scoped solc override; other lockfile package entries unchanged",
+    "advisory": "https://github.com/advisories/GHSA-mrwp-f3q8-3g9p",
+    "release": "https://github.com/follow-redirects/follow-redirects/releases/tag/v1.16.2",
+    "integrity": "sha512-/kVP2U8z596Ia0gwFrwyIeo74ta5aVmSeU1FfAUMAmcEP5EP7zydmag3SLiN64NaRKef3lxsq7i/g7ltJQDGow=="
+  },
+  "toolchain": {
+    "node": "24.22.1",
+    "platform": "Windows",
+    "beforeAuditNpm": "11.6.2",
+    "finalInstallAuditBuildNpm": "11.19.0",
+    "globalToolChanges": false
+  },
+  "fullBefore": {
+    "info": 0,
+    "low": 1,
+    "moderate": 5,
+    "high": 23,
+    "critical": 5,
+    "total": 34
+  },
+  "fullAfter": {
+    "info": 0,
+    "low": 1,
+    "moderate": 5,
+    "high": 22,
+    "critical": 5,
+    "total": 33
+  },
+  "omitDevAfter": {
+    "info": 0,
+    "low": 1,
+    "moderate": 5,
+    "high": 17,
+    "critical": 4,
+    "total": 27
+  },
+  "auditExitCodes": {
+    "fullBefore": 1,
+    "fullAfter": 1,
+    "omitDevAfter": 1
+  },
+  "removedAffectedPackages": [
+    "follow-redirects"
+  ],
+  "addedAffectedPackages": [],
+  "remainingPackageNames": [
+    "@microsoft/api-extractor",
+    "@microsoft/api-extractor-model",
+    "@microsoft/tsdoc-config",
+    "@rushstack/node-core-library",
+    "@trufflesuite/uws-js-unofficial",
+    "ajv",
+    "bn.js",
+    "brace-expansion",
+    "braces",
+    "browserify-sign",
+    "browserslist",
+    "cipher-base",
+    "cross-spawn",
+    "diff",
+    "elliptic",
+    "ganache",
+    "js-yaml",
+    "json5",
+    "lodash",
+    "micromatch",
+    "minimatch",
+    "mocha",
+    "nanoid",
+    "pbkdf2",
+    "picomatch",
+    "secp256k1",
+    "semver",
+    "serialize-javascript",
+    "sha.js",
+    "terser-webpack-plugin",
+    "validator",
+    "webpack",
+    "ws"
+  ],
+  "allRemainingLocationsInGanacheOrSubtree": true,
+  "declaredRuntimeTree": {
+    "command": "npm ls --omit=dev --all --json",
+    "exitCode": 0,
+    "directPackages": [
+      "@openzeppelin/contracts",
+      "ethers",
+      "react",
+      "react-dom",
+      "zod"
+    ],
+    "includesSolc": false,
+    "includesFollowRedirects": false,
+    "limit": "Declared dependency graph does not prove actual entrypoint reachability or exploitability; bundled/extraneous entries affect omit-dev audit classification."
+  },
+  "localVerification": {
+    "freshReferenceNpmCi": "passed",
+    "typecheck": "passed before title-only wording refinement",
+    "build": "Solidity 0.8.30/Paris and Vite 7.3.7; 34 modules; passed",
+    "fullSuite": "not rerun locally for this dependency increment",
+    "baselineTests": {
+      "packageVersion": "1.16.1",
+      "tests": 4,
+      "passed": 2,
+      "failed": 2,
+      "skipped": 0,
+      "durationMs": 525.8939,
+      "crossRealmObjectMs": 8.0089,
+      "crossRealmArrayMs": 9.8322,
+      "syntheticCredentialForwardedInBothCrossRealmCases": true
+    },
+    "patchedTests": {
+      "packageVersion": "1.16.2",
+      "tests": 4,
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 334.5675,
+      "crossRealmObjectMs": 7.1953,
+      "crossRealmArrayMs": 9.6779,
+      "syntheticCredentialForwarded": false,
+      "harmlessHeaderPreserved": true,
+      "requestsPerEndpointPerCase": 1
+    },
+    "completeCompilerArtifactSha256": {
+      "artifacts/DemoUSD.json": "d366b44325d3bb8eda8ea664ecefebf9461e2c0c83b4bb378dc5cdd4b1f3678f",
+      "artifacts/SettlementRouter.json": "5012bda8205a93a2b8e8563b9273ac55bf641b000b799e5b37aa7ae2f31aeb4a"
+    },
+    "completeCompilerArtifactsUnchanged": true,
+    "olderNpmAttempt": "npm 11.6.2 refused bundled fsevents on Windows with EBADPLATFORM; final preserved-lock install passed using reference npm 11.19.0"
+  },
+  "publicVerification": {
+    "status": "pending"
+  },
+  "limits": [
+    "Transitive-library synthetic loopback reproduction; no demonstrated ClearLedger credential leak.",
+    "Inspected application compiles using installed solc/bundled compiler; inspected follow-redirects calls belong to compiler-download helpers. Dependency is loaded by solc import.",
+    "33 full-audit entries remain, including five critical; no clean-security or production-readiness claim.",
+    "October 26 audit snapshot is retained separately at docs/dependency-audit.json."
+  ]
+}

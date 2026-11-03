@@ -39,7 +39,8 @@
   },
   "overrides": {
     "solc": {
-      "tmp": "0.2.7"
+      "tmp": "0.2.7",
+      "follow-redirects": "1.16.2"
     }
   }
 }
