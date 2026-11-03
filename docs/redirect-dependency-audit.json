@@ -139,7 +139,71 @@
     "olderNpmAttempt": "npm 11.6.2 refused bundled fsevents on Windows with EBADPLATFORM; final preserved-lock install passed using reference npm 11.19.0"
   },
   "publicVerification": {
-    "status": "pending"
+    "status": "verified",
+    "sourceCommit": "2262dee70e9df9f8a61441ca6757f2381249035e",
+    "sourceTree": "1837f640887bf3e7305f5ccf3524ac5a64792f21",
+    "node": "24.21.0",
+    "npm": "11.19.0",
+    "completedConclusionsAllJobStepsAndLogsVerified": true,
+    "regularCi": {
+      "runId": 41582243895,
+      "jobId": 125739504536,
+      "conclusion": "success",
+      "tests": 834,
+      "passed": 834,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 361992.368418,
+      "installAuditEntries": 33,
+      "newCrossRealmObjectMs": 7.293276,
+      "newCrossRealmArrayMs": 6.042214,
+      "dependencyVersion": "1.16.2",
+      "syntheticCredentialForwarded": false,
+      "harmlessHeaderPreserved": true,
+      "requestsPerEndpointPerCase": 1,
+      "sourceCount": 635689
+    },
+    "besu": {
+      "runId": 41582243833,
+      "jobId": 125739504231,
+      "conclusion": "success",
+      "installAuditEntries": 33,
+      "scenarioMs": 199414,
+      "initialHeads": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "initialSettlementBlock": 23,
+      "oneStopProgress": [
+        24,
+        26
+      ],
+      "noQuorumHeight": 26,
+      "noQuorumObservedMs": 20098.68714699999,
+      "noQuorumObservations": 20,
+      "restoredQuorumHeight": 28,
+      "recoveredTransactionHash": "0x86fbb92b327fcef434aaabf0d9165a27319ef7e4c3246a057979ee5e10c4f448",
+      "recoveredSettlementBlock": 27,
+      "allValidatorCatchupHeight": 29,
+      "walletSettlementBlock": 40,
+      "journals": 3,
+      "payeeBaseUnits": "175000000",
+      "walletBaseUnits": "87500000",
+      "walletNonce": 1,
+      "revokedBeforeBroadcast": true,
+      "relayerNonceUnchanged": true,
+      "reconciliationChecked": 3,
+      "reconciliationExceptions": 0,
+      "finalHeads": [
+        43,
+        43,
+        43,
+        43
+      ],
+      "scope": "Ordinary single-host EOA/quorum/wallet acceptance, separate from loopback redirect regression; not an exploit/soak/SLO/security-audit result."
+    }
   },
   "limits": [
     "Transitive-library synthetic loopback reproduction; no demonstrated ClearLedger credential leak.",
