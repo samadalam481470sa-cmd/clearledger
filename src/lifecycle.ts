@@ -32,7 +32,14 @@ export function startWorker(tick: () => Promise<unknown>, options: WorkerOptions
       if (!stopped) timer = setTimeout(launch, intervalMs);
     }
   }
-  function launch() { if (!stopped) active = run(); }
+  function launch() {
+    if (stopped) return;
+    let resolveActive!: () => void;
+    let rejectActive!: (reason: unknown) => void;
+    // Publish before tick entry: its synchronous prefix may request shutdown.
+    active = new Promise<void>((resolve, reject) => { resolveActive = resolve; rejectActive = reject; });
+    void run().then(resolveActive, rejectActive);
+  }
   launch();
   return {
     stop() {
