@@ -99,6 +99,17 @@ export function makeServer(options: HttpOptions) {
           }
           return;
         }
+        if (req.method === 'GET' && url.pathname.startsWith('/api/payments/')) {
+          if ([...url.searchParams].length) throw new PaginationError('Payment lookup does not accept query parameters');
+          let recordId: string;
+          try { recordId = decodeURIComponent(url.pathname.slice('/api/payments/'.length)); }
+          catch { throw new PaginationError('Invalid payment identifier'); }
+          if (!/^0x[0-9a-f]{40}:0x[0-9a-f]{64}(?![\s\S])/.test(recordId))
+            throw new PaginationError('Invalid payment identifier');
+          const row = service.store.get(recordId);
+          if (!row) { json(res, 404, { error: 'Payment not found' }); return; }
+          json(res, 200, service.publicRow(row)); return;
+        }
         if (req.method === 'GET' && url.pathname === '/api/totals') {
           try {
             json(res, 200, { assets: service.store.assetTotals() });

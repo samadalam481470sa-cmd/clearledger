@@ -7,6 +7,7 @@ The service binds to `127.0.0.1`. Send `Authorization: Bearer <API_KEY>` on `/ap
 | GET | `/healthz` | RPC liveness, no token required |
 | GET | `/api/overview` | Recent payments, journals, audit events, chain details |
 | GET | `/api/payments` | Cursor page of sanitized payment records |
+| GET | `/api/payments/{id}` | One sanitized local payment record by canonical ID |
 | GET | `/api/journals` | Cursor page of transfer journal records |
 | GET | `/api/totals` | Exact per-asset settled/review transfer volume |
 | POST | `/api/payments` | EOA/ERC-1271 authorization: 202 new, 200 identical retry |
@@ -43,6 +44,16 @@ Shutdown-drain 503 responses retain their distinct `Service is shutting down` bo
 The RPC response omits upstream error messages/short messages, which can contain endpoint details. It does not establish whether a submitted payment was accepted or mined. Check authenticated `GET /api/payments`, `/api/journals`, and `/api/totals` for stored state; those collection reads can remain available during an RPC fault, while overview/health and signature acceptance/replay require upstream access.
 
 For uncertain `POST /api/payments` outcomes, inspect history first. Once RPC/current authorization is available, retry the same signed instructions with the same payer/payment ID rather than authorizing a new ID for the same transfer. Identical replay retains the original stored signature. The demo signing endpoint does not provide durable client replay keys. The HTTP handler adds no automatic retry; existing durable worker retries are separate. Local classification/redaction and controlled real-transport checks pass; evidence and limitations are recorded in [validation](VALIDATION.md#rpc-error-classification-and-redaction).
+
+## Exact payment lookup
+
+`GET /api/payments/{id}` returns HTTP 200 with one direct public record, using the same shape as an item in `GET /api/payments`. There is no page or wrapper object. Use the record's `id`, or compute the submitted payer address in lowercase, a colon, and the submitted bytes32 payment ID in lowercase. The decoded identifier must match `0x{40 lowercase hex}:0x{64 lowercase hex}`; a literal colon or `encodeURIComponent(id)` is accepted. Decoding happens once, with no trimming or case folding.
+
+The route accepts no query parameters, including pagination/status metadata. Such metadata returns 400 with `{"error":"Payment lookup does not accept query parameters"}`. Malformed, noncanonical or undecodable identifiers return 400 with `{"error":"Invalid payment identifier"}`. A well-formed key with no visible local record returns 404 with `{"error":"Payment not found"}`. These checks validate key syntax only; zero-valued well-formed keys are not rejected as payment authorizations would be.
+
+Lookup requires the existing API authentication, Host/Origin and rate checks. It reads local stored state without RPC, signature revalidation, pagination or repair, so it can remain usable when RPC-dependent overview/replay fails. Stored private signatures, raw signed bytes, payload text, fingerprints and unknown fields are omitted. Corrupt stored authorization data retains the existing `payment: null` and fixed integrity warning. Noncanonical legacy keys can still be read through collection history.
+
+A 404 describes the current local read; it cannot prove an in-flight acceptance will not commit later or establish on-chain absence. For an uncertain submission, inspect this original key and retain the same signed payer/payment ID when retrying after upstream/current-authorization recovery. The endpoint adds no automatic retry, wallet-policy recheck, chain-truth guarantee or dashboard lookup control. See [verification and limits](VALIDATION.md#exact-payment-lookup).
 
 ## Cursor pages and totals
 
