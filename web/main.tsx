@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AssetMetadataRegistry, AssetTotalsPanel, PageNavigation } from './views.tsx';
-import { PaymentHistoryRow, PaymentReceiptSnapshot, type ReceiptSnapshot } from './payment-history.tsx';
+import { PaymentHistoryRow, PaymentLookupPanel, PaymentReceiptSnapshot, type ReceiptSnapshot } from './payment-history.tsx';
+import { PaymentLookup, type PaymentLookupState } from './payment-lookup.ts';
 import { startPolling } from './polling.ts';
 import { emptyTotals, reduceTotals, totalsCounts, type TotalsReport } from './totals.ts';
 import {
@@ -13,6 +14,7 @@ import './style.css';
 
 const short = (value?: string | null) => value ? value.slice(0, 8) + '…' + value.slice(-6) : 'Pending';
 const emptyPage = <T,>(): PagerState<T> => ({ items: [], nextCursor: null, page: 1, loading: false, error: '' });
+const emptyLookup = (): PaymentLookupState => ({ id: '', phase: 'idle', error: '', snapshot: null });
 const chainContext = (overview: Overview) => String(overview.chainId) + ':' + overview.router.toLowerCase();
 class ApiError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
@@ -64,6 +66,9 @@ function App() {
   const [form, setForm] = useState(false), [amount, setAmount] = useState('250.00');
   const [uncertainPayment, setUncertainPayment] = useState(false);
   const [selected, setSelected] = useState<ReceiptSnapshot | null>(null);
+  const [lookupState, setLookupState] = useState<PaymentLookupState>(emptyLookup);
+  const [loadedLookupContext, setLoadedLookupContext] = useState('');
+  const lookupController = useRef<PaymentLookup | null>(null);
   const [revision, setRevision] = useState(0);
   const [paymentRevision, setPaymentRevision] = useState(0), [journalRevision, setJournalRevision] = useState(0);
   const session = useRef(0), currentNetwork = useRef('');
@@ -85,6 +90,7 @@ function App() {
   }, [key]);
 
   function changeToken(next: string) {
+    lookupController.current?.dispose(); setLookupState(emptyLookup()); setLoadedLookupContext('');
     session.current++;
     overviewPoller.current?.stop(); totalsPoller.current?.stop();
     for (const controller of posts.current) controller.abort();
@@ -117,6 +123,7 @@ function App() {
         const context = chainContext(overview);
         if (currentNetwork.current !== context) {
           currentNetwork.current = context;
+          lookupController.current?.reset(); setLookupState(emptyLookup());
           totalsPoller.current?.stop();
           setTotals(emptyTotals()); setSelected(null); setForm(false); setUncertainPayment(false);
         }
@@ -134,6 +141,26 @@ function App() {
   }, [key, request, revision]);
 
   const network = data ? chainContext(data) : '';
+  const lookupContext = key + ':' + network + ':' + revision;
+  useEffect(() => {
+    if (!key) { setLookupState(emptyLookup()); setLoadedLookupContext(''); return; }
+    let active = true, instance: PaymentLookup | null = null;
+    const activeSession = session.current;
+    const current = () => active && instance !== null && lookupController.current === instance &&
+      session.current === activeSession && currentNetwork.current === network;
+    instance = new PaymentLookup(
+      (path, signal) => request<PaymentRow>(path, { signal }),
+      state => { if (current()) setLookupState(state); },
+      snapshot => { if (current()) setSelected(snapshot); }
+    );
+    const owned = instance;
+    lookupController.current = owned; setLoadedLookupContext(lookupContext); setLookupState(owned.state);
+    return () => {
+      active = false; owned.dispose();
+      if (lookupController.current === owned) lookupController.current = null;
+    };
+  }, [key, network, lookupContext, request]);
+
   useEffect(() => {
     if (!key || !network) return;
     const activeSession = session.current;
@@ -164,6 +191,7 @@ function App() {
   }, []);
 
   function refreshReadResources() {
+    lookupController.current?.reset();
     overviewPoller.current?.stop(); totalsPoller.current?.stop();
     setRevision(value => value + 1);
   }
@@ -236,6 +264,7 @@ function App() {
     }
   }
 
+  const displayedLookup = loadedLookupContext === lookupContext ? lookupState : emptyLookup();
   const counts = totalsCounts(totals);
   const isDemo = data?.mode === 'demo' && Boolean(data.token);
   const metadata = assetRegistry(data);
@@ -262,6 +291,10 @@ function App() {
         {(!key || (!data && error)) && <form className="login panel" onSubmit={event => { event.preventDefault(); changeToken(manualKey); }}><h2>Connect to your API</h2><p>Enter the API token configured on the local server. It stays in this page’s memory.</p><input aria-label="API token" type="password" value={manualKey} onChange={event => setManualKey(event.target.value)} required/><button className="primary">Connect</button></form>}
         {error && <div role="alert" className="banner danger">Overview could not refresh: {error}. {data ? 'Showing the last received overview.' : 'Change the token or retry the connection.'}</div>}
         {notice && <div role="status" className="banner">{notice}<button aria-label="Dismiss notification" onClick={() => setNotice('')}>×</button></div>}
+        {key && (page === 'Overview' || page === 'Payments') && <PaymentLookupPanel state={displayedLookup} enabled={Boolean(key) && loadedLookupContext === lookupContext}
+          onInput={value => lookupController.current?.setInput(value)}
+          onFind={() => { void lookupController.current?.find(); }}
+          onClear={() => lookupController.current?.reset()}/>}
         {data && <>
           {page === 'Overview' && <>
             <div className="stats">

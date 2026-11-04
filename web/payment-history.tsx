@@ -1,10 +1,41 @@
 import { formatAssetAmount, type AssetContext, type Overview, type PaymentRow } from './dashboard.ts';
+import { isPaymentLookupId, type PaymentLookupState } from './payment-lookup.ts';
 
 const short = (value?: string | null) => value ? value.slice(0, 8) + '…' + value.slice(-6) : 'Pending';
 const invalidAuthorization = 'Stored payment data is invalid; verify the original authorization';
 type HistoryContext = AssetContext & Partial<Pick<Overview, 'payer' | 'payee'>>;
 
 export interface ReceiptSnapshot { row: PaymentRow; capturedAt: string }
+
+export function PaymentLookupPanel({ state, enabled, onInput, onFind, onClear }: {
+  state: PaymentLookupState; enabled: boolean; onInput: (value: string) => void;
+  onFind: () => void; onClear: () => void;
+}) {
+  return <section className="panel payment-lookup" aria-labelledby="payment-lookup-title">
+    <div className="panel-heading"><div><h2 id="payment-lookup-title">Find a payment by ID</h2>
+      <p>Read a stored record even while chain details cannot refresh.</p></div><span className="tag">STORED RECORD</span></div>
+    <form className="lookup-form" onSubmit={event => { event.preventDefault(); onFind(); }}>
+      <div className="lookup-field"><label htmlFor="lookup-record-id">Payment record ID</label>
+        <input id="lookup-record-id" className="mono" value={state.id} onChange={event => onInput(event.target.value)}
+          disabled={!enabled} placeholder="0x…:0x…" autoCapitalize="none" autoComplete="off" spellCheck={false}
+          aria-describedby="lookup-help lookup-status"
+          aria-invalid={state.phase === 'error' && !isPaymentLookupId(state.id) ? true : undefined}/>
+      </div>
+      <button className="primary" type="submit" disabled={!enabled || state.phase === 'loading' || !state.id}>
+        {state.phase === 'loading' ? 'Finding…' : 'Find payment'}</button>
+      <button className="secondary" type="button" onClick={onClear}
+        disabled={!enabled || (!state.id && state.phase === 'idle')}>Clear</button>
+    </form>
+    <p id="lookup-help" className="lookup-note">Use the full lowercase payer-address:payment-ID record ID from a receipt or signed submission.</p>
+    <div id="lookup-status" className="lookup-message" role={state.phase === 'error' ? 'alert' : 'status'} aria-atomic="true">
+      {state.phase === 'loading' && <p>Reading local payment history…</p>}
+      {state.phase === 'found' && <p>Stored record found. Its receipt was opened from this lookup. Find the ID again for a fresh snapshot.</p>}
+      {state.phase === 'error' && <p>{state.error}</p>}
+      {state.phase === 'not-found' && <><p>{state.error}</p>
+        <p>An in-flight acceptance may still commit. Keep the original signed instruction and check this ID again.</p></>}
+    </div>
+  </section>;
+}
 
 /** A missing authorization never borrows an amount or route from other records. */
 export function PaymentHistoryRow({ row, overview, onOpen }: {
@@ -55,6 +86,6 @@ export function PaymentReceiptSnapshot({ snapshot, overview, onClose }: {
     {!payment && <p role="alert" className="error">{invalidAuthorization}</p>}
     <dl>{details.map(([label, value]) => <div key={label}><dt>{label}</dt><dd className="mono">{value}</dd></div>)}</dl>
     {row.error && <p className="error">{row.error}</p>}
-    <p className="hint">Snapshot opened {new Date(capturedAt).toLocaleString()}. Status may change; refresh payment history and reopen to see the latest record. Reconcile checks recorded blocks against the chain.</p>
+    <p className="hint">Snapshot opened {new Date(capturedAt).toLocaleString()}. Status may change; find this ID again or refresh payment history and reopen to see the latest record. Reconcile checks recorded blocks against the chain.</p>
   </section></div>;
 }
