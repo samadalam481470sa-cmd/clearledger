@@ -4,7 +4,7 @@ Prioritize verified payment correctness and demonstrable engineering over source
 
 ## Next increments
 
-1. Extend the verified bounded actual RPC CLI autonomous recovery toward longer outages and soak validation.
+1. Extend the verified multi-minute actual RPC CLI receipt-outage recovery toward longer outages and soak validation.
 2. Extend the verified bounded two-validator-stop scenario to other failure timings, malicious peers, arbitrary partitions, and independent-host failures.
 3. Consider reviewed token-metadata governance beyond the configured display registry; unconfigured assets retain exact base units.
 4. Add a durable event indexer with checkpoints, canonical-block validation, and controlled replay.
@@ -12,6 +12,10 @@ Prioritize verified payment correctness and demonstrable engineering over source
 6. Verify dashboard interaction and accessibility after browser access is available.
 
 Shutdown drain ordering passes Windows unit/HTTP verification and Linux real-SIGTERM helper integration. Actual RPC CLI autonomous crash recovery and POSIX signal-drain/restart integration pass Linux CI; graceful handling does not cover force-kill or blocked JavaScript.
+
+## Extended receipt outage
+
+- The actual CLI recovery check now observes two receipt-outage windows of at least 90 seconds each across abrupt restart. Local verification measured 192,762 ms of active observation, 187 failed receipt attempts and 108 authenticated history responses, all 200, then recovered both payments once with reconciliation 2/0. Focused verification and strict typecheck pass; publication CI is pending. This bounded receipt-route fault keeps direct chain reads available and does not establish a soak or availability SLO. See [extended outage evidence](docs/VALIDATION.md#extended-receipt-outage). The existing case now requires more than 80 invariant observations/failed receipt attempts per window and at least 18 authenticated three-GET sets, including a completion at/after 90 seconds. Only active-window time is counted; startup and restart downtime remain excluded. Current count is 637,337 nonblank lines (14,425 application and 622,912 attributed Besu, including comments/tests).
 
 ## In-flight lookup and duplicate acceptance
 

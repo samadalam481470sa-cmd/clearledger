@@ -12,6 +12,8 @@ import { type RecordRow } from '../src/store.ts';
 import { startCli, type CliHandle } from './fixtures/cli-server.ts';
 import { rpcProxy } from './fixtures/rpc-proxy.ts';
 
+const MIN_WINDOW_MS = 90000, PHASE_BUDGET_MS = 120000, HISTORY_INTERVAL_MS = 5000;
+
 // A real CLI child owns all writes; the parent observes its durable projection.
 class Projection {
   private readonly db: DatabaseSync;
@@ -43,7 +45,7 @@ async function within<T>(pending: Promise<T>, timeoutMs: number) {
   } finally { clearTimeout(timer); }
 }
 
-test('the actual RPC CLI autonomously recovers after two 30-second observation windows within one receipt outage', { timeout: 150000 }, async t => {
+test('the actual RPC CLI autonomously recovers after two 90-second observation windows within one receipt outage', { timeout: 300000 }, async t => {
   compile();
   const children: CliHandle[] = [];
   const dataRoot = resolve('../../work');
@@ -51,6 +53,7 @@ test('the actual RPC CLI autonomously recovers after two 30-second observation w
   let chain: Awaited<ReturnType<typeof localChain>> | undefined;
   let proxy: Awaited<ReturnType<typeof rpcProxy>> | undefined;
   let completed = false;
+  const historyRequests = new Set<Promise<void>>();
   try {
     chain = await localChain();
     proxy = await rpcProxy(chain.provider._getConnection().url);
@@ -126,30 +129,72 @@ test('the actual RPC CLI autonomously recovers after two 30-second observation w
       const receipt = await chain!.provider.getTransactionReceipt(originalHash);
       assert.equal(receipt?.status, 1); assert.equal(receipt?.hash, originalHash);
     }
+    const publicFields = ['id', 'status', 'tx_hash', 'block_number', 'block_hash', 'error', 'created_at', 'updated_at', 'payment'].sort();
+    function assertPublic(row: any, input: typeof firstInput, status: 'broadcast' | 'queued') {
+      assert.deepEqual(Object.keys(row).sort(), publicFields, 'Authenticated history exposed unexpected/private fields');
+      assert.equal(row.id, paymentKey(input.payment)); assert.equal(row.status, status);
+      assert.deepEqual(row.payment, input.payment);
+      assert.equal(row.tx_hash, status === 'broadcast' ? originalHash : null);
+      assert.equal(row.block_number, null); assert.equal(row.block_hash, null); assert.equal(row.error, null);
+      assert.equal(typeof row.created_at, 'string'); assert.equal(typeof row.updated_at, 'string');
+    }
     async function observeOutage(phase: 'before-restart' | 'after-restart') {
-      const started = performance.now(), deadline = started + 45000, baseline = receiptCount();
+      const started = performance.now(), deadline = started + PHASE_BUDGET_MS, baseline = receiptCount();
       let observations = 0, boundaryCount: number | undefined, boundaryElapsedMs: number | undefined, passed = false;
+      let historySets = 0, nextHistoryAt = started, historyBoundaryElapsedMs: number | undefined;
+      let firstHistoryElapsedMs: number | undefined, lastHistoryElapsedMs: number | undefined;
+      const historyResponseStatuses = new Set<number>();
       let ended: number | undefined;
+      async function history() {
+        // These are authenticated local reads while the worker independently
+        // retries real RPC. Do not infer an RPC delta from overlapping traffic.
+        const responses = await Promise.all([
+          api(cli, 'payments/' + encodeURIComponent(firstId)),
+          api(cli, 'payments/' + encodeURIComponent(secondId)),
+          api(cli, 'payments?limit=25&status=broadcast')
+        ]);
+        for (const response of responses) { historyResponseStatuses.add(response.status); assert.equal(response.status, 200); }
+        const [first, second, filtered] = await Promise.all(responses.map(response => response.json())) as any[];
+        assertPublic(first, firstInput, 'broadcast'); assertPublic(second, secondInput, 'queued');
+        assert.deepEqual(Object.keys(filtered).sort(), ['items', 'nextCursor']);
+        assert.equal(filtered.nextCursor, null); assert.equal(filtered.items.length, 1);
+        assert.deepEqual(filtered.items[0], first);
+      }
       try {
         for (;;) {
           const remaining = deadline - performance.now();
-          assert.ok(remaining > 0, 'Active receipt outage did not meet its observations within 45 seconds');
+          assert.ok(remaining > 0, 'Active receipt outage did not meet its observations within 120 seconds');
           assert.equal(cli.child.exitCode, null, 'The observed CLI process exited during the active outage');
           assert.equal(cli.child.signalCode, null);
           await within(uncertain(), remaining);
           observations++;
+          const beforeHistory = performance.now();
+          if (beforeHistory >= nextHistoryAt || (beforeHistory - started >= MIN_WINDOW_MS && historyBoundaryElapsedMs === undefined)) {
+            const before = projection(), pending = history();
+            historyRequests.add(pending);
+            void pending.finally(() => historyRequests.delete(pending)).catch(() => {});
+            await within(pending, Math.max(1, deadline - performance.now()));
+            assert.ok(projection() === before && before === originalProjection,
+              'Authenticated outage history reads changed the private payment/audit/journal projection');
+            historySets++;
+            const historyElapsedMs = performance.now() - started;
+            firstHistoryElapsedMs ??= historyElapsedMs; lastHistoryElapsedMs = historyElapsedMs;
+            if (historyElapsedMs >= MIN_WINDOW_MS) historyBoundaryElapsedMs ??= historyElapsedMs;
+            nextHistoryAt = performance.now() + HISTORY_INTERVAL_MS;
+          }
           const elapsed = performance.now() - started, current = receiptCount();
-          assert.ok(elapsed <= 45000, 'Active receipt outage exceeded its 45-second observation budget');
-          if (elapsed >= 30000 && boundaryCount === undefined) {
+          assert.ok(elapsed <= PHASE_BUDGET_MS, 'Active receipt outage exceeded its 120-second observation budget');
+          if (elapsed >= MIN_WINDOW_MS && boundaryCount === undefined) {
             boundaryCount = current; boundaryElapsedMs = elapsed;
           }
-          // Require a fresh failed RPC after the 30-second endpoint, rather
+          // Require a fresh failed RPC after the 90-second endpoint, rather
           // than allowing early retries followed by a stalled scheduler to pass.
           if (boundaryCount !== undefined && current > boundaryCount &&
-            current - baseline > 20 && observations > 20) {
+            current - baseline > 80 && observations > 80 && historySets >= 18 && historyBoundaryElapsedMs !== undefined) {
             passed = true; ended = performance.now();
             return { durationMs: ended - started, observations, failedReceiptAttempts: current - baseline,
-              boundaryElapsedMs: boundaryElapsedMs!, failedReceiptsAfterBoundary: current - boundaryCount };
+              boundaryElapsedMs: boundaryElapsedMs!, failedReceiptsAfterBoundary: current - boundaryCount,
+              historySets, historyResponses: historySets * 3, historyBoundaryElapsedMs };
           }
           await new Promise(resolvePause => setTimeout(resolvePause, Math.min(1000, Math.max(1, deadline - performance.now()))));
         }
@@ -157,7 +202,11 @@ test('the actual RPC CLI autonomously recovers after two 30-second observation w
         ended ??= performance.now();
         t.diagnostic(JSON.stringify({ phase, passed, durationMs: Math.floor(ended - started), observations,
           failedReceiptAttempts: receiptCount() - baseline, boundaryElapsedMs: boundaryElapsedMs === undefined ? null : Math.floor(boundaryElapsedMs),
-          failedReceiptsAfterBoundary: boundaryCount === undefined ? 0 : receiptCount() - boundaryCount }));
+          failedReceiptsAfterBoundary: boundaryCount === undefined ? 0 : receiptCount() - boundaryCount,
+          historySets, historyResponses: historySets * 3, historyResponseStatuses: [...historyResponseStatuses],
+          firstHistoryElapsedMs: firstHistoryElapsedMs === undefined ? null : Math.floor(firstHistoryElapsedMs),
+          lastHistoryElapsedMs: lastHistoryElapsedMs === undefined ? null : Math.floor(lastHistoryElapsedMs),
+          historyBoundaryElapsedMs: historyBoundaryElapsedMs === undefined ? null : Math.floor(historyBoundaryElapsedMs) }));
       }
     }
     assert.ok(performance.now() >= outageStarted!);
@@ -177,9 +226,11 @@ test('the actual RPC CLI autonomously recovers after two 30-second observation w
     const outageDurationMs = performance.now() - outageStarted!;
     const observedWindowMs = firstWindow.durationMs + secondWindow.durationMs;
     const restartDowntimeMs = restartedReadyAt - previousClosedAt; // Closed-to-ready gap, excluded from both windows.
-    assert.ok(firstWindow.durationMs >= 30000 && secondWindow.durationMs >= 30000);
-    assert.ok(firstWindow.failedReceiptAttempts > 20 && secondWindow.failedReceiptAttempts > 20);
-    assert.ok(observedWindowMs >= 60000);
+    assert.ok(firstWindow.durationMs >= MIN_WINDOW_MS && secondWindow.durationMs >= MIN_WINDOW_MS);
+    assert.ok(firstWindow.failedReceiptAttempts > 80 && secondWindow.failedReceiptAttempts > 80);
+    assert.ok(firstWindow.observations > 80 && secondWindow.observations > 80);
+    assert.ok(firstWindow.historySets >= 18 && secondWindow.historySets >= 18);
+    assert.ok(observedWindowMs >= MIN_WINDOW_MS * 2);
 
     proxy.heal();
     await until(() => reader!.get(firstId)?.status === 'settled' && reader!.get(secondId)?.status === 'settled',
@@ -214,12 +265,15 @@ test('the actual RPC CLI autonomously recovers after two 30-second observation w
       restartDowntimeMs: Math.floor(restartDowntimeMs), startupReceiptAttempts,
       receiptAttemptsBeforeRestart: firstWindow.failedReceiptAttempts, receiptAttemptsAfterRestart: secondWindow.failedReceiptAttempts,
       observationsBeforeRestart: firstWindow.observations, observationsAfterRestart: secondWindow.observations,
+      historySetsBeforeRestart: firstWindow.historySets, historySetsAfterRestart: secondWindow.historySets,
+      historyResponsesBeforeRestart: firstWindow.historyResponses, historyResponsesAfterRestart: secondWindow.historyResponses,
       settledPayments: 2, journalRows: 2, reconciled: result.checked }));
     completed = true;
   } finally {
     const failures: unknown[] = [];
     async function cleanup(action: () => unknown) { try { await action(); } catch (error) { failures.push(error); } }
     for (const cli of children) await cleanup(() => cli.kill());
+    await cleanup(() => within(Promise.allSettled([...historyRequests]), 8000));
     await cleanup(() => reader?.close());
     await cleanup(() => proxy?.close());
     await cleanup(() => chain?.close());
