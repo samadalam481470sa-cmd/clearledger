@@ -39,7 +39,7 @@ beforeEach(() => {
       else throw unavailable;
     },
     getBlockNumber: async () => 17,
-    getBlock: async () => ({ number: 17, hash: blockHash })
+    getBlock: async () => ({ number: 17, hash: blockHash, transactions: [txHash] })
   };
   const router = { interface: iface, connect() { return this; }, settle: {
     staticCall: async () => { preflights++; throw unavailable; }
@@ -54,8 +54,8 @@ function coherentReceipt() {
   const log = iface.encodeEventLog(iface.getEvent('PaymentSettled')!, Object.values({
     paymentId: payment.paymentId, payer: payment.payer, payee: payment.payee,
     token: payment.token, amount: payment.amount, nonce: payment.nonce }));
-  return { hash: txHash, blockNumber: 17, blockHash, status: 1,
-    logs: [{ address: routerAddress, ...log, transactionHash: txHash, blockNumber: 17, blockHash }] };
+  return { hash: txHash, index: 0, blockNumber: 17, blockHash, status: 1,
+    logs: [{ address: routerAddress, ...log, transactionHash: txHash, transactionIndex: 0, blockNumber: 17, blockHash }] };
 }
 function snapshot() {
   return { rows: store.db.prepare('SELECT * FROM payments ORDER BY rowid').all(),

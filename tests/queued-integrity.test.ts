@@ -22,7 +22,8 @@ beforeEach(() => {
     populateTransaction: async () => { populated++; throw new Error('Unexpected population'); }
   } };
   const provider = { getTransactionReceipt: async () => receipt, getBlockNumber: async () => 17,
-    getBlock: async () => ({ number: 17, hash: blockHash }), broadcastTransaction: async () => { throw unavailable; } };
+    getBlock: async () => ({ number: 17, hash: blockHash, transactions: receipt ? [receipt.hash] : [] }),
+    broadcastTransaction: async () => { throw unavailable; } };
   const relayer = { populateTransaction: async () => { populated++; throw new Error('Unexpected population'); },
     signTransaction: async () => { signed++; throw new Error('Unexpected signing'); } };
   service = new PaymentService(store, provider as unknown as JsonRpcProvider, relayer as unknown as Wallet,
@@ -132,8 +133,8 @@ test('an older canonical broadcast can settle before queued reservation anomalie
   const log = iface.encodeEventLog(iface.getEvent('PaymentSettled')!, Object.values({
     paymentId: payment().paymentId, payer: payment().payer, payee: payment().payee,
     token: payment().token, amount: payment().amount, nonce: payment().nonce }));
-  receipt = { hash, blockHash, blockNumber: 17, status: 1,
-    logs: [{ address: routerAddress, ...log, transactionHash: hash, blockHash, blockNumber: 17 }] };
+  receipt = { hash, index: 0, blockHash, blockNumber: 17, status: 1,
+    logs: [{ address: routerAddress, ...log, transactionHash: hash, transactionIndex: 0, blockHash, blockNumber: 17 }] };
   await assert.rejects(service.tick(), error => error instanceof Error && error.message === blockedError);
   assert.equal(store.get(old)!.status, 'settled'); assert.equal(store.journals().length, 1);
   assert.equal(store.get(second)!.status, 'queued'); assert.equal(preflights.length, 0); assert.equal(signed, 0);

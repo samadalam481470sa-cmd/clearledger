@@ -238,9 +238,9 @@ Signature structure still permits opaque ERC-1271 bytes, including `0x`; router 
 
 ### Initial receipt confirmation
 
-A receipt can fail or settle a broadcast only after its transaction hash, safe block metadata, canonical block number/hash, and configured confirmation depth agree. Status must be exactly `0` or `1`; unknown status, invalid head data, or inconsistent/malformed identity leaves the intent in broadcast for retry, retaining its signed bytes and nonce priority. Missing or non-array success logs are also retryable. A valid success-log array must contain the configured router's matching `PaymentSettled` event before journaling; an explicit valid empty array or otherwise missing expected event goes to review after confirmation.
+A receipt can fail or settle a broadcast only after its transaction hash, safe block metadata, canonical block number and hash, and configured confirmation depth agree. The receipt index must be a nonnegative safe integer. The canonical block’s transaction list must contain the reserved hash at exactly that index. The worker uses the block it already fetched for confirmation. Status must be exactly `0` or `1`. Unknown status, invalid head data or inconsistent identity leave the intent in broadcast for retry with its signed bytes and nonce priority. Missing or non-array success logs are also retryable. A valid success-log array must contain the configured router’s matching `PaymentSettled` event before journaling. A coherent receipt with a missing expected event goes to review after confirmation.
 
-These checks still trust RPC responses; they are not independent proofs or a finality guarantee. See [validation](VALIDATION.md#initial-confirmation-integrity) for measured evidence and limits.
+The worker compares the configured provider’s receipt and block responses for consistency. [Canonical transaction position verification](../STATUS.md#canonical-transaction-position) · [Earlier confirmation validation](VALIDATION.md#initial-confirmation-integrity).
 
 ### Settlement-log provenance
 

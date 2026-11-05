@@ -76,12 +76,12 @@ beforeEach(() => {
       sends++; const hash = keccak256(raw);
       const log = iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
         [first.paymentId, first.payer, first.payee, first.token, first.amount, first.nonce]);
-      receipt = { hash, blockNumber: 17, blockHash, status: 1,
-        logs: [{ address: routerAddress, ...log, transactionHash: hash, blockNumber: 17, blockHash }] };
+      receipt = { hash, index: 0, blockNumber: 17, blockHash, status: 1,
+        logs: [{ address: routerAddress, ...log, transactionHash: hash, transactionIndex: 0, blockNumber: 17, blockHash }] };
       return { hash };
     },
     getBlockNumber: async () => { blockReads++; return 17; },
-    getBlock: async () => { blockReads++; return { number: 17, hash: blockHash }; }
+    getBlock: async () => { blockReads++; return { number: 17, hash: blockHash, transactions: receipt ? [receipt.hash] : [] }; }
   };
   service = new PaymentService(store, provider as unknown as JsonRpcProvider,
     relayer as unknown as Wallet, router, 31337, routerAddress);

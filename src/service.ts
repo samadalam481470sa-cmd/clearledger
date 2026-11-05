@@ -138,6 +138,7 @@ export class PaymentService {
     // its nonce priority. Both success and revert decisions need the same
     // transaction identity, canonical inclusion, and configured depth checks.
     if (!receipt || !sameHash(receipt.hash, row.tx_hash) ||
+      !Number.isSafeInteger(receipt.index) || receipt.index < 0 ||
       !Number.isSafeInteger(receipt.blockNumber) || receipt.blockNumber < 0 ||
       !isHash(receipt.blockHash) || (receipt.status !== 0 && receipt.status !== 1) ||
       (receipt.status === 1 && !Array.isArray(receipt.logs))) return;
@@ -146,6 +147,8 @@ export class PaymentService {
       latest - receipt.blockNumber < this.confirmations - 1) return;
     const canonical = await this.provider.getBlock(receipt.blockNumber);
     if (!canonical || canonical.number !== receipt.blockNumber || !sameHash(canonical.hash, receipt.blockHash)) return;
+    const transactions = canonical.transactions;
+    if (!Array.isArray(transactions) || !sameHash(transactions[receipt.index], row.tx_hash)) return;
     if (receipt.status === 0) {
       this.store.setStatus(row.id, 'failed', 'Transaction reverted on chain');
       return;

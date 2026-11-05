@@ -12,6 +12,7 @@ const payee = '0x' + '22'.repeat(20);
 const token = '0x' + '33'.repeat(20);
 const routerAddress = '0x' + '44'.repeat(20);
 const txHash = '0x' + 'ab'.repeat(32);
+const otherTxHash = '0x' + 'ef'.repeat(32);
 const blockHash = '0x' + 'cd'.repeat(32);
 const iface = new Interface([
   'event PaymentSettled(bytes32 indexed paymentId,address indexed payer,address indexed payee,address token,uint256 amount,uint256 nonce)'
@@ -34,9 +35,9 @@ beforeEach(() => {
   secondId = undefined;
   const log = iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
     [payment.paymentId, payment.payer, payment.payee, payment.token, payment.amount, payment.nonce]);
-  receipt = { hash: txHash, blockNumber: 17, blockHash, status: 1,
-    logs: [{ address: routerAddress, transactionHash: txHash, blockNumber: 17, blockHash, ...log }] };
-  canonical = { number: 17, hash: blockHash };
+  receipt = { hash: txHash, index: 0, blockNumber: 17, blockHash, status: 1,
+    logs: [{ address: routerAddress, transactionHash: txHash, transactionIndex: 0, blockNumber: 17, blockHash, ...log }] };
+  canonical = { number: 17, hash: blockHash, transactions: [txHash] };
   latest = 18;
   preflights = 0; signing = 0; blockReads = 0;
 });
@@ -207,6 +208,38 @@ for (const status of [0, 1]) {
   }
 }
 
+for (const status of [0, 1]) {
+  for (const [description, index, transactions] of [
+    ['missing canonical transaction list', 0, undefined],
+    ['non-array canonical transaction list', 0, { 0: txHash }],
+    ['empty canonical transaction list', 0, []],
+    ['out-of-range canonical transaction slot', 1, [txHash]],
+    ['malformed hash at the canonical transaction slot', 0, ['0x1234']],
+    ['reserved hash at a different canonical transaction slot', 1, [txHash, otherTxHash]]
+  ] as const) {
+    test(description + ' keeps status ' + status + ' broadcast unresolved', async () => {
+      receipt.status = status;
+      receipt.index = index;
+      receipt.logs[0].transactionIndex = index;
+      canonical.transactions = transactions;
+      await remainsUncertain();
+      assert.equal(blockReads, 2);
+    });
+  }
+}
+
+for (const [description, index] of [
+  ['missing', undefined], ['negative', -1], ['fractional', 0.5],
+  ['unsafe', Number.MAX_SAFE_INTEGER + 1], ['string', '0']
+] as const) {
+  test(description + ' revert receipt index preserves the broadcast before block reads', async () => {
+    receipt.status = 0;
+    receipt.index = index;
+    await remainsUncertain();
+    assert.equal(blockReads, 0);
+  });
+}
+
 for (const status of [undefined, null, 2, -1, '0', '1']) {
   test('unknown receipt status ' + String(status) + ' is not a proven revert', async () => {
     receipt.status = status;
@@ -254,7 +287,7 @@ test('a matching revert is failed only after both confirmation depth and canonic
   canonical = null;
   await worker.tick();
   assert.equal(store.get(firstId)!.status, 'broadcast');
-  canonical = { number: 17, hash: blockHash };
+  canonical = { number: 17, hash: blockHash, transactions: [txHash] };
   await worker.tick();
   assert.equal(store.get(firstId)!.status, 'failed');
   assert.equal(store.get(firstId)!.tx_hash, txHash);
@@ -282,6 +315,9 @@ test('matching hash bytes with mixed-case hexadecimal receipt and canonical form
   receipt.hash = '0x' + 'AB'.repeat(32);
   receipt.blockHash = '0x' + 'Cd'.repeat(32);
   canonical.hash = '0x' + 'cD'.repeat(32);
+  receipt.index = 1;
+  receipt.logs[0].transactionIndex = 1;
+  canonical.transactions = [otherTxHash, '0x' + 'AB'.repeat(32)];
   receipt.logs[0].transactionHash = '0x' + 'aB'.repeat(32);
   receipt.logs[0].blockHash = '0x' + 'cD'.repeat(32);
   await service().tick();

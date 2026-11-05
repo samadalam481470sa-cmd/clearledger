@@ -48,8 +48,8 @@ function coherentReceipt(status = 1) {
   const hash = store.get(firstId)!.tx_hash!;
   const log = iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
     [payment.paymentId, payment.payer, payment.payee, payment.token, payment.amount, payment.nonce]);
-  return { hash, blockNumber: 17, blockHash, status,
-    logs: status === 1 ? [{ address: routerAddress, ...log, transactionHash: hash, blockNumber: 17, blockHash }] : [] };
+  return { hash, index: 0, blockNumber: 17, blockHash, status,
+    logs: status === 1 ? [{ address: routerAddress, ...log, transactionHash: hash, transactionIndex: 0, blockNumber: 17, blockHash }] : [] };
 }
 function makeService(configuredChainId = chainId) {
   const provider = {
@@ -60,7 +60,7 @@ function makeService(configuredChainId = chainId) {
       throw new Error('Controlled send uncertainty');
     },
     getBlockNumber: async () => 17,
-    getBlock: async () => ({ number: 17, hash: blockHash })
+    getBlock: async () => ({ number: 17, hash: blockHash, transactions: receipt ? [receipt.hash] : [] })
   };
   const router = { interface: iface, connect() { return this; }, settle: {
     staticCall: async () => { preflights++; throw unavailable; },

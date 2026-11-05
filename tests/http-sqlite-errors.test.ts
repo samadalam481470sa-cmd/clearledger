@@ -27,7 +27,7 @@ function fixture() {
   const nativeCodes: unknown[] = [];
   let receipt: any = null;
   const provider = {
-    getBlock: async () => ({ number: 17, hash: blockHash, timestamp: 2000000000 }),
+    getBlock: async () => ({ number: 17, hash: blockHash, timestamp: 2000000000, transactions: receipt ? [receipt.hash] : [] }),
     getBlockNumber: async () => 17,
     getTransactionReceipt: async (hash: string) => { calls.receiptReads++; return receipt?.hash === hash ? receipt : null; },
     broadcastTransaction: async (raw: string) => {
@@ -35,8 +35,8 @@ function fixture() {
       const hash = keccak256(raw);
       const log = iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
         [payment.paymentId, payment.payer, payment.payee, payment.token, payment.amount, payment.nonce]);
-      receipt = { hash, blockNumber: 17, blockHash, status: 1,
-        logs: [{ address: routerAddress, ...log, transactionHash: hash, blockNumber: 17, blockHash }] };
+      receipt = { hash, index: 0, blockNumber: 17, blockHash, status: 1,
+        logs: [{ address: routerAddress, ...log, transactionHash: hash, transactionIndex: 0, blockNumber: 17, blockHash }] };
       return { hash };
     }
   };
