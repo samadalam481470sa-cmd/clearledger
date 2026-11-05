@@ -13,6 +13,10 @@ Prioritize verified payment correctness and demonstrable engineering over source
 
 Shutdown drain ordering passes Windows unit/HTTP verification and Linux real-SIGTERM helper integration. Actual RPC CLI autonomous crash recovery and POSIX signal-drain/restart integration pass Linux CI; graceful handling does not cover force-kill or blocked JavaScript.
 
+## Journal inclusion consistency
+
+- Totals now report unavailability when a journal transaction hash, block number or block hash disagrees with its linked payment record. All 152 focused checks and strict typecheck pass locally, covering whole-report refusal, unchanged reads, authentication/privacy and cached-count clearing/restoration. Regular and Besu publication CI are pending. This local consistency check does not authenticate chain evidence or detect coherently rewritten records. See [inclusion consistency evidence](docs/VALIDATION.md#journal-inclusion-consistency). The three NULL-safe comparisons remain in the same SQLite statement; current value/collation semantics do not attest field formats or every storage type. Unposted review remains valid. Current count is 637,575 nonblank lines (14,663 application and 622,912 attributed Besu, including comments/tests).
+
 ## Extended receipt outage
 
 - The actual CLI recovery check now observes two receipt-outage windows of at least 90 seconds each across abrupt restart. Local verification measured 192,762 ms of active observation, 187 failed receipt attempts and 108 authenticated history responses, all 200, then recovered both payments once with reconciliation 2/0. Focused verification and strict typecheck pass. Reviewed source [`d62241a0`](https://github.com/samadalam481470sa-cmd/clearledger/commit/d62241a0c81fa2bf4ee036aa511b094b9ca6745b) passed [Linux CI with all 889 tests and zero skips](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/41807675078), fresh installation, typecheck/build/count. This bounded receipt-route fault keeps direct chain reads available and does not establish a soak or availability SLO. See [extended outage evidence](docs/VALIDATION.md#extended-receipt-outage). The existing case now requires more than 80 invariant observations/failed receipt attempts per window and at least 18 authenticated three-GET sets, including a completion at/after 90 seconds. Only active-window time is counted; startup and restart downtime remain excluded. Current count is 637,337 nonblank lines (14,425 application and 622,912 attributed Besu, including comments/tests).
@@ -82,7 +86,7 @@ Shutdown drain ordering passes Windows unit/HTTP verification and Linux real-SIG
 - Model issuance/redemption accounting and off-chain reserve attestations as explicit simulations.
 - Add telemetry, failure injection, load testing, and measured results.
 - Extend captured RPC timeout handling to additional failure modes, providers, and longer concurrent workloads.
-- Extend journal-integrity verification beyond structural value/relationship checks to independently evidenced provenance, coherent omissions and controlled repair procedures.
+- Extend journal-integrity verification beyond stored inclusion consistency to payment/journal business-field matching, independent chain evidence, coherent omissions and controlled repair procedures.
 
 ## RPC database context
 

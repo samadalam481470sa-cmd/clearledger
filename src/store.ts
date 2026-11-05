@@ -200,7 +200,7 @@ export class Store {
   }
   assetTotals() {
     const assets = new Map<string, { token: string; settledPayments: number; settledBaseUnits: bigint; reviewPayments: number; reviewBaseUnits: bigint }>();
-    // Check posting relationships and read eligible rows in one SQLite snapshot.
+    // Check posting relationships and retained inclusion values in one SQLite snapshot.
     // An unjournaled review without recorded inclusion remains a valid state.
     for (const record of this.db.prepare(`
       SELECT 'invalid' AS kind,NULL AS token,NULL AS amount,NULL AS status
@@ -212,6 +212,11 @@ export class Store {
       ) OR EXISTS (
         SELECT 1 FROM journals j LEFT JOIN payments p ON p.id=j.payment_id
         WHERE p.id IS NULL OR p.status IS NULL OR p.status NOT IN ('settled','review')
+      )
+      OR EXISTS (
+        SELECT 1 FROM journals j JOIN payments p ON p.id=j.payment_id
+        WHERE j.tx_hash IS NOT p.tx_hash OR j.block_number IS NOT p.block_number
+          OR j.block_hash IS NOT p.block_hash
       )
       UNION ALL
       SELECT 'asset',j.token,j.amount,p.status
