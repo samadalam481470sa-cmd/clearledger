@@ -97,6 +97,17 @@ for (const [description, value] of [
   });
 }
 
+for (const [description, receiptIndex, logIndex] of [
+  ['different', 0, 1], ['missing receipt', undefined, 0], ['missing log', 0, undefined],
+  ['negative', -1, -1], ['fractional', 0.5, 0.5], ['unsafe', Number.MAX_SAFE_INTEGER + 1, Number.MAX_SAFE_INTEGER + 1]
+] as const) {
+  test(description + ' transaction index preserves the broadcast and queued nonce priority', async () => {
+    receipt.index = receiptIndex;
+    receipt.logs[0].transactionIndex = logIndex;
+    await remainsUncertain();
+  });
+}
+
 for (const field of ['transactionHash', 'blockHash', 'blockNumber'] as const) {
   for (const missing of [false, true]) {
     test('healing ' + (missing ? 'missing' : 'different') + ' matching-log ' + field + ' settles the same reservation once', async () => {

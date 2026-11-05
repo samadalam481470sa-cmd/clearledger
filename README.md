@@ -71,6 +71,8 @@ npm run build
 npm run source:count
 ```
 
+The worker now checks that a matching settlement log and its receipt agree on the transaction index. Local synthetic and real JSON-RPC checks passed, including reservation retention, recovery and journal preservation during reconciliation review. Regular CI and Besu acceptance are pending. [Verification evidence](STATUS.md#settlement-transaction-index).
+
 An actual CLI regression exercises distinct signed payments that compete for the same payer nonce. It verifies stale nonce rejection before native reservation, progress for the next valid payment, stable replay and clean reconciliation. The focused test and strict typecheck passed locally. Linux CI passed all 928 tests, typecheck, build and source count. [Local evidence](STATUS.md#competing-payer-nonces) · [Linux CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42075251489).
 
 Totals now report unavailability when a journal transaction hash, block number or block hash disagrees with its linked payment record. All 152 focused checks and strict typecheck pass locally, covering whole-report refusal, unchanged reads, authentication/privacy and cached-count clearing/restoration. Reviewed source [`b2cf1e49`](https://github.com/samadalam481470sa-cmd/clearledger/commit/b2cf1e49a7d0d0af7cc7a196cff020a3a93e9c55) passed [Linux CI with all 927 tests and zero skips](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/41957586466), fresh installation, typecheck/build/count and [four-validator Besu acceptance](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/41957586465). This local consistency check does not authenticate chain evidence or detect coherently rewritten records. See [inclusion consistency evidence](docs/VALIDATION.md#journal-inclusion-consistency).
@@ -115,7 +117,7 @@ A Besu acceptance extension now includes a caller-bound test contract wallet: se
 
 ## More than 100,000 source lines
 
-The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **637,828 nonblank source lines**, with 14,916 application and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
+The [machine-readable count](docs/source-count.json) separates original and upstream source. The current count is **637,850 nonblank source lines**, with 14,938 application and 622,912 in the included Besu release, including comments and tests. Package installs, lockfiles, JSON, documentation, generated output, and databases are excluded. The size requirement is met by attributed upstream code; it is not a claim that all those lines were independently authored for ClearLedger.
 
 Application code is MIT-licensed, including a clearly attributed OpenZeppelin-derived signature-check adaptation. Its lines are included in the application source count; the Besu count remains separate. Besu and installed dependencies retain their own licenses. [Provenance](docs/PROVENANCE.md) records these distinctions and pins the Besu release, commit, and download hash.
 

@@ -174,10 +174,12 @@ export class PaymentService {
           event.args.nonce.toString() === p.nonce;
       } catch { continue; }
       if (!matches) continue;
-      // Matching bytes cannot establish inclusion in a different transaction
-      // or block. Any contradictory matching candidate makes this evidence
-      // retryable, even when a coherent candidate appeared earlier in the list.
-      if (!sameHash(log.transactionHash, receipt.hash) ||
+      // A matching event must agree with the enclosing receipt. One
+      // contradictory candidate makes the evidence inconsistent.
+      const transactionIndex = receipt.index;
+      if (log.transactionIndex !== transactionIndex ||
+        (transactionIndex !== undefined && (!Number.isSafeInteger(transactionIndex) || transactionIndex < 0)) ||
+        !sameHash(log.transactionHash, receipt.hash) ||
         !Number.isSafeInteger(log.blockNumber) || log.blockNumber < 0 ||
         log.blockNumber !== receipt.blockNumber || !sameHash(log.blockHash, receipt.blockHash))
         return 'inconsistent';

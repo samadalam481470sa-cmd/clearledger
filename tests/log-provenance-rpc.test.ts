@@ -12,8 +12,8 @@ import { Store } from '../src/store.ts';
 import { PaymentService } from '../src/service.ts';
 import { paymentTypes, type Payment } from '../src/payment.ts';
 
-type Provenance = 'transactionHash' | 'blockHash' | 'blockNumber';
-const fields: Provenance[] = ['transactionHash', 'blockHash', 'blockNumber'];
+type Provenance = 'transactionHash' | 'blockHash' | 'blockNumber' | 'transactionIndex';
+const fields: Provenance[] = ['transactionHash', 'blockHash', 'blockNumber', 'transactionIndex'];
 const differentHash = (value: string) => '0x' + (value.toLowerCase() === '0x' + 'fa'.repeat(32) ? 'fb' : 'fa').repeat(32);
 
 /** Only the matching event's JSON provenance changes; all requests reach Ganache. */
@@ -42,7 +42,9 @@ async function receiptProxy(upstream: string, routerAddress: string, topic: stri
           for (const log of receipt.logs) {
             if (log.address.toLowerCase() !== routerAddress.toLowerCase() || log.topics[0]?.toLowerCase() !== topic.toLowerCase()) continue;
             target ??= receipt.transactionHash.toLowerCase();
-            log[fault] = fault === 'blockNumber' ? '0x' + (BigInt(log.blockNumber) + 1n).toString(16) : differentHash(log[fault]);
+            log[fault] = fault === 'blockNumber' || fault === 'transactionIndex'
+              ? '0x' + (BigInt(log[fault]) + 1n).toString(16)
+              : differentHash(log[fault]);
             altered++;
           }
         }
@@ -127,7 +129,6 @@ for (const field of fields) test('actual RPC log ' + field + ' contradiction blo
   proxy.corrupt(field);
   await operation(service.tick());
   const reserved = store.get(first.id)!;
-  assert.equal(reserved.status, 'broadcast');
   assert.ok(reserved.raw_tx && reserved.tx_hash);
   const originalRaw = reserved.raw_tx, originalHash = reserved.tx_hash;
   const nativeNonce = Transaction.from(originalRaw).nonce;
@@ -139,12 +140,21 @@ for (const field of fields) test('actual RPC log ' + field + ' contradiction blo
   assert.equal(genuine.status, 1);
   const { log, index } = matchingLog(presented);
   const genuineLog = genuine.logs[index];
-  assert.equal(log[field], field === 'blockNumber' ? genuineLog.blockNumber + 1 : differentHash(genuineLog[field] as string));
+  const expected = field === 'blockNumber' || field === 'transactionIndex'
+    ? genuineLog[field] + 1
+    : differentHash(genuineLog[field]);
+  assert.equal(log[field], expected);
+  if (field === 'transactionIndex') {
+    assert.equal(genuineLog.transactionIndex, genuine.index);
+    assert.equal(presented.index, genuine.index);
+    assert.notEqual(log.transactionIndex, presented.index);
+  }
   assert.notEqual(log[field], genuineLog[field], 'ethers must retain the contradictory RPC provenance');
   const repairedPresentation = JSON.parse(JSON.stringify(presented));
   repairedPresentation.logs[index][field] = genuineLog[field];
   assert.deepEqual(repairedPresentation, JSON.parse(JSON.stringify(genuine)), 'Only matching-log provenance may differ from the genuine receipt');
   assert.ok(proxy.altered() >= 2);
+  assert.equal(reserved.status, 'broadcast');
 
   for (let retry = 0; retry < 3; retry++) {
     await operation(service.tick());
