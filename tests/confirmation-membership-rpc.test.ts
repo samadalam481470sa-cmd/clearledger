@@ -61,6 +61,7 @@ async function blockProxy(upstream: string) {
     sends,
     altered: () => altered,
     heal() { fault = false; },
+    corrupt() { fault = true; },
     async close() {
       server.closeAllConnections();
       await new Promise<void>(resolve => server.close(() => resolve()));
@@ -69,7 +70,7 @@ async function blockProxy(upstream: string) {
   };
 }
 
-test('actual RPC block membership contradiction retains the reserved broadcast until healing', { timeout: 30000 }, async t => {
+test('actual RPC block membership guards confirmation and reviews only the affected settlement', { timeout: 30000 }, async t => {
   let chain: Awaited<ReturnType<typeof localChain>> | undefined;
   let proxy: Awaited<ReturnType<typeof blockProxy>> | undefined;
   let provider: ReturnType<typeof createRpcProvider> | undefined;
@@ -152,5 +153,39 @@ test('actual RPC block membership contradiction retains the reserved broadcast u
   assert.deepEqual(ledger.journals().map(row => row.tx_hash), [next.tx_hash, hash]);
   assert.equal(await local.token.balanceOf(local.payee.address), 132000000n);
   assert.equal(await local.router.nonces(local.payer.address), 2n);
-  t.diagnostic(JSON.stringify({ contradictoryBlocks: relay.altered(), recoveredSettlements: 2, nativeSends: relay.sends.length }));
+  const confirmationContradictions = relay.altered();
+  const healthy = await operation(service.reconcile());
+  assert.equal(healthy.checked, 2);
+  assert.deepEqual(healthy.exceptions, []);
+  const journals = ledger.journals();
+  const audit = ledger.events();
+
+  relay.corrupt();
+  const contradictory = await operation(service.reconcile());
+  assert.equal(relay.altered(), confirmationContradictions + 1, 'Reconciliation must receive one altered block');
+  assert.equal(contradictory.checked, 2);
+  assert.deepEqual(contradictory.exceptions, [first.id]);
+  const reviewed = ledger.get(first.id)!;
+  assert.equal(reviewed.status, 'review');
+  assert.equal(reviewed.error, 'Recorded settlement no longer matches canonical receipt and journal');
+  assert.ok(isDeepStrictEqual(reviewed, { ...settled, status: 'review', error: reviewed.error, updated_at: reviewed.updated_at }),
+    'Review changed the original settlement evidence');
+  assert.ok(isDeepStrictEqual(ledger.get(second.id), next), 'Review changed the unaffected settlement');
+  assert.deepEqual(ledger.journals(), journals);
+  const [reviewEvent, ...earlierEvents] = ledger.events();
+  assert.equal(reviewEvent.payment_id, first.id);
+  assert.equal(reviewEvent.action, 'review');
+  assert.deepEqual(earlierEvents, audit);
+
+  const repeated = await operation(service.reconcile());
+  assert.equal(repeated.checked, 1);
+  assert.deepEqual(repeated.exceptions, []);
+  assert.ok(isDeepStrictEqual(ledger.get(first.id), reviewed));
+  assert.ok(isDeepStrictEqual(ledger.get(second.id), next));
+  assert.deepEqual(ledger.journals(), journals);
+  assert.deepEqual(ledger.events(), [reviewEvent, ...audit]);
+  assert.deepEqual(relay.sends, [hash, next.tx_hash]);
+  t.diagnostic(JSON.stringify({ contradictoryBlocks: confirmationContradictions, recoveredSettlements: 2,
+    reconciliationContradictoryBlocks: relay.altered() - confirmationContradictions, reviewedSettlements: 1,
+    retainedJournals: journals.length, nativeSends: relay.sends.length }));
 });

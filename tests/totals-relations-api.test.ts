@@ -22,13 +22,17 @@ const expected = { assets: [
   { token: tokenA.toLowerCase(), settledPayments: 1, settledBaseUnits: '125000000', reviewPayments: 0, reviewBaseUnits: '0' },
   { token: tokenB.toLowerCase(), settledPayments: 1, settledBaseUnits: '7000000', reviewPayments: 0, reviewBaseUnits: '0' }
 ] };
+const fixtureTransactionHash = (n: number) => '0x' + (1000 + n).toString(16).padStart(64, '0');
 let store: Store, server: ReturnType<typeof makeServer>, url: string, rpcCalls: number;
 let receipts: Map<string, unknown>;
 beforeEach(async () => {
   store = new Store(); receipts = new Map(); rpcCalls = 0;
   const provider = {
     getTransactionReceipt: async (hash: string) => { rpcCalls++; return receipts.get(hash) ?? null; },
-    getBlock: async (number: number) => { rpcCalls++; return { number, hash: blockHash }; }
+    getBlock: async (number: number) => {
+      rpcCalls++;
+      return { number, hash: blockHash, transactions: [fixtureTransactionHash(number)] };
+    }
   };
   const router = { interface: iface, connect() { return this; } };
   const service = new PaymentService(store, provider as unknown as JsonRpcProvider, {} as Wallet,
@@ -46,12 +50,12 @@ function seed(n: number, asset = tokenA, amount = '125000000') {
   const payment: Payment = { paymentId: '0x' + n.toString(16).padStart(64, '0'), payer: '0x' + '11'.repeat(20),
     payee: '0x' + '22'.repeat(20), token: asset, amount, nonce: String(n - 1), deadline: '2000000000' };
   const row = store.accept(payment, privateMarker + '_fingerprint', privateMarker + '_signature').row;
-  const hash = '0x' + (1000 + n).toString(16).padStart(64, '0');
+  const hash = fixtureTransactionHash(n);
   store.broadcast(row.id, privateMarker + '_raw', hash); store.finalize(row.id, n, blockHash);
   const log = iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
     [payment.paymentId, payment.payer, payment.payee, payment.token, payment.amount, payment.nonce]);
-  receipts.set(hash, { hash, blockNumber: n, blockHash, status: 1,
-    logs: [{ address: routerAddress, transactionHash: hash, blockNumber: n, blockHash, ...log }] });
+  receipts.set(hash, { hash, index: 0, blockNumber: n, blockHash, status: 1,
+    logs: [{ address: routerAddress, transactionHash: hash, transactionIndex: 0, blockNumber: n, blockHash, ...log }] });
   return store.get(row.id)!;
 }
 function baseline() { return { first: seed(1), second: seed(2, tokenB, '7000000') }; }

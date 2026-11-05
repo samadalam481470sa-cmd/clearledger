@@ -33,12 +33,13 @@ function receipt(tx: string) {
   const p = payments.get(tx)!;
   const log = iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
     [p.paymentId, p.payer, p.payee, p.token, p.amount, p.nonce]);
-  return { hash: tx, status: 1, blockNumber: 17, blockHash,
-    logs: [{ address: routerAddress, ...log, transactionHash: tx, blockHash, blockNumber: 17 }] };
+  const index = [...payments.keys()].indexOf(tx);
+  return { hash: tx, index, status: 1, blockNumber: 17, blockHash,
+    logs: [{ address: routerAddress, ...log, transactionHash: tx, transactionIndex: index, blockHash, blockNumber: 17 }] };
 }
 function service(read: (tx: string) => Promise<unknown>) {
   const provider = { getTransactionReceipt: async (tx: string) => { reads++; return read(tx); },
-    getBlock: async () => { blockReads++; return { number: 17, hash: blockHash }; } };
+    getBlock: async () => { blockReads++; return { number: 17, hash: blockHash, transactions: [...payments.keys()] }; } };
   return new PaymentService(store, provider as unknown as JsonRpcProvider, {} as Wallet,
     { interface: iface, connect() { return this; } }, 31337, routerAddress);
 }

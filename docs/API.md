@@ -252,7 +252,7 @@ Reconciliation flags an already-settled payment with inconsistent log provenance
 
 ### Reconciliation integrity
 
-Reconciliation validates stored payment/ID/transaction/block metadata and compares receipt identity/status, the canonical block's number/hash, every journal field, and a matching `PaymentSettled` event emitted by the configured router. Mismatches or missing receipt/block data conservatively flag the payment for review while retaining its journal; they do not reverse accounting or independently prove a reorganization.
+Reconciliation validates the stored payment ID and transaction and block metadata. It compares receipt identity and success status, canonical block number and hash, every journal field, and the configured router’s matching `PaymentSettled` event. It also applies the same exact transaction position check as initial confirmation. The receipt index must be a nonnegative safe integer, and that slot in the fetched block must hold the stored transaction hash. Missing returned evidence or a contradiction flags the payment for review and retains its journal for investigation. These checks compare the configured provider’s responses for consistency. [Reconciliation position verification](../STATUS.md#reconciliation-transaction-position).
 
 RPC exceptions propagate without marking the affected payment for review merely because a lookup failed. A scan may already have committed review flags for earlier mismatches before a later RPC failure; reconciliation is not one transaction over all rows. See [validation](VALIDATION.md#reconciliation-integrity) for the measured evidence.
 

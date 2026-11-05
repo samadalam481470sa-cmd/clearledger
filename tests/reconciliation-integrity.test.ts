@@ -27,14 +27,14 @@ beforeEach(() => {
   paymentId = store.accept(payment, 'synthetic-fingerprint', 'synthetic-signature').row.id;
   store.broadcast(paymentId, 'synthetic-signed-bytes', txHash);
   store.finalize(paymentId, 17, blockHash);
-  receipt = { hash: txHash, blockNumber: 17, status: 1, blockHash, logs: [settlementLog()] };
-  canonical = { number: 17, hash: blockHash };
+  receipt = { hash: txHash, index: 0, blockNumber: 17, status: 1, blockHash, logs: [settlementLog()] };
+  canonical = { number: 17, hash: blockHash, transactions: [txHash] };
 });
 afterEach(() => { store.close(); });
 
 function settlementLog(overrides: Partial<Payment> = {}, address = routerAddress) {
   const p = { ...payment, ...overrides };
-  return { address, transactionHash: txHash, blockNumber: 17, blockHash,
+  return { address, transactionHash: txHash, transactionIndex: 0, blockNumber: 17, blockHash,
     ...iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
     [p.paymentId, p.payer, p.payee, p.token, p.amount, p.nonce]) };
 }
@@ -49,14 +49,37 @@ function service(overrides: Record<string, unknown> = {}) {
     router, 31337, routerAddress);
 }
 async function flagged() {
+  const beforeRow = store.get(paymentId)!;
   const beforeJournal = store.journal(paymentId);
   const result = await service().reconcile();
   assert.equal(result.checked, 1);
   assert.deepEqual(result.exceptions, [paymentId]);
-  assert.equal(store.get(paymentId)!.status, 'review');
-  assert.ok(store.get(paymentId)!.error);
+  const reviewed = store.get(paymentId)!;
+  assert.ok(reviewed.error);
+  assert.deepEqual(reviewed, { ...beforeRow, status: 'review', error: reviewed.error, updated_at: reviewed.updated_at });
   assert.deepEqual(store.journal(paymentId), beforeJournal, 'Integrity review must preserve the existing journal evidence');
   assert.equal(store.events().filter(event => event.action === 'review').length, 1);
+}
+
+test('the reserved hash at a different canonical transaction slot is reviewed', async () => {
+  receipt.index = 1;
+  receipt.logs[0].transactionIndex = 1;
+  canonical.transactions = [txHash, '0x' + '99'.repeat(32)];
+  await flagged();
+});
+
+for (const [description, change] of [
+  ['missing receipt and log transaction indexes', () => {
+    delete receipt.index; delete receipt.logs[0].transactionIndex;
+  }],
+  ['missing canonical transaction list', () => { delete canonical.transactions; }],
+  ['non-array canonical transaction list', () => { canonical.transactions = { 0: txHash }; }],
+  ['out-of-range canonical transaction slot', () => { canonical.transactions = []; }]
+] as const) {
+  test(description + ' triggers review while retaining stored evidence', async () => {
+    change();
+    await flagged();
+  });
 }
 
 test('coherent receipt, canonical block, journal and router event remain settled', async () => {
@@ -179,10 +202,11 @@ test('valid receipt and canonical hash hex casing does not create a false integr
   const recordedBlock = '0x' + 'cd'.repeat(32);
   store.db.prepare('UPDATE payments SET tx_hash=?,block_hash=? WHERE id=?').run(transaction, recordedBlock, paymentId);
   store.db.prepare('UPDATE journals SET tx_hash=?,block_hash=? WHERE payment_id=?').run(transaction, recordedBlock, paymentId);
-  receipt = { ...receipt, hash: '0x' + 'AB'.repeat(32), blockHash: '0x' + 'CD'.repeat(32) };
+  receipt = { ...receipt, index: 1, hash: '0x' + 'AB'.repeat(32), blockHash: '0x' + 'CD'.repeat(32) };
   receipt.logs = receipt.logs.map((log: any) => ({ ...log,
-    transactionHash: '0x' + 'aB'.repeat(32), blockHash: '0x' + 'cD'.repeat(32) }));
-  canonical = { ...canonical, hash: '0x' + 'CD'.repeat(32) };
+    transactionIndex: 1, transactionHash: '0x' + 'aB'.repeat(32), blockHash: '0x' + 'cD'.repeat(32) }));
+  canonical = { ...canonical, hash: '0x' + 'CD'.repeat(32),
+    transactions: ['0x' + '99'.repeat(32), '0x' + 'AB'.repeat(32)] };
   const before = { row: store.get(paymentId), journal: store.journal(paymentId), audit: store.events() };
   const result = await service().reconcile();
   assert.deepEqual(result.exceptions, []);

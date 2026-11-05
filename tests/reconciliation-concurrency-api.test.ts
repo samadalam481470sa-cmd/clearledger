@@ -18,8 +18,8 @@ const payment: Payment = { paymentId: '0x' + '77'.repeat(32), payer, payee, toke
 const iface = new Interface([
   'event PaymentSettled(bytes32 indexed paymentId,address indexed payer,address indexed payee,address token,uint256 amount,uint256 nonce)'
 ]);
-const receipt = { hash: txHash, status: 1, blockNumber: 17, blockHash, logs: [
-  { address: routerAddress, transactionHash: txHash, blockNumber: 17, blockHash,
+const receipt = { hash: txHash, index: 0, status: 1, blockNumber: 17, blockHash, logs: [
+  { address: routerAddress, transactionHash: txHash, transactionIndex: 0, blockNumber: 17, blockHash,
     ...iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
       [payment.paymentId, payer, payee, token, payment.amount, payment.nonce]) }
 ] };
@@ -71,7 +71,7 @@ async function createContext() {
       receiptReads++; receiptEntered.resolve();
       return hold ? gate.promise : receipt;
     },
-    getBlock: async () => { blockReads++; return { number: 17, hash: blockHash }; }
+    getBlock: async () => { blockReads++; return { number: 17, hash: blockHash, transactions: [txHash] }; }
   };
   const router = { interface: iface, connect() { return this; } };
   const service = new PaymentService(store, provider as unknown as JsonRpcProvider, {} as Wallet,

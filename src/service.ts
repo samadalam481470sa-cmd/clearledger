@@ -1,4 +1,4 @@
-import { keccak256, Transaction, type JsonRpcProvider, type Wallet, type TypedDataDomain, type TransactionReceipt } from 'ethers';
+import { keccak256, Transaction, type JsonRpcProvider, type Wallet, type TypedDataDomain, type TransactionReceipt, type Block } from 'ethers';
 import { digest, domain, paymentKey, paymentSchema, submissionSchema, type Payment } from './payment.ts';
 import { Store, type RecordRow } from './store.ts';
 
@@ -8,6 +8,13 @@ function isHash(value: unknown): value is string {
 function sameHash(actual: unknown, expected: string): boolean {
   return isHash(actual) && actual.toLowerCase() === expected.toLowerCase();
 }
+function matchesCanonicalPosition(receipt: TransactionReceipt, block: Block | null): boolean {
+  if (!block || block.number !== receipt.blockNumber || !sameHash(block.hash, receipt.blockHash) ||
+    !Number.isSafeInteger(receipt.index) || receipt.index < 0) return false;
+  const transactions = block.transactions;
+  return Array.isArray(transactions) && sameHash(transactions[receipt.index], receipt.hash);
+}
+
 interface ReconciliationResult { checked: number; exceptions: string[]; at: string }
 
 export class PaymentService {
@@ -146,9 +153,7 @@ export class PaymentService {
     if (!Number.isSafeInteger(latest) || latest < receipt.blockNumber ||
       latest - receipt.blockNumber < this.confirmations - 1) return;
     const canonical = await this.provider.getBlock(receipt.blockNumber);
-    if (!canonical || canonical.number !== receipt.blockNumber || !sameHash(canonical.hash, receipt.blockHash)) return;
-    const transactions = canonical.transactions;
-    if (!Array.isArray(transactions) || !sameHash(transactions[receipt.index], row.tx_hash)) return;
+    if (!matchesCanonicalPosition(receipt, canonical)) return;
     if (receipt.status === 0) {
       this.store.setStatus(row.id, 'failed', 'Transaction reverted on chain');
       return;
@@ -230,7 +235,7 @@ export class PaymentService {
           const journal = this.store.journal(row.id);
           matches = !!receipt && receipt.status === 1 && sameHash(receipt.hash, row.tx_hash) &&
             receipt.blockNumber === row.block_number && sameHash(receipt.blockHash, row.block_hash) &&
-            !!block && block.number === row.block_number && sameHash(block.hash, row.block_hash) &&
+            matchesCanonicalPosition(receipt, block) &&
             !!journal && journal.payment_id === row.id && journal.token === p.token &&
             journal.debit_account === p.payer && journal.credit_account === p.payee &&
             journal.amount === p.amount && journal.tx_hash === row.tx_hash &&
