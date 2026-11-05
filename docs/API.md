@@ -141,6 +141,8 @@ console.log(response.status, await response.json());
 
 Read the current payer nonce before creating each authorization. The payer needs token eligibility, sufficient balance, and an approved router allowance. The API allows deadlines no more than seven days in the future. The router itself enforces expiry.
 
+Distinct payment IDs can enter the queue with the same payer nonce. A successful settlement advances the router nonce, so a queued instruction that uses the earlier nonce can fail preflight before the worker signs a transaction for it. Replaying the original signed instruction returns its stored outcome after signature revalidation.
+
 ### Contract-wallet authorization and retries
 
 For a deployed ERC-1271 wallet, set `payment.payer` to the wallet address and supply the opaque signature bytes its policy accepts for the EIP-712 payment digest. The API structurally allows 0–4096 bytes (`0x` is empty); empty bytes can be valid for a contract policy but do not authorize an EOA. Wallet-controlled token eligibility, balance, allowance, and nonce remain necessary.
