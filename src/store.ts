@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { isHexString } from 'ethers';
+import { isHexString, ZeroAddress } from 'ethers';
 import { paymentKey, type Payment } from './payment.ts';
 
 export type Status = 'queued' | 'broadcast' | 'settled' | 'failed' | 'review';
@@ -19,6 +19,9 @@ interface Cursor { version: 1; kind: 'payments' | 'journals'; status: Status | n
 interface JournalRow {
   payment_id: string; token: string; debit_account: string; credit_account: string;
   amount: string; tx_hash: string; block_number: number; block_hash: string;
+}
+function isPostingAddress(value: unknown): value is string {
+  return isHexString(value, 20) && value !== ZeroAddress;
 }
 function numericRow<T>(row: unknown): T {
   if (row === undefined) return row as T;
@@ -201,10 +204,11 @@ export class Store {
   }
   assetTotals() {
     const assets = new Map<string, { token: string; settledPayments: number; settledBaseUnits: bigint; reviewPayments: number; reviewBaseUnits: bigint }>();
-    // Check posting relationships and retained inclusion values in one SQLite snapshot.
+    // Check postings and their source payments in one SQLite snapshot.
     // An unjournaled review without recorded inclusion remains a valid state.
     for (const record of this.db.prepare(`
-      SELECT 'invalid' AS kind,NULL AS token,NULL AS amount,NULL AS status,NULL AS tx_hash,NULL AS block_hash
+      SELECT 'invalid' AS kind,NULL AS token,NULL AS amount,NULL AS status,NULL AS tx_hash,NULL AS block_hash,
+        NULL AS debit_account,NULL AS credit_account,NULL AS payload
       WHERE EXISTS (
         SELECT 1 FROM payments p
         WHERE (p.status='settled' OR (p.status='review' AND
@@ -223,17 +227,22 @@ export class Store {
           OR j.block_number NOT BETWEEN 0 AND ${Number.MAX_SAFE_INTEGER}
       )
       UNION ALL
-      SELECT 'asset',j.token,j.amount,p.status,j.tx_hash,j.block_hash
+      SELECT 'asset',j.token,j.amount,p.status,j.tx_hash,j.block_hash,j.debit_account,j.credit_account,p.payload
       FROM journals j JOIN payments p ON p.id=j.payment_id
       WHERE p.status IN ('settled','review')
     `).iterate()) {
       if (record.kind === 'invalid' || !isHexString(record.tx_hash, 32) || !isHexString(record.block_hash, 32))
         throw new JournalIntegrityError();
-      // A malformed included row invalidates the whole report. Coercion could
-      // turn missing/negative/nondecimal amounts into plausible transfer volume.
-      if (typeof record.token !== 'string' || !/^0x[0-9a-fA-F]{40}(?![\s\S])/.test(record.token) ||
-        record.token === '0x' + '0'.repeat(40) || typeof record.amount !== 'string' ||
-        !/^[1-9][0-9]{0,77}(?![\s\S])/.test(record.amount)) throw new JournalIntegrityError();
+      if (!isPostingAddress(record.token) || !isPostingAddress(record.debit_account) ||
+        !isPostingAddress(record.credit_account) || record.debit_account.toLowerCase() === record.credit_account.toLowerCase() ||
+        typeof record.amount !== 'string' || !/^[1-9][0-9]{0,77}(?![\s\S])/.test(record.amount) ||
+        typeof record.payload !== 'string') throw new JournalIntegrityError();
+      // Compare only the business fields copied into the journal at finalization.
+      let payment: Partial<Payment> | null;
+      try { payment = JSON.parse(record.payload); }
+      catch { throw new JournalIntegrityError(); }
+      if (!payment || typeof payment !== 'object' || payment.token !== record.token || payment.payer !== record.debit_account ||
+        payment.payee !== record.credit_account || payment.amount !== record.amount) throw new JournalIntegrityError();
       const amount = BigInt(record.amount);
       if (amount >= 2n ** 256n) throw new JournalIntegrityError();
       const token = record.token.toLowerCase();

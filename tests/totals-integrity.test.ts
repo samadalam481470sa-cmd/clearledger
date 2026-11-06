@@ -77,8 +77,10 @@ for (const status of ['queued', 'broadcast', 'failed'] as Status[]) test('journa
   assert.deepEqual(snapshot(), before);
 });
 
-test('totals validate journal structure without reconstructing or authenticating stored payment payloads', () => {
-  const id = seed(1); store.db.prepare('UPDATE payments SET payload=? WHERE id=?').run('PRIVATE_BAD_PAYLOAD', id);
+test('totals validate journal structure without requiring unrelated payment fields', () => {
+  const id = seed(1);
+  const { token, payer, payee, amount } = JSON.parse(store.get(id)!.payload) as Payment;
+  store.db.prepare('UPDATE payments SET payload=? WHERE id=?').run(JSON.stringify({ token, payer, payee, amount }), id);
   const before = snapshot(); assert.equal(store.assetTotals()[0].settledBaseUnits, '125000000');
   assert.deepEqual(snapshot(), before);
 });

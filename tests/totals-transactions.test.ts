@@ -35,6 +35,10 @@ function projection(connection = store.db) {
     audit: rows('SELECT * FROM audit ORDER BY sequence', connection), sequence: rows('SELECT * FROM sqlite_sequence ORDER BY name', connection) };
 }
 function readSnapshot() { return { projection: projection(), changes: rows('SELECT total_changes() AS changes') }; }
+function editPaymentAmount(id: string, amount: string) {
+  const payment = JSON.parse(store.get(id)!.payload) as Payment;
+  store.db.prepare('UPDATE payments SET payload=? WHERE id=?').run(JSON.stringify({ ...payment, amount }), id);
+}
 function expected(amount = originalAmount, reviewAmount = '7') {
   return [
     { token, settledPayments: 1, settledBaseUnits: amount, reviewPayments: 0, reviewBaseUnits: '0' },
@@ -89,12 +93,14 @@ afterEach(() => {
   if (failures.length) throw new AggregateError(failures, 'Caller transaction fixture cleanup failed');
 });
 
-test('successful totals see a caller uncommitted amount edit without committing it', () => {
+test('totals require both sides of an uncommitted amount edit without committing it', () => {
   const original = projection(), amount = '90071992547409931234567890';
   store.db.exec('BEGIN IMMEDIATE');
   store.audit(firstId, 'caller-test-marker', 'Uncommitted caller audit entry');
   store.db.prepare('UPDATE journals SET amount=? WHERE payment_id=?').run(amount, firstId);
   assert.equal(store.journal(firstId)!.amount, amount);
+  rejectsWithinCallerTransaction();
+  editPaymentAmount(firstId, amount);
   readsWithinCallerTransaction(expected(amount));
   readsWithinCallerTransaction(expected(amount));
   callerRollback();
@@ -135,6 +141,7 @@ test('malformed-value rejection permits caller savepoint recovery and further to
   assert.deepEqual(projection(), callerProjection);
   readsWithinCallerTransaction(expected());
   store.db.prepare('UPDATE journals SET amount=? WHERE payment_id=?').run('23', secondId);
+  editPaymentAmount(secondId, '23');
   readsWithinCallerTransaction(expected(originalAmount, '23'));
   callerRollback();
   assert.deepEqual(projection(), original);

@@ -86,7 +86,7 @@ Shutdown drain ordering passes Windows unit/HTTP verification and Linux real-SIG
 - Model issuance/redemption accounting and off-chain reserve attestations as explicit simulations.
 - Add telemetry, failure injection, load testing, and measured results.
 - Extend captured RPC timeout handling to additional failure modes, providers, and longer concurrent workloads.
-- Extend journal-integrity verification beyond stored inclusion consistency to payment/journal business-field matching, independent chain evidence, coherent omissions and controlled repair procedures.
+- Extend local payment/journal consistency checks to independent chain evidence, coherent omissions and controlled repair procedures. Transfer-field matching is covered in the [current status](STATUS.md#journal-transfer-field-consistency).
 
 ## RPC database context
 

@@ -89,9 +89,9 @@ async function readUnchanged(auth = true) {
 
 test('missing settled journal invalidates the whole HTTP report and cached client totals until controlled repair', async t => {
   const { first } = baseline(), journal = store.journal(first.id)!;
-  // Totals must inspect relationships without parsing or reconstructing private
-  // payment JSON. A different asset remains otherwise valid throughout.
-  store.db.prepare('UPDATE payments SET payload=? WHERE id=?').run(privateMarker + '{', first.id);
+  // Unrelated authorization corruption leaves the retained business fields readable.
+  const payload = JSON.stringify({ ...JSON.parse(first.payload), deadline: privateMarker + '_deadline' });
+  store.db.prepare('UPDATE payments SET payload=? WHERE id=?').run(payload, first.id);
   const good = await readUnchanged(); assert.deepEqual(good, { status: 200, body: expected });
   let model = reduceTotals(emptyTotals(), { type: 'report', report: good.body });
   assert.deepEqual(totalsCounts(model), { assets: 2, completed: 2, review: 0 });

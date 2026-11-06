@@ -23,8 +23,13 @@ function rows(db: DatabaseSync, table: 'payments' | 'journals' | 'audit' | 'sqli
   return db.prepare('SELECT * FROM ' + table + ' ORDER BY rowid').all();
 }
 
-for (const fault of ['missing journal', 'malformed amount'] as const) {
-  test('one totals snapshot survives a committed interleaved ' + fault + ' until the next read', t => {
+const faults = [
+  { label: 'missing journal', table: 'journals', sql: 'DELETE FROM journals WHERE payment_id=?' },
+  { label: 'malformed journal amount', table: 'journals', sql: "UPDATE journals SET amount='private-invalid-amount' WHERE payment_id=?" },
+  { label: 'mismatched payment amount', table: 'payments', sql: "UPDATE payments SET payload=json_set(payload,'$.amount','11') WHERE id=?" }
+] as const;
+for (const fault of faults) {
+  test('one totals snapshot survives a committed interleaved ' + fault.label + ' until the next read', t => {
     mkdirSync(scratch, { recursive: true });
     const directory = mkdtempSync(join(scratch, 'totals-snapshot-'));
     assert.equal(dirname(resolve(directory)), scratch, 'Cleanup must stay in task-owned scratch');
@@ -61,13 +66,10 @@ for (const fault of ['missing journal', 'malformed amount'] as const) {
               // Choose the other asset without depending on SQLite row order.
               assert.notEqual(victimToken, row.token);
               assert.equal(writer!.isTransaction, false);
-              const change = fault === 'missing journal'
-                ? writer!.prepare('DELETE FROM journals WHERE payment_id=?').run(victim)
-                : writer!.prepare('UPDATE journals SET amount=? WHERE payment_id=?').run('private-invalid-amount', victim);
+              const change = writer!.prepare(fault.sql).run(victim);
               assert.equal(Number(change.changes), 1);
               assert.equal(writer!.isTransaction, false, 'The second connection committed while the reader cursor remained active');
-              if (fault === 'missing journal') assert.equal(rows(writer!, 'journals').length, 1);
-              else assert.equal(writer!.prepare('SELECT amount FROM journals WHERE payment_id=?').get(victim)!.amount, 'private-invalid-amount');
+              assert.notDeepEqual(rows(writer!, fault.table), before[fault.table]);
               commits++;
             }
           }
@@ -83,17 +85,18 @@ for (const fault of ['missing journal', 'malformed amount'] as const) {
       assert.deepEqual(report, expected, 'The active read must retain both original assets after the other connection commits');
       assert.equal(reader.db.isTransaction, false);
       assert.equal(reader.db.prepare('SELECT total_changes() AS n').get()!.n, before.changes);
-      assert.deepEqual(rows(reader.db, 'payments'), before.payments);
       assert.deepEqual(rows(reader.db, 'audit'), before.audit);
       assert.deepEqual(rows(reader.db, 'sqlite_sequence'), before.sequence);
-      const committedJournals = rows(writer, 'journals');
-      assert.notDeepEqual(committedJournals, before.journals);
-      assert.deepEqual(rows(reader.db, 'journals'), committedJournals, 'A fresh statement sees the committed writer change');
+      const committed = { payments: rows(writer, 'payments'), journals: rows(writer, 'journals') };
+      const untouched = fault.table === 'journals' ? 'payments' : 'journals';
+      assert.deepEqual(committed[untouched], before[untouched]);
+      assert.notDeepEqual(committed[fault.table], before[fault.table]);
       for (let attempt = 0; attempt < 2; attempt++) {
         assert.throws(() => reader!.assetTotals(), error => error instanceof JournalIntegrityError && error.message === fixed);
         assert.equal(reader.db.isTransaction, false);
         assert.equal(reader.db.prepare('SELECT total_changes() AS n').get()!.n, before.changes);
-        assert.deepEqual(rows(reader.db, 'journals'), committedJournals);
+        assert.deepEqual(rows(reader.db, 'payments'), committed.payments);
+        assert.deepEqual(rows(reader.db, 'journals'), committed.journals);
       }
       passed = true;
     } finally {

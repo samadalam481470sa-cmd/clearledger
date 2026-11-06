@@ -164,8 +164,9 @@ test('reconciliation can flag corrupt settled payload while retained journal and
     assert.deepEqual(overview.journals, [evidence]);
     const journals = await request('journals');
     assert.deepEqual(journals.items, [evidence]);
-    assert.deepEqual((await request('totals')).assets, [{ token: token.toLowerCase(), settledPayments: 0,
-      settledBaseUnits: '0', reviewPayments: 1, reviewBaseUnits: '125000000' }]);
+    assert.deepEqual(await request('totals'), {
+      assets: null, integrityError: 'Stored journal data is invalid; totals are unavailable'
+    });
     assert.ok(snapshot() === afterReview, 'GET review projections changed retained evidence or audit');
   });
 });

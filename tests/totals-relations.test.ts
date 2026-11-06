@@ -126,10 +126,12 @@ test('valid posted settled/review journals and legitimate unposted states preser
   assert.deepEqual(snapshot(), before);
 });
 
-test('relationship validation does not reconstruct payment payloads or authenticate stored authorizations', () => {
+test('relationship validation does not authenticate stored authorizations', () => {
   const id = posted(1); posted(2, 'review', '7', otherToken);
+  const payment = JSON.parse(store.get(id)!.payload) as Payment;
   store.db.prepare('UPDATE payments SET payload=?,signature=?,fingerprint=? WHERE id=?')
-    .run('PRIVATE_INVALID_JSON', 'PRIVATE_INVALID_SIGNATURE', 'PRIVATE_INVALID_FINGERPRINT', id);
+    .run(JSON.stringify({ ...payment, nonce: 'PRIVATE_INVALID_NONCE' }),
+      'PRIVATE_INVALID_SIGNATURE', 'PRIVATE_INVALID_FINGERPRINT', id);
   const before = snapshot();
   assert.deepEqual(store.assetTotals(), [
     { token, settledPayments: 1, settledBaseUnits: '125000000', reviewPayments: 0, reviewBaseUnits: '0' },

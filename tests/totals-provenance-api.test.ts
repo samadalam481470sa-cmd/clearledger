@@ -57,14 +57,15 @@ function posted(n: number, status: 'settled' | 'review', asset: string, amount: 
 }
 function baseline(status: 'settled' | 'review') {
   const first = posted(1, status, token, '125000000'); posted(2, 'settled', otherToken, '7');
-  // Payload validation and reconstruction are outside this read-only guard.
-  store.db.prepare('UPDATE payments SET payload=? WHERE id=?').run(privateMarker + '_invalid_json{', first.id);
+  // The four retained business fields remain readable despite unrelated authorization corruption.
+  const payload = JSON.stringify({ ...JSON.parse(first.payload), deadline: privateMarker + '_deadline' });
+  store.db.prepare('UPDATE payments SET payload=? WHERE id=?').run(payload, first.id);
   const report = { assets: [
     { token, settledPayments: status === 'settled' ? 1 : 0, settledBaseUnits: status === 'settled' ? '125000000' : '0',
       reviewPayments: status === 'review' ? 1 : 0, reviewBaseUnits: status === 'review' ? '125000000' : '0' },
     { token: otherToken, settledPayments: 1, settledBaseUnits: '7', reviewPayments: 0, reviewBaseUnits: '0' }
   ] };
-  return { first, report };
+  return { first: store.get(first.id)!, report };
 }
 function snapshot() {
   const sql = { schema: 'SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY type,name',
@@ -120,7 +121,7 @@ test('posted review with missing payment provenance remains wholly unavailable a
   assert.deepEqual(await read(), { status: 200, body: report }); assert.equal(rpcCalls, 0);
 });
 
-test('coherent case-preserving retained hashes remain readable with an invalid private authorization payload', async () => {
+test('coherent case-preserving retained hashes remain readable with unrelated authorization corruption', async () => {
   const { first, report } = baseline('settled');
   for (const table of ['payments', 'journals'] as const) {
     const key = table === 'payments' ? 'id' : 'payment_id';
@@ -170,5 +171,44 @@ for (const [label, status, field, malformed] of malformedInclusion) {
     assert.equal(model.integrityError, '');
     assert.equal(rpcCalls, 0);
     t.diagnostic(JSON.stringify({ status, field, unavailableReads: 2, restoredAssets: counts.assets, rpcCalls, readWrites: 0 }));
+  });
+}
+
+const alteredBusinessEvidence = [
+  ['journal amount', 'settled', 'amount', '125000001'],
+  ['journal token', 'review', 'token', otherToken],
+  ['journal debit account', 'settled', 'debit_account', '0x' + '33'.repeat(20)],
+  ['journal credit account', 'review', 'credit_account', '0x' + '33'.repeat(20)],
+  ['unreadable payment JSON', 'settled', 'payload', privateMarker + '{'],
+  ['missing payment projection fields', 'review', 'payload', JSON.stringify({ token, amount: '125000000' })]
+] as const;
+
+for (const [label, status, field, changed] of alteredBusinessEvidence) {
+  test(label + ' invalidates the entire HTTP/client totals report until fixture restoration', async t => {
+    const { first, report } = baseline(status);
+    const good = await read(); assert.deepEqual(good, { status: 200, body: report });
+    let model = reduceTotals(emptyTotals(), { type: 'report', report: good.body });
+    const counts = totalsCounts(model);
+    assert.equal(counts.assets, 2);
+    const original = field === 'payload' ? first.payload : store.journal(first.id)![field];
+    const update = store.db.prepare(field === 'payload' ? 'UPDATE payments SET payload=? WHERE id=?' :
+      'UPDATE journals SET ' + field + '=? WHERE payment_id=?');
+    update.run(changed, first.id);
+    assert.deepEqual(await read(false), { status: 401, body: { error: 'Bearer token required' } });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const invalid = await read();
+      assert.deepEqual(invalid, { status: 200, body: unavailable });
+      model = reduceTotals(model, { type: 'report', report: invalid.body });
+      assert.equal(model.assets, null);
+      assert.equal(model.integrityError, unavailable.integrityError);
+      assert.deepEqual(totalsCounts(model), { assets: null, completed: null, review: null });
+    }
+    update.run(original, first.id);
+    const restored = await read(); assert.deepEqual(restored, { status: 200, body: report });
+    model = reduceTotals(model, { type: 'report', report: restored.body });
+    assert.deepEqual(totalsCounts(model), counts);
+    assert.equal(model.integrityError, '');
+    assert.equal(rpcCalls, 0);
+    t.diagnostic(JSON.stringify({ status, alteredField: field, unavailableReads: 2, restoredAssets: counts.assets, rpcCalls, readWrites: 0 }));
   });
 }

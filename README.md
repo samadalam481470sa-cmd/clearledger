@@ -71,6 +71,8 @@ npm run build
 npm run source:count
 ```
 
+Totals now require each posted journal's asset, payer, payee and amount to match the saved payment. Authenticated HTTP tests caught valid-looking mismatches and unreadable transfer data, then restored exact totals after explicit fixture repair. Linux CI and Besu acceptance are pending. [Verification evidence](STATUS.md#journal-transfer-field-consistency).
+
 Totals now become unavailable when a payment and its journal share malformed transaction or block metadata. The authenticated HTTP regressions verified that the client clears cached counts and restores exact totals after the fixture is repaired. Linux CI passed all 1,005 tests, and four-validator Besu acceptance passed. [Verification evidence](STATUS.md#journal-inclusion-metadata-shape) · [Linux CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42206564497) · [Besu acceptance](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42206564413).
 
 Initial confirmation now holds a broadcast when a reported revert still carries logs or a nonzero log bloom. A real RPC regression reproduced a missing journal before the guard and recovered both payments after valid receipt evidence returned. Linux CI passed all 981 tests, and four-validator Besu acceptance passed. [Verification evidence](STATUS.md#revert-receipt-log-consistency) · [Linux CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42168585152) · [Besu acceptance](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42168585028).

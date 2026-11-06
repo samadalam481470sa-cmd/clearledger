@@ -129,10 +129,53 @@ for (const status of ['settled', 'review'] as const)
     const before = snapshot(); assert.deepEqual(store.assetTotals(), expected(status, amount)); assert.equal(snapshot(), before);
   });
 
-test('matching retained metadata does not revalidate malformed authorization payloads or attest chain truth', () => {
+const businessMismatches = [
+  ['amount', '125000001'], ['token', '0x' + 'cc'.repeat(20)],
+  ['debit_account', '0x' + '33'.repeat(20)], ['credit_account', '0x' + '44'.repeat(20)]
+] as const;
+for (const status of ['settled', 'review'] as const) for (const [field, value] of businessMismatches)
+  test(status + ' journal business field ' + field + ' disagreement invalidates every asset', () => {
+    const row = posted(1, status); posted(2, 'settled', otherToken, '7');
+    assert.deepEqual(store.assetTotals(), expected(status));
+    store.db.prepare('UPDATE journals SET ' + field + '=? WHERE payment_id=?').run(value, row.id);
+    refuse();
+  });
+
+const unreadableBusinessFields: [string, (payment: Payment) => string | Buffer][] = [
+  ['malformed JSON', () => 'PRIVATE_INVALID_JSON{'],
+  ['null JSON', () => 'null'],
+  ['array JSON', payment => JSON.stringify([payment])],
+  ['missing amount', payment => JSON.stringify({ ...payment, amount: undefined })],
+  ['numeric amount', payment => JSON.stringify({ ...payment, amount: Number(payment.amount) })],
+  ['BLOB JSON', payment => Buffer.from(JSON.stringify(payment))]
+];
+for (const [label, payload] of unreadableBusinessFields)
+  test('posted payment with ' + label + ' makes every asset unavailable', () => {
+    const row = posted(1, 'review'); posted(2, 'settled', otherToken, '7');
+    store.db.prepare('UPDATE payments SET payload=? WHERE id=?').run(payload(JSON.parse(row.payload)), row.id);
+    refuse();
+  });
+
+const invalidAccounts = [
+  ['zero debit account', '0x' + '00'.repeat(20), '0x' + '22'.repeat(20)],
+  ['nonhex credit account', '0x' + '11'.repeat(20), '0x' + 'gg'.repeat(20)],
+  ['same account with different case', '0x' + 'ab'.repeat(20), '0x' + 'AB'.repeat(20)]
+] as const;
+for (const [label, payer, payee] of invalidAccounts)
+  test('matching journal and payment with ' + label + ' make every asset unavailable', () => {
+    const row = posted(1); posted(2, 'settled', otherToken, '7');
+    const payment = JSON.parse(row.payload) as Payment;
+    store.db.prepare('UPDATE payments SET payload=? WHERE id=?').run(JSON.stringify({ ...payment, payer, payee }), row.id);
+    store.db.prepare('UPDATE journals SET debit_account=?,credit_account=? WHERE payment_id=?').run(payer, payee, row.id);
+    refuse();
+  });
+
+test('matching retained fields do not revalidate unrelated authorization fields or attest chain truth', () => {
   const row = posted(1); posted(2, 'settled', otherToken, '7');
+  const payment = JSON.parse(row.payload) as Payment;
   store.db.prepare('UPDATE payments SET payload=?,signature=?,fingerprint=? WHERE id=?')
-    .run('PRIVATE_INVALID_JSON{', 'PRIVATE_INVALID_SIGNATURE', 'PRIVATE_INVALID_FINGERPRINT', row.id);
+    .run(JSON.stringify({ ...payment, deadline: 'PRIVATE_INVALID_DEADLINE' }),
+      'PRIVATE_INVALID_SIGNATURE', 'PRIVATE_INVALID_FINGERPRINT', row.id);
   // Coherent well-formed rewrites are outside the local reporting check.
   replaceInclusion('block_hash', '0x' + '99'.repeat(32), row.id);
   const before = snapshot(); assert.deepEqual(store.assetTotals(), expected('settled')); assert.equal(snapshot(), before);
