@@ -20,7 +20,8 @@ function matchesCanonicalPosition(receipt: TransactionReceipt, block: Block | nu
 }
 
 interface ReconciliationResult { checked: number; exceptions: string[]; at: string }
-export class ReconciliationReceiptUnavailable extends Error {}
+export class ReconciliationEvidenceUnavailable extends Error {}
+export class ReconciliationReceiptUnavailable extends ReconciliationEvidenceUnavailable {}
 
 export class PaymentService {
   readonly signingDomain: TypedDataDomain;
@@ -263,7 +264,11 @@ export class PaymentService {
           }
           matches = journalMatches && !!receipt && receipt.status === 1 && sameHash(receipt.hash, txHash) &&
             receipt.blockNumber === row.block_number && sameHash(receipt.blockHash, row.block_hash) &&
-            matchesCanonicalPosition(receipt, block) && this.settlementEvidence(p, receipt) === 'matching';
+            Number.isSafeInteger(receipt.index) && receipt.index >= 0 &&
+            (block === null || matchesCanonicalPosition(receipt, block)) &&
+            this.settlementEvidence(p, receipt) === 'matching';
+          if (matches && block === null)
+            throw new ReconciliationEvidenceUnavailable('Canonical block unavailable for matching settlement receipt');
         }
         if (!matches) {
           exceptions.push(row.id);

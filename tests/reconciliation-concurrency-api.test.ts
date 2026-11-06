@@ -68,14 +68,17 @@ async function createContext() {
   const paymentId = store.accept(payment, digest(payment, signingDomain), '0x01').row.id;
   store.broadcast(paymentId, raw, txHash);
   store.finalize(paymentId, 17, blockHash);
-  let hold = true, receiptReads = 0, blockReads = 0, invocations = 0;
+  let hold = true, missingBlock = false, receiptReads = 0, blockReads = 0, invocations = 0;
   const callsEntered = Array.from({ length: 5 }, () => deferred<void>());
   const provider = {
     getTransactionReceipt: async () => {
       receiptReads++; receiptEntered.resolve();
       return hold ? gate.promise : receipt;
     },
-    getBlock: async () => { blockReads++; return { number: 17, hash: blockHash, transactions: [txHash] }; }
+    getBlock: async () => {
+      blockReads++;
+      return missingBlock ? null : { number: 17, hash: blockHash, transactions: [txHash] };
+    }
   };
   const router = { interface: iface, connect() { return this; } };
   const service = new PaymentService(store, provider as unknown as JsonRpcProvider, fixtureRelayer,
@@ -107,7 +110,9 @@ async function createContext() {
     return pending;
   }
   return { store, paymentId, gate, receiptEntered, callsEntered, server, requests, results, post,
-    recover() { hold = false; }, counts: () => ({ receiptReads, blockReads, invocations }) };
+    withholdBlock() { missingBlock = true; },
+    recover() { hold = false; missingBlock = false; },
+    counts: () => ({ receiptReads, blockReads, invocations }) };
 }
 
 test('two authorized HTTP callers share one held scan while authentication and fresh scans remain independent', {
@@ -151,7 +156,7 @@ test('two authorized HTTP callers share one held scan while authentication and f
   assert.equal(context.store.events().filter(event => event.action === 'review').length, 1);
 }));
 
-for (const fault of ['RPC failure', 'missing receipt with canonical inclusion'] as const) test(
+for (const fault of ['RPC failure', 'missing receipt with canonical inclusion', 'missing block with matching receipt'] as const) test(
   'a shared ' + fault + ' returns fixed 503 without review and permits a fresh successful scan', {
   timeout: 10000
 }, async () => fixture(async context => {
@@ -162,12 +167,16 @@ for (const fault of ['RPC failure', 'missing receipt with canonical inclusion'] 
   const second = context.post();
   await within(context.callsEntered[1].promise);
   assert.deepEqual(context.counts(), { receiptReads: 1, blockReads: 0, invocations: 2 });
-  const missingReceipt = fault === 'missing receipt with canonical inclusion';
-  if (missingReceipt) context.gate.resolve(null);
-  else context.gate.reject(Object.assign(new Error('PRIVATE_RPC_CREDENTIAL_SENTINEL'), {
-    code: 'TIMEOUT', shortMessage: 'PRIVATE_SIGNED_TRANSACTION_SENTINEL',
-    info: { url: 'https://synthetic-secret@rpc.invalid', body: 'PRIVATE_RPC_INFO_SENTINEL' }
-  }));
+  if (fault === 'RPC failure') {
+    context.gate.reject(Object.assign(new Error('PRIVATE_RPC_CREDENTIAL_SENTINEL'), {
+      code: 'TIMEOUT', shortMessage: 'PRIVATE_SIGNED_TRANSACTION_SENTINEL',
+      info: { url: 'https://synthetic-secret@rpc.invalid', body: 'PRIVATE_RPC_INFO_SENTINEL' }
+    }));
+  } else if (fault === 'missing receipt with canonical inclusion') context.gate.resolve(null);
+  else {
+    context.withholdBlock();
+    context.gate.resolve(receipt);
+  }
   const responses = await within(Promise.all([first, second]));
   for (const response of responses) {
     assert.equal(response.status, 503);
@@ -175,7 +184,7 @@ for (const fault of ['RPC failure', 'missing receipt with canonical inclusion'] 
     for (const marker of ['PRIVATE_', 'synthetic-secret', 'rpc.invalid', 'TIMEOUT'])
       assert.ok(!response.text.includes(marker), 'Shared failure leaked synthetic internal RPC evidence');
   }
-  const failedBlockReads = missingReceipt ? 1 : 0;
+  const failedBlockReads = fault === 'RPC failure' ? 0 : 1;
   assert.deepEqual(context.counts(), { receiptReads: 1, blockReads: failedBlockReads, invocations: 2 });
   assert.equal(context.results.length, 0);
   assert.deepEqual({ row: context.store.get(context.paymentId), journal: context.store.journal(context.paymentId),
