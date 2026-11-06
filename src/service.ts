@@ -132,12 +132,10 @@ export class PaymentService {
     this.store.broadcast(row.id, raw, keccak256(raw));
   }
 
-  private storedEnvelopeMatches(row: RecordRow, payment?: Payment): boolean {
+  private storedEnvelopeMatches(row: RecordRow, p: Payment): boolean {
     if (!Number.isSafeInteger(this.chainId) || this.chainId < 1 || !isHash(row.tx_hash) ||
       typeof row.raw_tx !== 'string' || !/^0x(?:[0-9a-fA-F]{2})+$/.test(row.raw_tx) ||
       !sameHash(keccak256(row.raw_tx), row.tx_hash)) return false;
-    const p = payment ?? this.storedPayment(row);
-    if (!p) return false;
     try {
       const transaction = Transaction.from(row.raw_tx);
       // Ordinary signed calls only: blob/delegation envelopes have additional
@@ -153,10 +151,10 @@ export class PaymentService {
   private async confirm(row: RecordRow) {
     if (!isHash(row.tx_hash)) return;
     let receipt = await this.provider.getTransactionReceipt(row.tx_hash);
+    // A receipt cannot resolve a reservation whose stored intent and signed bytes disagree.
+    const p = this.storedPayment(row);
+    if (!p || !this.storedEnvelopeMatches(row, p)) return;
     if (!receipt) {
-      // Recovery may only resend the exact bytes identified by the reservation.
-      // A broken binding retains nonce priority; it cannot authorize another send.
-      if (!this.storedEnvelopeMatches(row)) return;
       try { await this.provider.broadcastTransaction(row.raw_tx!); }
       catch { /* already known, connection loss, or uncertain outcome: inspect hash */ }
       receipt = await this.provider.getTransactionReceipt(row.tx_hash);
@@ -180,7 +178,6 @@ export class PaymentService {
       this.store.setStatus(row.id, 'failed', 'Transaction reverted on chain');
       return;
     }
-    const p: Payment = JSON.parse(row.payload);
     const evidence = this.settlementEvidence(p, receipt);
     if (evidence === 'inconsistent') return;
     if (evidence === 'missing') {

@@ -168,41 +168,84 @@ test('recovered mismatched raw bytes cannot be sent or release a later queued no
   completed = true;
 });
 
-test('a genuine receipt confirms and reconciliation flags the conflicting archived bytes', { timeout: 30000 }, async t => {
+test('a genuine receipt waits for matching signed bytes before confirmation', { timeout: 30000 }, async t => {
   const input = await signed(), original = await reserve(input);
+  const second = (await service.accept(await signed('7000000', '1'))).row;
   const other = await otherSignedTransaction(original.nonce);
   assert.notEqual(other.hash, original.hash);
   const initialPayeeNative = await chain.provider.getBalance(chain.payee.address);
   const sent = await chain.provider.broadcastTransaction(original.raw);
-  assert.equal((await sent.wait())!.status, 1);
+  const mined = await sent.wait();
+  assert.ok(mined?.status === 1 && mined.hash === original.hash);
+  assert.deepEqual((await provider!.getTransactionReceipt(original.hash))?.toJSON(), mined.toJSON());
   store!.db.prepare('UPDATE payments SET raw_tx=? WHERE id=?').run(other.raw, original.id);
   reopenStore();
-  await service.tick();
-  const settled = store!.get(original.id)!;
-  assert.equal(settled.status, 'settled'); assert.equal(settled.tx_hash, original.hash);
-  assert.ok(settled.raw_tx === other.raw, 'Genuine receipt confirmation must not silently rewrite archived evidence');
+  const ledgerSnapshot = () => JSON.stringify({ rows: store!.list(), audit: store!.events(), journals: store!.journals(),
+    changes: store!.db.prepare('SELECT total_changes() AS count').get()!.count });
+  const corrupt = ledgerSnapshot(), stalled: string[] = [];
+  const nonceReads = proxy!.calls.filter(call => call.method === 'eth_getTransactionCount').length;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await service.tick();
+    stalled.push(ledgerSnapshot());
+  }
+  t.diagnostic(JSON.stringify({ genuineReceiptStatus: mined.status, inconsistentTicks: stalled.length,
+    firstStatus: store!.get(original.id)!.status, secondStatus: store!.get(second.id)!.status,
+    serviceSendAttempts: sends().length, journalRows: store!.journals().length }));
+  assert.equal(store!.get(original.id)!.status, 'broadcast');
+  assert.equal(store!.get(second.id)!.status, 'queued');
+  assert.ok(stalled.every(value => value === corrupt), 'Inconsistent signed bytes must preserve the exact reservation, journal and audit state');
   assert.equal(sends().length, 0); assert.equal(forwarded, 0);
-  assert.equal(store!.journals().length, 1); assert.equal(store!.journal(original.id)!.tx_hash, original.hash);
-  assert.equal(await chain.provider.getTransaction(other.hash), null);
-  assert.equal(await chain.provider.getBalance(chain.payee.address), initialPayeeNative);
+  assert.equal(proxy!.calls.filter(call => call.method === 'eth_getTransactionCount').length, nonceReads);
   assert.equal(await chain.token.balanceOf(chain.payee.address), 125000000n);
   assert.equal(await chain.router.nonces(chain.payer.address), 1n);
   assert.equal(await chain.provider.getTransactionCount(chain.relayer.address, 'pending'), original.nonce + 1);
+
+  store!.db.prepare('UPDATE payments SET raw_tx=? WHERE id=?').run(original.raw, original.id);
+  for (let attempt = 0; attempt < 4 && store!.get(second.id)!.status !== 'settled'; attempt++) await service.tick();
+  await service.tick();
+  const settled = store!.get(original.id)!;
+  assert.equal(settled.status, 'settled'); assert.equal(settled.tx_hash, original.hash);
+  assert.ok(settled.raw_tx === original.raw);
+  const successor = store!.get(second.id)!;
+  assert.equal(successor.status, 'settled');
+  assert.equal(Transaction.from(successor.raw_tx!).nonce, original.nonce + 1);
+  assert.equal(sends().length, 1); assert.equal(forwarded, 1);
+  assert.ok(sends()[0].params?.[0] === successor.raw_tx, 'Only the queued successor may cross the service send boundary');
+  assert.equal(store!.journals().length, 2);
+  const journal = store!.journal(original.id)!;
+  assert.equal(journal.tx_hash, original.hash);
+  assert.equal(journal.block_number, mined.blockNumber);
+  assert.equal(journal.block_hash, mined.blockHash);
+  assert.equal(await chain.provider.getTransaction(other.hash), null);
+  assert.equal(await chain.provider.getBalance(chain.payee.address), initialPayeeNative);
+  assert.equal(await chain.token.balanceOf(chain.payee.address), 132000000n);
+  assert.equal(await chain.router.nonces(chain.payer.address), 2n);
+  assert.equal(await chain.provider.getTransactionCount(chain.relayer.address, 'pending'), original.nonce + 2);
   assert.equal((await service.accept(input)).replay, true);
-  const journal = store!.journal(original.id);
+  assert.equal(store!.events().length, 6);
+  for (const paymentId of [original.id, second.id]) for (const action of ['accepted', 'broadcast-prepared', 'settled'])
+    assert.equal(store!.events().filter(event => event.payment_id === paymentId && event.action === action).length, 1);
+
+  // Corrupt only the settled archive to retain the independent reconciliation check.
+  store!.db.prepare('UPDATE payments SET raw_tx=? WHERE id=?').run(other.raw, original.id);
+  const journals = store!.journals();
   const audit = store!.events();
   const requests = proxy!.calls.length;
   const result = await service.reconcile();
-  assert.equal(result.checked, 1); assert.deepEqual(result.exceptions, [original.id]);
+  assert.equal(result.checked, 2); assert.deepEqual(result.exceptions, [original.id]);
   const reviewed = store!.get(original.id)!;
   assert.equal(reviewed.status, 'review');
   assert.equal(reviewed.error, 'Stored settlement transaction is inconsistent; verify the original transaction and chain history');
   assert.ok(reviewed.raw_tx === other.raw && reviewed.tx_hash === original.hash);
-  assert.deepEqual(store!.journal(original.id), journal);
+  assert.ok(JSON.stringify(store!.get(second.id)) === JSON.stringify(successor));
+  assert.deepEqual(store!.journals(), journals);
   assert.equal(store!.events()[0].action, 'review');
   assert.deepEqual(store!.events().slice(1), audit);
-  assert.equal(proxy!.calls.length, requests);
-  assert.equal(sends().length, 0);
-  t.diagnostic(JSON.stringify({ genuineReceiptConfirmations: 1, serviceSendAttempts: 0, journalRows: 1, reviewed: 1 }));
+  const scans = proxy!.calls.slice(requests);
+  assert.deepEqual(scans.filter(call => call.method === 'eth_getTransactionReceipt').map(call => call.params?.[0]), [successor.tx_hash]);
+  assert.equal(scans.filter(call => call.method === 'eth_getBlockByNumber').length, 1);
+  assert.equal(sends().length, 1);
+  t.diagnostic(JSON.stringify({ genuineReceiptConfirmations: 1, originalServiceSends: 0, successorServiceSends: 1,
+    journalRows: journals.length, reviewed: 1 }));
   completed = true;
 });

@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { Interface, type JsonRpcProvider, type Wallet } from 'ethers';
 import { Store } from '../src/store.ts';
 import { PaymentService } from '../src/service.ts';
-import { type Payment } from '../src/payment.ts';
+import { digest, domain, type Payment } from '../src/payment.ts';
+import { fixtureRelayer, settleAbi, signedSettlement } from './fixtures/signed-settlement.ts';
 
 // Synthetic provider evidence isolates initial-confirmation decisions. No EVM
 // transfer is claimed by these fixtures; separate integration tests cover that.
@@ -11,16 +12,19 @@ const payer = '0x' + '11'.repeat(20);
 const payee = '0x' + '22'.repeat(20);
 const token = '0x' + '33'.repeat(20);
 const routerAddress = '0x' + '44'.repeat(20);
-const txHash = '0x' + 'ab'.repeat(32);
 const otherTxHash = '0x' + 'ef'.repeat(32);
 const blockHash = '0x' + 'cd'.repeat(32);
 const emptyLogsBloom = '0x' + '0'.repeat(512);
 const nonzeroLogsBloom = '0x' + '0'.repeat(511) + '1';
 const iface = new Interface([
+  settleAbi,
   'event PaymentSettled(bytes32 indexed paymentId,address indexed payer,address indexed payee,address token,uint256 amount,uint256 nonce)'
 ]);
 const payment: Payment = { paymentId: '0x' + '12'.repeat(32), payer, payee, token,
   amount: '125000000', nonce: '0', deadline: '2000000000' };
+const signingDomain = domain(31337, routerAddress);
+const signature = '0x1234';
+const { raw, hash: txHash } = signedSettlement(payment, signature, routerAddress, 7);
 let store: Store;
 let firstId: string;
 let secondId: string | undefined;
@@ -32,8 +36,8 @@ let signing: number;
 let blockReads: number;
 beforeEach(() => {
   store = new Store();
-  firstId = store.accept(payment, 'synthetic-fingerprint', 'synthetic-signature').row.id;
-  store.broadcast(firstId, 'synthetic-stored-signed-transaction', txHash);
+  firstId = store.accept(payment, digest(payment, signingDomain), signature).row.id;
+  store.broadcast(firstId, raw, txHash);
   secondId = undefined;
   const log = iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
     [payment.paymentId, payment.payer, payment.payee, payment.token, payment.amount, payment.nonce]);
@@ -54,7 +58,7 @@ function setReceiptStatus(status: number) {
 }
 function queueAnother() {
   const second = { ...payment, paymentId: '0x' + '34'.repeat(32), amount: '7000000', nonce: '1' };
-  secondId = store.accept(second, 'second-fingerprint', 'second-signature').row.id;
+  secondId = store.accept(second, digest(second, signingDomain), signature).row.id;
 }
 function service(overrides: Record<string, unknown> = {}, confirmations = 2) {
   const provider = {
@@ -66,7 +70,7 @@ function service(overrides: Record<string, unknown> = {}, confirmations = 2) {
   };
   const router = { interface: iface, connect() { return this; },
     settle: { staticCall: async () => { preflights++; throw new Error('Queued nonce was allocated too early'); } } };
-  const relayer = { populateTransaction: async () => { signing++; throw new Error('Unexpected queued signing'); } };
+  const relayer = { address: fixtureRelayer.address, populateTransaction: async () => { signing++; throw new Error('Unexpected queued signing'); } };
   return new PaymentService(store, provider as unknown as JsonRpcProvider, relayer as unknown as Wallet,
     router, 31337, routerAddress, confirmations);
 }
@@ -370,13 +374,14 @@ test('successful receipt waits for confirmation depth and then journals once', a
 });
 
 test('matching hash bytes with mixed-case hexadecimal receipt and canonical forms remain valid', async () => {
-  receipt.hash = '0x' + 'AB'.repeat(32);
+  const uppercaseHash = '0x' + txHash.slice(2).toUpperCase();
+  receipt.hash = uppercaseHash;
   receipt.blockHash = '0x' + 'Cd'.repeat(32);
   canonical.hash = '0x' + 'cD'.repeat(32);
   receipt.index = 1;
   receipt.logs[0].transactionIndex = 1;
-  canonical.transactions = [otherTxHash, '0x' + 'AB'.repeat(32)];
-  receipt.logs[0].transactionHash = '0x' + 'aB'.repeat(32);
+  canonical.transactions = [otherTxHash, uppercaseHash];
+  receipt.logs[0].transactionHash = uppercaseHash;
   receipt.logs[0].blockHash = '0x' + 'cD'.repeat(32);
   await service().tick();
   assert.equal(store.get(firstId)!.status, 'settled');

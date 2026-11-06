@@ -6,7 +6,7 @@ import { PaymentService } from '../src/service.ts';
 import { Store } from '../src/store.ts';
 
 // Offline native signatures plus synthetic provider evidence isolate the
-// retransmission gate. No EVM execution or wallet policy validation is claimed.
+// reservation evidence for retransmission and receipt decisions.
 const chainId = 31337, routerAddress = '0x' + '44'.repeat(20);
 const blockHash = '0x' + 'cd'.repeat(32), authorization = '0x1234';
 const relayer = new Wallet('0x' + '01'.repeat(32));
@@ -211,16 +211,59 @@ test('restoring the original envelope recovers once without changing authorizati
   assert.equal(preflights, 2); assert.equal(populated, 0); assert.equal(signed, 0);
 });
 
-for (const status of [0, 1]) test('receipt-present status ' + status + ' retains prior confirmation without an envelope retry', async () => {
-  // A synthetic coherent receipt isolates branch selection; it is not proof
-  // that an unrelated transaction can actually emit this event on chain.
-  replaceEnvelope(await sign({ chainId: 1, to: otherSigner.address, data: '0x12345678' }));
-  const raw = store.get(firstId)!.raw_tx;
-  receipt = coherentReceipt(status);
-  await assert.rejects(service.tick(), error => error === unavailable);
-  assert.deepEqual(sent, []); assert.equal(receiptReads.length, 1);
-  assert.equal(store.get(firstId)!.raw_tx, raw);
-  assert.equal(store.get(firstId)!.status, status === 1 ? 'settled' : 'failed');
-  assert.equal(store.journals().length, status === 1 ? 1 : 0);
-  assert.equal(preflights, 1); assert.equal(signed, 0);
-});
+const receiptPresentFaults: [string, () => Promise<void> | void][] = [
+  ['archived bytes that disagree with the reserved hash', async () => {
+    const raw = await sign({ gasLimit: 210000 });
+    assert.notEqual(keccak256(raw), originalHash);
+    store.db.prepare('UPDATE payments SET raw_tx=? WHERE id=?').run(raw, firstId);
+  }],
+  ['an unrelated signed envelope', async () => {
+    replaceEnvelope(await sign({ chainId: 1, to: otherSigner.address, data: '0x12345678' }));
+  }],
+  ['malformed stored authorization bytes', () => update('signature', '0x123')],
+  ['a changed deadline with a matching stored digest', () => {
+    const changed = { ...payment, deadline: '2000000001' };
+    update('payload', JSON.stringify(changed));
+    update('fingerprint', digest(changed, signingDomain));
+  }]
+];
+for (const status of [0, 1]) {
+  for (const [label, corrupt] of receiptPresentFaults)
+    test('status-' + status + ' receipt leaves broadcast unresolved with ' + label, async () => {
+      await corrupt();
+      receipt = coherentReceipt(status);
+      await remainsReserved();
+    });
+
+  test('status-' + status + ' receipt waits for restoration after a well-formed stored signature change', async () => {
+    receipt = coherentReceipt(status);
+    update('signature', '0xbeef');
+    await remainsReserved();
+    update('signature', authorization);
+
+    const before = store.get(firstId)!;
+    const audit = store.events();
+    const terminal = status === 1 ? 'settled' : 'failed';
+    await assert.rejects(service.tick(), error => error === unavailable);
+    const resolved = store.get(firstId)!;
+    assert.deepEqual(resolved, { ...before, status: terminal, updated_at: resolved.updated_at,
+      block_number: status === 1 ? 17 : null, block_hash: status === 1 ? blockHash : null,
+      error: status === 1 ? null : 'Transaction reverted on chain' });
+    assert.equal(store.journals().length, status === 1 ? 1 : 0);
+    if (status === 1) assert.equal(store.journal(firstId)!.tx_hash, originalHash);
+    const events = store.events();
+    assert.equal(events[0].payment_id, firstId);
+    assert.equal(events[0].action, terminal);
+    assert.deepEqual(events.slice(1), audit);
+
+    const after = snapshot();
+    await assert.rejects(service.tick(), error => error === unavailable);
+    assert.deepEqual(snapshot(), after);
+    assert.deepEqual(sent, []);
+    assert.deepEqual(receiptReads, [originalHash, originalHash, originalHash]);
+    assert.equal(store.get(secondId)!.status, 'queued');
+    assert.equal(store.get(secondId)!.raw_tx, null);
+    assert.equal(store.get(secondId)!.tx_hash, null);
+    assert.equal(preflights, 2); assert.equal(populated, 0); assert.equal(signed, 0);
+  });
+}

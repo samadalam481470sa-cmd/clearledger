@@ -105,12 +105,11 @@ test('restoring the original bytes recovers its stored hash once without replaci
   assert.equal(store.get(secondId)!.status, 'queued'); assert.equal(preflights, 1); assert.equal(signed, 0);
 });
 
-test('an already available coherent receipt retains existing confirmation behavior without retransmission', async () => {
-  store.db.prepare('UPDATE payments SET raw_tx=? WHERE id=?').run('PRIVATE_RECOVERY_BYTES', firstId);
+test('an already available coherent receipt confirms the original bytes without retransmission', async () => {
   receipt = coherentReceipt();
   await assert.rejects(service.tick(), error => error === unavailable);
   assert.equal(sent.length, 0); assert.equal(receiptReads, 1);
   assert.equal(store.get(firstId)!.status, 'settled'); assert.equal(store.journal(firstId)!.tx_hash, txHash);
   assert.equal(store.journals().length, 1); assert.equal(preflights, 1); assert.equal(signed, 0);
-  assert.ok(store.get(firstId)!.raw_tx === 'PRIVATE_RECOVERY_BYTES');
+  assert.equal(store.get(firstId)!.raw_tx, raw);
 });

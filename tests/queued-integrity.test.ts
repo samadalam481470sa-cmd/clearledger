@@ -4,6 +4,7 @@ import { Interface, type JsonRpcProvider, type Wallet } from 'ethers';
 import { Store } from '../src/store.ts';
 import { PaymentService } from '../src/service.ts';
 import { digest, domain, paymentSchema, type Payment } from '../src/payment.ts';
+import { fixtureRelayer, settleAbi, signedSettlement } from './fixtures/signed-settlement.ts';
 
 // Synthetic RPC controls isolate local queue checks, not cryptographic authorization.
 const routerAddress = '0x' + '44'.repeat(20), hash = '0x' + 'aa'.repeat(32), blockHash = '0x' + 'bb'.repeat(32);
@@ -12,7 +13,7 @@ const invalidError = 'Stored queued authorization is invalid; verify the origina
 const blockedError = 'Queued payment contains transaction reservation data; inspect durable state';
 const privateMarker = 'PRIVATE_QUEUED_EVIDENCE';
 const unavailable = new Error('Controlled RPC unavailable');
-const iface = new Interface(['event PaymentSettled(bytes32 indexed paymentId,address indexed payer,address indexed payee,address token,uint256 amount,uint256 nonce)']);
+const iface = new Interface([settleAbi, 'event PaymentSettled(bytes32 indexed paymentId,address indexed payer,address indexed payee,address token,uint256 amount,uint256 nonce)']);
 let store: Store, service: PaymentService;
 let preflights: Payment[], populated: number, signed: number, receipt: any;
 beforeEach(() => {
@@ -24,7 +25,7 @@ beforeEach(() => {
   const provider = { getTransactionReceipt: async () => receipt, getBlockNumber: async () => 17,
     getBlock: async () => ({ number: 17, hash: blockHash, transactions: receipt ? [receipt.hash] : [] }),
     broadcastTransaction: async () => { throw unavailable; } };
-  const relayer = { populateTransaction: async () => { populated++; throw new Error('Unexpected population'); },
+  const relayer = { address: fixtureRelayer.address, populateTransaction: async () => { populated++; throw new Error('Unexpected population'); },
     signTransaction: async () => { signed++; throw new Error('Unexpected signing'); } };
   service = new PaymentService(store, provider as unknown as JsonRpcProvider, relayer as unknown as Wallet,
     router, 31337, routerAddress);
@@ -127,14 +128,16 @@ for (const [raw, tx] of [[privateMarker, null], [null, hash], [privateMarker, ha
   });
 }
 test('an older canonical broadcast can settle before queued reservation anomalies stop new allocation', async () => {
-  const old = queue(); store.broadcast(old, 'synthetic-reserved-bytes', hash);
+  const old = queue();
+  const { raw, hash: originalHash } = signedSettlement(payment(), '0x1234', routerAddress, 7);
+  store.broadcast(old, raw, originalHash);
   const second = queue(2);
   store.db.prepare('UPDATE payments SET tx_hash=? WHERE id=?').run(hash, second);
   const log = iface.encodeEventLog(iface.getEvent('PaymentSettled')!, Object.values({
     paymentId: payment().paymentId, payer: payment().payer, payee: payment().payee,
     token: payment().token, amount: payment().amount, nonce: payment().nonce }));
-  receipt = { hash, index: 0, blockHash, blockNumber: 17, status: 1,
-    logs: [{ address: routerAddress, ...log, transactionHash: hash, transactionIndex: 0, blockHash, blockNumber: 17 }] };
+  receipt = { hash: originalHash, index: 0, blockHash, blockNumber: 17, status: 1,
+    logs: [{ address: routerAddress, ...log, transactionHash: originalHash, transactionIndex: 0, blockHash, blockNumber: 17 }] };
   await assert.rejects(service.tick(), error => error instanceof Error && error.message === blockedError);
   assert.equal(store.get(old)!.status, 'settled'); assert.equal(store.journals().length, 1);
   assert.equal(store.get(second)!.status, 'queued'); assert.equal(preflights.length, 0); assert.equal(signed, 0);
