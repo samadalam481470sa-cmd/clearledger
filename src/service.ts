@@ -4,6 +4,7 @@ import { Store, type RecordRow } from './store.ts';
 
 // A fresh daily-spend slot can cost 17,100 gas more than an update (EIP-2200/2929).
 const DAILY_SPEND_GAS_ALLOWANCE = 20_000n;
+const EMPTY_LOGS_BLOOM = '0x' + '00'.repeat(256);
 
 function isHash(value: unknown): value is string {
   return typeof value === 'string' && /^0x[0-9a-fA-F]{64}$/.test(value);
@@ -166,7 +167,9 @@ export class PaymentService {
       !Number.isSafeInteger(receipt.index) || receipt.index < 0 ||
       !Number.isSafeInteger(receipt.blockNumber) || receipt.blockNumber < 0 ||
       !isHash(receipt.blockHash) || (receipt.status !== 0 && receipt.status !== 1) ||
-      (receipt.status === 1 && !Array.isArray(receipt.logs))) return;
+      !Array.isArray(receipt.logs)) return;
+    // A reverted top-level execution cannot leave receipt logs or bloom bits.
+    if (receipt.status === 0 && (receipt.logs.length !== 0 || receipt.logsBloom !== EMPTY_LOGS_BLOOM)) return;
     const latest = await this.provider.getBlockNumber();
     if (!Number.isSafeInteger(latest) || latest < receipt.blockNumber ||
       latest - receipt.blockNumber < this.confirmations - 1) return;

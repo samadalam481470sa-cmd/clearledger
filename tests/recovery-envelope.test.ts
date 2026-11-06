@@ -49,6 +49,7 @@ function coherentReceipt(status = 1) {
   const log = iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
     [payment.paymentId, payment.payer, payment.payee, payment.token, payment.amount, payment.nonce]);
   return { hash, index: 0, blockNumber: 17, blockHash, status,
+    logsBloom: status === 0 ? '0x' + '0'.repeat(512) : undefined,
     logs: status === 1 ? [{ address: routerAddress, ...log, transactionHash: hash, transactionIndex: 0, blockNumber: 17, blockHash }] : [] };
 }
 function makeService(configuredChainId = chainId) {

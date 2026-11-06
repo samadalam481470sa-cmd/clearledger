@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
+import { isDeepStrictEqual } from 'node:util';
 import { Wallet, id, keccak256, Transaction, type TransactionReceipt } from 'ethers';
 import { compile } from '../scripts/compile.ts';
 import { localChain } from '../scripts/local-chain.ts';
@@ -13,12 +14,13 @@ import { PaymentService } from '../src/service.ts';
 import { paymentTypes, type Payment } from '../src/payment.ts';
 
 type Provenance = 'transactionHash' | 'blockHash' | 'blockNumber' | 'transactionIndex';
+type ReceiptFault = Provenance | 'status' | 'status-no-logs';
 const fields: Provenance[] = ['transactionHash', 'blockHash', 'blockNumber', 'transactionIndex'];
 const differentHash = (value: string) => '0x' + (value.toLowerCase() === '0x' + 'fa'.repeat(32) ? 'fb' : 'fa').repeat(32);
 
-/** Only the matching event's JSON provenance changes; all requests reach Ganache. */
+/** Only the selected receipt or matching log fields change; all requests reach Ganache. */
 async function receiptProxy(upstream: string, routerAddress: string, topic: string) {
-  let fault: Provenance | undefined, target: string | undefined, altered = 0;
+  let fault: ReceiptFault | undefined, target: string | undefined, altered = 0;
   const sends: string[] = [];
   const active = new Set<Promise<void>>();
   const server = createServer((req, res) => {
@@ -42,6 +44,13 @@ async function receiptProxy(upstream: string, routerAddress: string, topic: stri
           for (const log of receipt.logs) {
             if (log.address.toLowerCase() !== routerAddress.toLowerCase() || log.topics[0]?.toLowerCase() !== topic.toLowerCase()) continue;
             target ??= receipt.transactionHash.toLowerCase();
+            if (fault === 'status' || fault === 'status-no-logs') {
+              if (receipt.status !== '0x1') continue;
+              receipt.status = '0x0';
+              if (fault === 'status-no-logs') receipt.logs = [];
+              altered++;
+              break;
+            }
             log[fault] = fault === 'blockNumber' || fault === 'transactionIndex'
               ? '0x' + (BigInt(log[fault]) + 1n).toString(16)
               : differentHash(log[fault]);
@@ -60,7 +69,7 @@ async function receiptProxy(upstream: string, routerAddress: string, topic: stri
   return {
     url: 'http://127.0.0.1:' + (server.address() as { port: number }).port,
     sends,
-    corrupt(field: Provenance, hash?: string) { fault = field; target = hash?.toLowerCase(); },
+    corrupt(field: ReceiptFault, hash?: string) { fault = field; target = hash?.toLowerCase(); },
     heal() { fault = undefined; target = undefined; },
     altered: () => altered,
     async close() {
@@ -212,4 +221,96 @@ for (const field of fields) test('actual RPC log ' + field + ' contradiction blo
   assert.equal(proxy.sends.length, 2);
   t.diagnostic(JSON.stringify({ contradictoryField: field, formatterRetainedContradiction: true,
     settledBeforeReconciliation: healthy.checked, reviewedPayments: 1, retainedJournalRows: store.journals().length, nativeSends: proxy.sends.length }));
+});
+
+test('actual RPC reverted receipts with nonzero log evidence cannot resolve a mined reservation', {
+  timeout: 30000
+}, async t => {
+  const first = (await operation(service.accept(await signed('125000000', '0')))).row;
+  const second = (await operation(service.accept(await signed('7000000', '1')))).row;
+  const acceptedAudit = store.events();
+
+  proxy.corrupt('status');
+  await operation(service.tick());
+  const reserved = store.get(first.id)!;
+  assert.ok(reserved.raw_tx && reserved.tx_hash);
+  const { raw_tx: raw, tx_hash: hash } = reserved;
+  const nativeNonce = Transaction.from(raw).nonce;
+  assert.equal(keccak256(raw), hash);
+  const genuine = await chain.provider.getTransactionReceipt(hash);
+  const presented = await provider.getTransactionReceipt(hash);
+  assert.ok(genuine?.status === 1 && presented?.status === 0);
+  matchingLog(genuine);
+  assert.notEqual(genuine.logsBloom, '0x' + '00'.repeat(256));
+  assert.deepEqual({ ...presented.toJSON(), status: genuine.status }, genuine.toJSON(),
+    'Only receipt status may differ while the genuine logs remain');
+  const block = await chain.provider.getBlock(genuine.blockNumber);
+  const presentedBlock = await provider.getBlock(genuine.blockNumber);
+  assert.ok(block && presentedBlock);
+  assert.equal(block.transactions[genuine.index], hash);
+  assert.deepEqual(presentedBlock.toJSON(), block.toJSON());
+
+  const heldAudit = store.events();
+  if (reserved.status !== 'broadcast') {
+    t.diagnostic(JSON.stringify({ firstStatus: reserved.status, successorStatus: store.get(second.id)?.status,
+      firstJournal: Boolean(store.journal(first.id)), journalRows: store.journals().length, nativeSends: proxy.sends.length,
+      genuineStatus: genuine.status, reportedStatus: presented.status, retainedReceiptLogs: presented.logs.length }));
+  }
+  assert.equal(reserved.status, 'broadcast');
+  assert.equal(heldAudit[0].payment_id, first.id);
+  assert.equal(heldAudit[0].action, 'broadcast-prepared');
+  assert.deepEqual(heldAudit.slice(1), acceptedAudit);
+  function assertHeld() {
+    assert.ok(isDeepStrictEqual(store.get(first.id), reserved), 'Fault changed the original broadcast');
+    assert.ok(isDeepStrictEqual(store.get(second.id), second), 'Fault changed the queued successor');
+    assert.deepEqual(store.events(), heldAudit);
+    assert.deepEqual(store.journals(), []);
+    assert.deepEqual(proxy.sends, [hash]);
+  }
+  assertHeld();
+  const statusOnlyBeforeRetry = proxy.altered();
+  assert.ok(statusOnlyBeforeRetry >= 2);
+  await operation(service.tick());
+  assert.ok(proxy.altered() > statusOnlyBeforeRetry);
+  assertHeld();
+  const statusOnlyReplies = proxy.altered();
+
+  proxy.corrupt('status-no-logs', hash);
+  const stripped = await provider.getTransactionReceipt(hash);
+  assert.ok(stripped?.status === 0);
+  assert.deepEqual(stripped.logs, []);
+  assert.deepEqual({ ...stripped.toJSON(), status: genuine.status, logs: genuine.toJSON().logs }, genuine.toJSON(),
+    'Only status and the log array may change while the genuine bloom remains');
+  const strippedBeforeRetry = proxy.altered();
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await operation(service.tick());
+    assertHeld();
+  }
+  assert.equal(proxy.altered() - strippedBeforeRetry, 2);
+  const strippedReplies = proxy.altered() - statusOnlyReplies;
+  assert.equal(await chain.token.balanceOf(chain.payee.address), 125000000n);
+  assert.equal(await chain.router.nonces(chain.payer.address), 1n);
+
+  proxy.heal();
+  for (let attempt = 0; attempt < 4 && store.get(second.id)!.status !== 'settled'; attempt++) {
+    await operation(service.tick());
+  }
+  const settled = store.get(first.id)!, next = store.get(second.id)!;
+  assert.equal(settled.status, 'settled');
+  assert.ok(settled.raw_tx === raw && settled.tx_hash === hash, 'Healing changed the first reservation');
+  assert.equal(next.status, 'settled');
+  assert.equal(Transaction.from(next.raw_tx!).nonce, nativeNonce + 1);
+  assert.deepEqual(proxy.sends, [hash, next.tx_hash]);
+  assert.deepEqual(store.journals().map(row => row.tx_hash), [next.tx_hash, hash]);
+  assert.equal(await chain.token.balanceOf(chain.payee.address), 132000000n);
+  assert.equal(await chain.router.nonces(chain.payer.address), 2n);
+  for (const paymentId of [first.id, second.id]) {
+    assert.deepEqual(store.events().filter(event => event.payment_id === paymentId).map(event => event.action),
+      ['settled', 'broadcast-prepared', 'accepted']);
+  }
+  const reconciled = await operation(service.reconcile());
+  assert.equal(reconciled.checked, 2);
+  assert.deepEqual(reconciled.exceptions, []);
+  t.diagnostic(JSON.stringify({ statusOnlyReplies, strippedReplies, recoveredSettlements: reconciled.checked,
+    journalRows: store.journals().length, nativeSends: proxy.sends.length }));
 });

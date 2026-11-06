@@ -14,6 +14,8 @@ const routerAddress = '0x' + '44'.repeat(20);
 const txHash = '0x' + 'ab'.repeat(32);
 const otherTxHash = '0x' + 'ef'.repeat(32);
 const blockHash = '0x' + 'cd'.repeat(32);
+const emptyLogsBloom = '0x' + '0'.repeat(512);
+const nonzeroLogsBloom = '0x' + '0'.repeat(511) + '1';
 const iface = new Interface([
   'event PaymentSettled(bytes32 indexed paymentId,address indexed payer,address indexed payee,address token,uint256 amount,uint256 nonce)'
 ]);
@@ -43,6 +45,13 @@ beforeEach(() => {
 });
 afterEach(() => { store.close(); });
 
+function setReceiptStatus(status: number) {
+  receipt.status = status;
+  if (status === 0) {
+    receipt.logs = [];
+    receipt.logsBloom = emptyLogsBloom;
+  }
+}
 function queueAnother() {
   const second = { ...payment, paymentId: '0x' + '34'.repeat(32), amount: '7000000', nonce: '1' };
   secondId = store.accept(second, 'second-fingerprint', 'second-signature').row.id;
@@ -158,7 +167,8 @@ for (const status of [0, 1]) {
     ['malformed transaction', '0x1234']
   ] as const) {
     test(description + ' hash on status ' + status + ' cannot fail or settle the persisted broadcast', async () => {
-      receipt.hash = hash; receipt.status = status;
+      setReceiptStatus(status);
+      receipt.hash = hash;
       await remainsUncertain();
     });
   }
@@ -202,7 +212,8 @@ for (const status of [0, 1]) {
     ['malformed canonical hash', { number: 17, hash: 'not-a-block-hash' }]
   ] as const) {
     test(description + ' keeps status ' + status + ' broadcast unresolved', async () => {
-      receipt.status = status; canonical = block;
+      setReceiptStatus(status);
+      canonical = block;
       await remainsUncertain();
     });
   }
@@ -218,9 +229,9 @@ for (const status of [0, 1]) {
     ['reserved hash at a different canonical transaction slot', 1, [txHash, otherTxHash]]
   ] as const) {
     test(description + ' keeps status ' + status + ' broadcast unresolved', async () => {
-      receipt.status = status;
+      setReceiptStatus(status);
       receipt.index = index;
-      receipt.logs[0].transactionIndex = index;
+      if (status === 1) receipt.logs[0].transactionIndex = index;
       canonical.transactions = transactions;
       await remainsUncertain();
       assert.equal(blockReads, 2);
@@ -233,7 +244,7 @@ for (const [description, index] of [
   ['unsafe', Number.MAX_SAFE_INTEGER + 1], ['string', '0']
 ] as const) {
   test(description + ' revert receipt index preserves the broadcast before block reads', async () => {
-    receipt.status = 0;
+    setReceiptStatus(0);
     receipt.index = index;
     await remainsUncertain();
     assert.equal(blockReads, 0);
@@ -260,6 +271,53 @@ for (const [description, logs] of [['missing', undefined], ['null', null], ['non
   });
 }
 
+for (const kind of ['matching', 'unrelated']) {
+  test('a reported revert with ' + kind + ' log evidence retains the reservation', async () => {
+    const log = receipt.logs[0];
+    setReceiptStatus(0);
+    receipt.logs = [kind === 'matching' ? log : { ...log, address: payee }];
+    await remainsUncertain();
+    assert.equal(blockReads, 0);
+  });
+}
+
+for (const [description, logs] of [['missing', undefined], ['null', null], ['non-array', {}]] as const) {
+  test(description + ' reported revert logs retain the reservation', async () => {
+    setReceiptStatus(0);
+    if (logs === undefined) delete receipt.logs; else receipt.logs = logs;
+    await remainsUncertain();
+    assert.equal(blockReads, 0);
+  });
+}
+
+for (const [description, bloom] of [
+  ['nonzero', nonzeroLogsBloom], ['missing', undefined], ['null', null],
+  ['short', '0x00'], ['nonhex', '0x' + 'z'.repeat(512)]
+] as const) {
+  test(description + ' reported revert log bloom retains the reservation', async () => {
+    setReceiptStatus(0);
+    if (bloom === undefined) delete receipt.logsBloom; else receipt.logsBloom = bloom;
+    await remainsUncertain();
+    assert.equal(blockReads, 0);
+  });
+}
+
+test('restoring reported revert log evidence fails the original reservation once', async () => {
+  setReceiptStatus(0);
+  receipt.logsBloom = nonzeroLogsBloom;
+  const before = { row: store.get(firstId), audit: store.events() };
+  const worker = service();
+  await worker.tick(); await worker.tick();
+  assert.deepEqual({ row: store.get(firstId), audit: store.events() }, before);
+  receipt.logsBloom = emptyLogsBloom;
+  await worker.tick(); await worker.tick();
+  assert.equal(store.get(firstId)!.status, 'failed');
+  assert.equal(store.get(firstId)!.raw_tx, before.row!.raw_tx);
+  assert.equal(store.get(firstId)!.tx_hash, before.row!.tx_hash);
+  assert.equal(store.journals().length, 0);
+  assert.equal(store.events().filter(event => event.action === 'failed').length, 1);
+});
+
 test('a canonical success with an explicit empty log array enters review once', async () => {
   receipt.logs = [];
   const worker = service();
@@ -277,7 +335,7 @@ test('unsafe or nonpositive confirmation policies are rejected before receipt pr
 });
 
 test('a matching revert is failed only after both confirmation depth and canonical evidence', async () => {
-  receipt.status = 0; receipt.logs = [];
+  setReceiptStatus(0);
   latest = 17;
   const worker = service();
   await worker.tick();

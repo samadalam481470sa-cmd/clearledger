@@ -217,7 +217,10 @@ for (const reportedStatus of [0, 1]) {
     const faultyProvider = {
       getTransactionReceipt: async (hash: string) => {
         const receipt = await chain.provider.getTransactionReceipt(hash);
-        return receipt && inconsistent ? { ...receipt, hash: '0x' + 'ab'.repeat(32), status: reportedStatus } : receipt;
+        if (!receipt || !inconsistent) return receipt;
+        return { ...receipt, hash: '0x' + 'ab'.repeat(32), status: reportedStatus,
+          logs: reportedStatus === 0 ? [] : receipt.logs,
+          logsBloom: reportedStatus === 0 ? '0x' + '0'.repeat(512) : receipt.logsBloom };
       },
       broadcastTransaction: chain.provider.broadcastTransaction.bind(chain.provider),
       getBalance: chain.provider.getBalance.bind(chain.provider),

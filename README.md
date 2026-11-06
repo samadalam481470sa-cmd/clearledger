@@ -71,6 +71,8 @@ npm run build
 npm run source:count
 ```
 
+Initial confirmation now holds a broadcast when a reported revert still carries logs or a nonzero log bloom. A real RPC regression reproduced a missing journal before the guard and recovered both payments after valid receipt evidence returned. Linux CI and Besu acceptance are pending. [Verification evidence](STATUS.md#revert-receipt-log-consistency).
+
 New settlements can reserve up to 20,000 extra gas for the first daily-spending write after UTC rollover. The real RPC regression advanced the chain clock and settled the original reservation after reopening SQLite. Linux CI passed all 969 tests after a receipt-test fixture correction. Four-validator Besu acceptance passed on the same application code. [Verification evidence](STATUS.md#settlement-gas-across-utc-day-rollover) · [Linux CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42165324356) · [Besu acceptance](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42137182482).
 
 Reconciliation now checks that the stored transaction appears at the receipt’s reported position in the canonical block. The real RPC test flagged only the affected payment and preserved both journals and the other payment record. Linux CI passed all 958 tests and four-validator Besu acceptance passed on retries of the same source. The first attempts failed during payment recovery. [Verification evidence](STATUS.md#reconciliation-transaction-position) · [Linux CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42133334558) · [Besu acceptance](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42133334497).
