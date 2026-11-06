@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { isHexString } from 'ethers';
 import { paymentKey, type Payment } from './payment.ts';
 
 export type Status = 'queued' | 'broadcast' | 'settled' | 'failed' | 'review';
@@ -203,7 +204,7 @@ export class Store {
     // Check posting relationships and retained inclusion values in one SQLite snapshot.
     // An unjournaled review without recorded inclusion remains a valid state.
     for (const record of this.db.prepare(`
-      SELECT 'invalid' AS kind,NULL AS token,NULL AS amount,NULL AS status
+      SELECT 'invalid' AS kind,NULL AS token,NULL AS amount,NULL AS status,NULL AS tx_hash,NULL AS block_hash
       WHERE EXISTS (
         SELECT 1 FROM payments p
         WHERE (p.status='settled' OR (p.status='review' AND
@@ -217,13 +218,17 @@ export class Store {
         SELECT 1 FROM journals j JOIN payments p ON p.id=j.payment_id
         WHERE j.tx_hash IS NOT p.tx_hash OR j.block_number IS NOT p.block_number
           OR j.block_hash IS NOT p.block_hash
+          OR typeof(p.tx_hash) <> 'text' OR typeof(p.block_hash) <> 'text'
+          OR typeof(j.block_number) <> 'integer' OR typeof(p.block_number) <> 'integer'
+          OR j.block_number NOT BETWEEN 0 AND ${Number.MAX_SAFE_INTEGER}
       )
       UNION ALL
-      SELECT 'asset',j.token,j.amount,p.status
+      SELECT 'asset',j.token,j.amount,p.status,j.tx_hash,j.block_hash
       FROM journals j JOIN payments p ON p.id=j.payment_id
       WHERE p.status IN ('settled','review')
     `).iterate()) {
-      if (record.kind === 'invalid') throw new JournalIntegrityError();
+      if (record.kind === 'invalid' || !isHexString(record.tx_hash, 32) || !isHexString(record.block_hash, 32))
+        throw new JournalIntegrityError();
       // A malformed included row invalidates the whole report. Coercion could
       // turn missing/negative/nondecimal amounts into plausible transfer volume.
       if (typeof record.token !== 'string' || !/^0x[0-9a-fA-F]{40}(?![\s\S])/.test(record.token) ||

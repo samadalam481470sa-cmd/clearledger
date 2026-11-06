@@ -33,8 +33,12 @@ function snapshot() {
   }));
   return createHash('sha256').update(JSON.stringify(rows, (_, value) => typeof value === 'bigint' ? { sqliteInteger: value.toString() } : value)).digest('hex');
 }
-function corrupt(table: 'payments' | 'journals', field: Field, value: string | number | Buffer | null, key: string) {
+function corrupt(table: 'payments' | 'journals', field: Field, value: string | number | bigint | Buffer | null, key: string) {
   store.db.prepare('UPDATE ' + table + ' SET ' + field + '=? WHERE ' + (table === 'payments' ? 'id' : 'payment_id') + '=?').run(value, key);
+}
+function replaceInclusion(field: Field, value: string | number | bigint | Buffer, key: string) {
+  corrupt('payments', field, value, key);
+  corrupt('journals', field, value, key);
 }
 function refuse() {
   const before = snapshot();
@@ -85,6 +89,37 @@ for (const status of ['settled', 'review'] as const) for (const field of ['tx_ha
   });
 }
 
+for (const field of ['tx_hash', 'block_hash'] as const) for (const [label, value] of [
+  ['short', '0x12'],
+  ['nonhex', '0x' + 'z'.repeat(64)],
+  ['newline-suffixed', blockHash + '\n'],
+  ['NUL-suffixed', blockHash + '\0ignored'],
+  ['BLOB', Buffer.from(blockHash)]
+] as const) test('coherent ' + label + ' ' + field + ' invalidates every asset', () => {
+  const row = posted(1, field === 'tx_hash' ? 'settled' : 'review');
+  posted(2, 'settled', otherToken, '7');
+  replaceInclusion(field, value, row.id);
+  refuse();
+});
+
+for (const [label, height] of [
+  ['negative', -1n], ['fractional REAL', 1.5], ['above the safe integer range', 9007199254740992n],
+  ['nonnumeric TEXT', 'invalid-height'], ['BLOB', Buffer.from('1')]
+] as const) test('coherent block number ' + label + ' invalidates every asset', () => {
+  const row = posted(1); posted(2, 'settled', otherToken, '7');
+  replaceInclusion('block_number', height, row.id);
+  refuse();
+});
+
+for (const height of [0n, BigInt(Number.MAX_SAFE_INTEGER)])
+  test('coherent block number ' + height + ' preserves exact totals', () => {
+    const row = posted(1); posted(2, 'settled', otherToken, '7');
+    replaceInclusion('block_number', height, row.id);
+    const before = snapshot();
+    assert.deepEqual(store.assetTotals(), expected('settled'));
+    assert.equal(snapshot(), before);
+  });
+
 for (const status of ['settled', 'review'] as const)
   test('coherent ' + status + ' Store finalization retains case-preserving metadata and exact volume', () => {
     const amount = (2n ** 256n - 1n).toString();
@@ -98,9 +133,8 @@ test('matching retained metadata does not revalidate malformed authorization pay
   const row = posted(1); posted(2, 'settled', otherToken, '7');
   store.db.prepare('UPDATE payments SET payload=?,signature=?,fingerprint=? WHERE id=?')
     .run('PRIVATE_INVALID_JSON{', 'PRIVATE_INVALID_SIGNATURE', 'PRIVATE_INVALID_FINGERPRINT', row.id);
-  // Coherent malformed copies are deliberately outside this disagreement guard.
-  corrupt('payments', 'block_hash', 'PRIVATE_COHERENT_HASH', row.id);
-  corrupt('journals', 'block_hash', 'PRIVATE_COHERENT_HASH', row.id);
+  // Coherent well-formed rewrites are outside the local reporting check.
+  replaceInclusion('block_hash', '0x' + '99'.repeat(32), row.id);
   const before = snapshot(); assert.deepEqual(store.assetTotals(), expected('settled')); assert.equal(snapshot(), before);
 });
 

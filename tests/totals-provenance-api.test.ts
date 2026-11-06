@@ -129,3 +129,46 @@ test('coherent case-preserving retained hashes remain readable with an invalid p
   }
   assert.deepEqual(await read(), { status: 200, body: report }); assert.equal(rpcCalls, 0);
 });
+
+
+const malformedInclusion = [
+  ['short transaction hash', 'settled', 'tx_hash', '0x1234'],
+  ['nonhex block hash', 'review', 'block_hash', '0x' + privateMarker.padEnd(64, '0')],
+  ['BLOB block hash', 'settled', 'block_hash', Buffer.from(blockHash)],
+  ['NUL-suffixed transaction hash', 'review', 'tx_hash', '0x' + 'ab'.repeat(32) + '\0private'],
+  ['negative block height', 'settled', 'block_number', -1],
+  ['fractional block height', 'review', 'block_number', 1.5],
+  ['unsafe block height', 'settled', 'block_number', 9007199254740993n]
+] as const;
+
+for (const [label, status, field, malformed] of malformedInclusion) {
+  test('matching ' + label + ' invalidates the entire HTTP/client totals report', async t => {
+    const { first, report } = baseline(status);
+    const good = await read();
+    assert.deepEqual(good, { status: 200, body: report });
+    let model = reduceTotals(emptyTotals(), { type: 'report', report: good.body });
+    const counts = totalsCounts(model);
+    const updates = [
+      store.db.prepare('UPDATE payments SET ' + field + '=? WHERE id=?'),
+      store.db.prepare('UPDATE journals SET ' + field + '=? WHERE payment_id=?')
+    ];
+    for (const statement of updates) statement.run(malformed, first.id);
+    assert.deepEqual(await read(false), { status: 401, body: { error: 'Bearer token required' } });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const invalid = await read();
+      assert.deepEqual(invalid, { status: 200, body: unavailable });
+      model = reduceTotals(model, { type: 'report', report: invalid.body });
+      assert.equal(model.assets, null);
+      assert.equal(model.integrityError, unavailable.integrityError);
+      assert.deepEqual(totalsCounts(model), { assets: null, completed: null, review: null });
+    }
+    for (const statement of updates) statement.run(first[field], first.id);
+    const restored = await read();
+    assert.deepEqual(restored, { status: 200, body: report });
+    model = reduceTotals(model, { type: 'report', report: restored.body });
+    assert.deepEqual(totalsCounts(model), counts);
+    assert.equal(model.integrityError, '');
+    assert.equal(rpcCalls, 0);
+    t.diagnostic(JSON.stringify({ status, field, unavailableReads: 2, restoredAssets: counts.assets, rpcCalls, readWrites: 0 }));
+  });
+}
