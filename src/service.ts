@@ -1,6 +1,9 @@
-import { keccak256, Transaction, type JsonRpcProvider, type Wallet, type TypedDataDomain, type TransactionReceipt, type Block } from 'ethers';
+import { getBigInt, keccak256, Transaction, type JsonRpcProvider, type Wallet, type TypedDataDomain, type TransactionReceipt, type Block } from 'ethers';
 import { digest, domain, paymentKey, paymentSchema, submissionSchema, type Payment } from './payment.ts';
 import { Store, type RecordRow } from './store.ts';
+
+// A fresh daily-spend slot can cost 17,100 gas more than an update (EIP-2200/2929).
+const DAILY_SPEND_GAS_ALLOWANCE = 20_000n;
 
 function isHash(value: unknown): value is string {
   return typeof value === 'string' && /^0x[0-9a-fA-F]{64}$/.test(value);
@@ -107,7 +110,22 @@ export class PaymentService {
     }
     const request = await this.router.settle.populateTransaction(p, row.signature);
     const complete = await this.relayer.populateTransaction(request);
-    const raw = await this.relayer.signTransaction(complete);
+    const estimate = getBigInt(complete.gasLimit ?? 0n);
+    const feeCap = complete.maxFeePerGas ?? complete.gasPrice;
+    if (estimate <= 0n || feeCap == null) throw new Error('Settlement gas budget is unavailable');
+    const maxGasPrice = getBigInt(feeCap);
+    if (maxGasPrice < 0n) throw new Error('Settlement gas budget is unavailable');
+    const [head, balance] = await Promise.all([
+      this.provider.getBlock('latest'),
+      maxGasPrice > 0n ? this.provider.getBalance(this.relayer.address, 'pending') : null
+    ]);
+    if (!head || typeof head.gasLimit !== 'bigint') throw new Error('Settlement gas budget is unavailable');
+    const affordable = balance === null ? head.gasLimit : balance / maxGasPrice;
+    const ceiling = affordable < head.gasLimit ? affordable : head.gasLimit;
+    if (ceiling < estimate) throw new Error('Settlement gas budget is unavailable');
+    const padded = estimate + DAILY_SPEND_GAS_ALLOWANCE;
+    const gasLimit = padded < ceiling ? padded : ceiling;
+    const raw = await this.relayer.signTransaction({ ...complete, gasLimit });
     // Persist BEFORE sending. Restart can retransmit exactly the same signed transaction.
     this.store.broadcast(row.id, raw, keccak256(raw));
   }

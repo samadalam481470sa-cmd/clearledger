@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Interface, keccak256, Wallet, type JsonRpcProvider } from 'ethers';
+import { Interface, keccak256, Transaction, Wallet, type JsonRpcProvider } from 'ethers';
 import { digest, domain, paymentKey, paymentSchema, type Payment } from '../src/payment.ts';
 import { PaymentService } from '../src/service.ts';
 import { Store } from '../src/store.ts';
@@ -19,7 +19,9 @@ const iface = new Interface([
 const independentError = Object.assign(new Error('Controlled independent RPC uncertainty'), { code: 'NETWORK_ERROR' });
 let store: Store, service: PaymentService, first: Payment, second: Payment, firstId: string, secondId: string;
 let firstFailure: unknown, preflights: string[], routerPopulation: number, nativePopulation: number;
-let signing: number, sends: number, receiptReads: number, blockReads: number, receipt: any;
+let signing: number, sends: number, receiptReads: number, blockReads: number, latestBlockReads: number, receipt: any;
+let latestBlock: () => { gasLimit: bigint } | null, balance: bigint, balanceReads: number, maxFee: bigint;
+let legacy: boolean, balanceFailure: Error | undefined;
 
 function payment(n: number) {
   return paymentSchema.parse({ paymentId: '0x' + n.toString(16).padStart(64, '0'),
@@ -40,7 +42,8 @@ function snapshot() {
 }
 function noPreparation() {
   assert.equal(routerPopulation, 0); assert.equal(nativePopulation, 0); assert.equal(signing, 0);
-  assert.equal(sends, 0); assert.equal(receiptReads, 0); assert.equal(blockReads, 0);
+  assert.equal(sends, 0); assert.equal(receiptReads, 0); assert.equal(blockReads, 0); assert.equal(latestBlockReads, 0);
+  assert.equal(balanceReads, 0);
 }
 async function caughtTick() {
   try { await service.tick(); return undefined; }
@@ -51,7 +54,9 @@ beforeEach(() => {
   firstId = store.accept(first, digest(first, signingDomain), signature).row.id;
   secondId = store.accept(second, digest(second, signingDomain), signature).row.id;
   firstFailure = failure('0xgg'); preflights = []; routerPopulation = 0; nativePopulation = 0;
-  signing = 0; sends = 0; receiptReads = 0; blockReads = 0; receipt = null;
+  signing = 0; sends = 0; receiptReads = 0; blockReads = 0; latestBlockReads = 0; receipt = null;
+  latestBlock = () => ({ gasLimit: 30_000_000n });
+  balance = 10_000_000n; balanceReads = 0; maxFee = 2n; legacy = false; balanceFailure = undefined;
   const router = { interface: iface, connect() { return this; }, settle: {
     staticCall: async (p: Payment) => {
       const id = paymentKey(p); preflights.push(id);
@@ -66,7 +71,9 @@ beforeEach(() => {
   const relayer = { address: nativeSigner.address,
     populateTransaction: async (request: any) => {
       nativePopulation++;
-      return { ...request, type: 2, chainId: 31337, nonce: 7, gasLimit: 200000, maxFeePerGas: 2, maxPriorityFeePerGas: 1 };
+      const fees = legacy ? { type: 0, gasPrice: maxFee } :
+        { type: 2, maxFeePerGas: maxFee, maxPriorityFeePerGas: maxFee / 2n };
+      return { ...request, ...fees, chainId: 31337, nonce: 7, gasLimit: 200000 };
     },
     signTransaction: async (request: any) => { signing++; return nativeSigner.signTransaction(request); }
   };
@@ -81,7 +88,21 @@ beforeEach(() => {
       return { hash };
     },
     getBlockNumber: async () => { blockReads++; return 17; },
-    getBlock: async () => { blockReads++; return { number: 17, hash: blockHash, transactions: receipt ? [receipt.hash] : [] }; }
+    getBalance: async (address: string, tag: string) => {
+      balanceReads++;
+      assert.equal(address, nativeSigner.address);
+      assert.equal(tag, 'pending');
+      if (balanceFailure) throw balanceFailure;
+      return balance;
+    },
+    getBlock: async (tag: number | 'latest') => {
+      if (tag === 'latest') {
+        latestBlockReads++;
+        return latestBlock();
+      }
+      blockReads++;
+      return { number: 17, hash: blockHash, transactions: receipt ? [receipt.hash] : [] };
+    }
   };
   service = new PaymentService(store, provider as unknown as JsonRpcProvider,
     relayer as unknown as Wallet, router, 31337, routerAddress);
@@ -153,8 +174,89 @@ test('a healthy retry after malformed evidence settles the original row once bef
   assert.equal(store.events().filter(event => event.action === 'settled').length, 1);
   assert.equal(store.journals().length, 1); assert.equal(store.journal(firstId)!.tx_hash, settled.tx_hash);
   assert.equal(routerPopulation, 1); assert.equal(nativePopulation, 1); assert.equal(signing, 1); assert.equal(sends, 1);
+  assert.equal(latestBlockReads, 1);
+  assert.equal(balanceReads, 1);
+  assert.equal(Transaction.from(settled.raw_tx!).gasLimit, 220_000n);
   assert.equal(store.get(secondId)!.status, 'queued'); assert.equal(store.get(secondId)!.raw_tx, null);
   const recovered = snapshot();
   assert.equal(await caughtTick(), independentError); assert.deepEqual(snapshot(), recovered);
   assert.equal(signing, 1); assert.equal(sends, 1); assert.equal(store.journals().length, 1);
+});
+
+const headroomCaps = [
+  ['the observed block limit', 205_000n, 10_000_000n, 205_000n],
+  ['the affordable gas at the populated maximum fee', 30_000_000n, 406_001n, 203_000n],
+  ['the affordable gas at the legacy gas price', 30_000_000n, 406_001n, 203_000n, true]
+] as const;
+for (const [label, limit, funds, expectedGas, useLegacy = false] of headroomCaps) test('settlement gas headroom is capped by ' + label, async () => {
+  firstFailure = undefined;
+  latestBlock = () => ({ gasLimit: limit });
+  balance = funds;
+  legacy = useLegacy;
+  assert.equal(await caughtTick(), independentError);
+  assert.deepEqual(preflights, [firstId, secondId]);
+  const settled = store.get(firstId)!;
+  assert.equal(settled.status, 'settled');
+  const transaction = Transaction.from(settled.raw_tx!);
+  assert.equal(transaction.type, useLegacy ? 0 : 2);
+  assert.equal(transaction.gasLimit, expectedGas);
+  assert.equal(latestBlockReads, 1);
+  assert.equal(balanceReads, 1);
+  assert.equal(signing, 1);
+  assert.equal(sends, 1);
+});
+
+test('zero-fee settlement gets gas headroom without a balance lookup', async () => {
+  firstFailure = undefined;
+  maxFee = 0n;
+  balance = 0n;
+  assert.equal(await caughtTick(), independentError);
+  const settled = store.get(firstId)!;
+  assert.equal(settled.status, 'settled');
+  const transaction = Transaction.from(settled.raw_tx!);
+  assert.equal(transaction.maxFeePerGas, 0n);
+  assert.equal(transaction.gasLimit, 220_000n);
+  assert.equal(latestBlockReads, 1);
+  assert.equal(balanceReads, 0);
+});
+
+const unavailableBudget = { message: 'Settlement gas budget is unavailable' };
+const isIndependentError = (error: unknown) => error === independentError;
+const blockedBudgets = [
+  ['an estimate above the block limit', () => { latestBlock = () => ({ gasLimit: 199_999n }); }, unavailableBudget],
+  ['a zero block gas limit', () => { latestBlock = () => ({ gasLimit: 0n }); }, unavailableBudget],
+  ['an unavailable latest block', () => { latestBlock = () => null; }, unavailableBudget],
+  ['a failed latest block lookup', () => { latestBlock = () => { throw independentError; }; }, isIndependentError],
+  ['a failed pending balance lookup', () => { balanceFailure = independentError; }, isIndependentError],
+  ['a balance below the estimated maximum cost', () => { balance = 399_999n; }, unavailableBudget]
+] as const;
+for (const [label, arrange, expectedError] of blockedBudgets) test(label + ' preserves queued intent and dispatch priority', async () => {
+  firstFailure = undefined;
+  const before = snapshot();
+  const next = store.get(secondId);
+  arrange();
+  await assert.rejects(service.tick(), expectedError);
+  assert.deepEqual(snapshot(), before);
+  assert.deepEqual(preflights, [firstId]);
+  assert.equal(nativePopulation, 1);
+  assert.equal(latestBlockReads, 1);
+  assert.equal(balanceReads, 1);
+  assert.equal(signing, 0);
+  assert.equal(sends, 0);
+  assert.equal(receiptReads, 0);
+  assert.equal(blockReads, 0);
+
+  latestBlock = () => ({ gasLimit: 30_000_000n });
+  balance = 10_000_000n;
+  balanceFailure = undefined;
+  assert.equal(await caughtTick(), independentError);
+  assert.deepEqual(preflights, [firstId, firstId, secondId]);
+  assert.equal(store.get(firstId)!.status, 'settled');
+  assert.deepEqual(store.get(secondId), next);
+  assert.equal(latestBlockReads, 2);
+  assert.equal(balanceReads, 2);
+  assert.equal(signing, 1);
+  assert.equal(sends, 1);
+  assert.equal(store.journals().length, 1);
+  assert.equal(store.journal(firstId)!.tx_hash, store.get(firstId)!.tx_hash);
 });
