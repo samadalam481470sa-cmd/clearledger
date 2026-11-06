@@ -7,6 +7,7 @@ import { Wallet, id, keccak256, Transaction } from 'ethers';
 import { compile } from '../scripts/compile.ts';
 import { localChain } from '../scripts/local-chain.ts';
 import { connectRouter } from '../src/chain.ts';
+import { makeServer } from '../src/http.ts';
 import { createRpcProvider } from '../src/rpc.ts';
 import { Store } from '../src/store.ts';
 import { PaymentService } from '../src/service.ts';
@@ -14,11 +15,13 @@ import { paymentTypes, type Payment } from '../src/payment.ts';
 
 const replacementHash = id('conflicting block transaction membership');
 type RpcCall = { id: number | string; method: string; params: string[] };
-type BlockReply = { id: number | string; result?: { transactions?: string[] } };
+type RpcReply = { id: number | string; result?: { transactions?: string[]; transactionHash?: string } | null };
 
 async function blockProxy(upstream: string) {
   let fault = true;
   let altered = 0;
+  let withheldHash: string | undefined;
+  let withheldReceipts = 0;
   const sends: string[] = [];
   const active = new Set<Promise<void>>();
   const server = createServer((req, res) => {
@@ -35,12 +38,18 @@ async function blockProxy(upstream: string) {
         const response = await fetch(upstream, {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body, signal: AbortSignal.timeout(3000)
         });
-        const result = await response.json() as BlockReply | BlockReply[];
+        const result = await response.json() as RpcReply | RpcReply[];
         const replies = Array.isArray(result) ? result : [result];
         for (const reply of replies) {
+          const call = calls.find(request => request.id === reply.id);
+          if (withheldHash && call?.method === 'eth_getTransactionReceipt' && call.params[0] === withheldHash &&
+            reply.result?.transactionHash === withheldHash) {
+            reply.result = null;
+            withheldReceipts++;
+            continue;
+          }
           const transactions = reply.result?.transactions;
-          if (!fault || !sends.length || !Array.isArray(transactions) ||
-            !calls.some(call => call.id === reply.id && call.method === 'eth_getBlockByNumber')) continue;
+          if (!fault || !sends.length || !Array.isArray(transactions) || call?.method !== 'eth_getBlockByNumber') continue;
           const index = transactions.indexOf(sends[0]);
           if (index < 0) continue;
           transactions[index] = replacementHash;
@@ -60,7 +69,9 @@ async function blockProxy(upstream: string) {
     url: 'http://127.0.0.1:' + (server.address() as { port: number }).port,
     sends,
     altered: () => altered,
-    heal() { fault = false; },
+    withheldReceipts: () => withheldReceipts,
+    withholdReceipt(hash: string) { withheldHash = hash; },
+    heal() { fault = false; withheldHash = undefined; },
     corrupt() { fault = true; },
     async close() {
       server.closeAllConnections();
@@ -75,6 +86,7 @@ test('actual RPC block membership guards confirmation and reviews only the affec
   let proxy: Awaited<ReturnType<typeof blockProxy>> | undefined;
   let provider: ReturnType<typeof createRpcProvider> | undefined;
   let store: Store | undefined;
+  let api: ReturnType<typeof makeServer> | undefined;
   const operations = new Set<Promise<unknown>>();
   function operation<T>(pending: Promise<T>) {
     operations.add(pending);
@@ -84,6 +96,12 @@ test('actual RPC block membership guards confirmation and reviews only the affec
   t.after(async () => {
     const failures: unknown[] = [];
     for (const cleanup of [
+      async () => {
+        if (!api?.listening) return;
+        const closed = new Promise<void>(resolve => api!.close(() => resolve()));
+        api.closeAllConnections();
+        await Promise.all([closed, api.drainRequests()]);
+      },
       () => provider?.destroy(), () => proxy?.close(), () => Promise.allSettled([...operations]),
       () => store?.close(), () => chain?.close()
     ]) {
@@ -159,6 +177,42 @@ test('actual RPC block membership guards confirmation and reviews only the affec
   assert.deepEqual(healthy.exceptions, []);
   const journals = ledger.journals();
   const audit = ledger.events();
+  const totals = ledger.assetTotals();
+
+  const apiKey = 'canonical-receipt-integration-token';
+  const server = api = makeServer({ service, apiKey, port: 0, mode: 'rpc' });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const url = 'http://127.0.0.1:' + (server.address() as { port: number }).port;
+  async function requestReconciliation() {
+    const response = await fetch(url + '/api/reconcile', {
+      method: 'POST', headers: { Authorization: 'Bearer ' + apiKey }, signal: AbortSignal.timeout(5000)
+    });
+    return { status: response.status, body: await response.json() };
+  }
+  relay.withholdReceipt(hash);
+  assert.equal(await rpc.getTransactionReceipt(hash), null);
+  assert.deepEqual((await rpc.getBlock(receipt.blockNumber))?.toJSON(), block.toJSON());
+  const unavailable = await operation(requestReconciliation());
+  t.diagnostic(JSON.stringify({ missingReceiptHttpStatus: unavailable.status,
+    withheldCanonicalReceipts: relay.withheldReceipts(), affectedPaymentStatus: ledger.get(first.id)?.status }));
+  assert.deepEqual(unavailable, { status: 503, body: { error: 'Upstream RPC unavailable; check payment history before retrying' } });
+  assert.equal(relay.withheldReceipts(), 2);
+  function assertSettlementsUnchanged() {
+    assert.ok(isDeepStrictEqual(ledger.get(first.id), settled));
+    assert.ok(isDeepStrictEqual(ledger.get(second.id), next));
+    assert.deepEqual(ledger.journals(), journals);
+    assert.deepEqual(ledger.events(), audit);
+    assert.deepEqual(ledger.assetTotals(), totals);
+    assert.deepEqual(relay.sends, [hash, next.tx_hash]);
+  }
+  assertSettlementsUnchanged();
+  relay.heal();
+  const retried = await operation(requestReconciliation());
+  assert.equal(retried.status, 200);
+  assert.equal(retried.body.checked, 2);
+  assert.deepEqual(retried.body.exceptions, []);
+  assertSettlementsUnchanged();
 
   relay.corrupt();
   const contradictory = await operation(service.reconcile());

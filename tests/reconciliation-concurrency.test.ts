@@ -100,7 +100,7 @@ test('a shared failed scan retains earlier review commits and a later scan start
   const fault = new Error('Controlled later RPC failure'); let failing = true;
   const reviewedHash = store.get(reviewed)!.tx_hash;
   const worker = service(async tx => {
-    if (failing && tx === reviewedHash) return null;
+    if (failing && tx === reviewedHash) return { ...receipt(tx), status: 0, logs: [] };
     if (failing) { entered.resolve(); await gate.promise; throw fault; }
     return receipt(tx);
   });

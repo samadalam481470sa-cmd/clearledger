@@ -20,6 +20,7 @@ function matchesCanonicalPosition(receipt: TransactionReceipt, block: Block | nu
 }
 
 interface ReconciliationResult { checked: number; exceptions: string[]; at: string }
+export class ReconciliationReceiptUnavailable extends Error {}
 
 export class PaymentService {
   readonly signingDomain: TypedDataDomain;
@@ -240,22 +241,29 @@ export class PaymentService {
         checked++;
         const p = this.storedPayment(row);
         const envelopeMatches = p && this.storedEnvelopeMatches(row, p);
+        const txHash = row.tx_hash;
         let matches = false;
-        if (p && envelopeMatches && isHash(row.tx_hash) && isHash(row.block_hash) &&
+        if (p && envelopeMatches && isHash(txHash) && isHash(row.block_hash) &&
           Number.isSafeInteger(row.block_number) && row.block_number! >= 0) {
           // RPC errors abort the scan; unavailable transport is not evidence of corruption.
-          const receipt = await this.provider.getTransactionReceipt(row.tx_hash);
+          const receipt = await this.provider.getTransactionReceipt(txHash);
           const block = await this.provider.getBlock(row.block_number!);
           // Read the projection after the RPC awaits, and retain it unchanged on review.
           const journal = this.store.journal(row.id);
-          matches = !!receipt && receipt.status === 1 && sameHash(receipt.hash, row.tx_hash) &&
-            receipt.blockNumber === row.block_number && sameHash(receipt.blockHash, row.block_hash) &&
-            matchesCanonicalPosition(receipt, block) &&
-            !!journal && journal.payment_id === row.id && journal.token === p.token &&
+          const journalMatches = !!journal && journal.payment_id === row.id && journal.token === p.token &&
             journal.debit_account === p.payer && journal.credit_account === p.payee &&
-            journal.amount === p.amount && journal.tx_hash === row.tx_hash &&
-            journal.block_number === row.block_number && journal.block_hash === row.block_hash &&
-            this.settlementEvidence(p, receipt) === 'matching';
+            journal.amount === p.amount && journal.tx_hash === txHash &&
+            journal.block_number === row.block_number && journal.block_hash === row.block_hash;
+          // Positive block membership leaves a missing receipt inconclusive.
+          if (receipt === null && journalMatches && block &&
+            block.number === row.block_number && sameHash(block.hash, row.block_hash)) {
+            const transactions = block.transactions;
+            if (Array.isArray(transactions) && transactions.some(hash => sameHash(hash, txHash)))
+              throw new ReconciliationReceiptUnavailable('Receipt unavailable for transaction listed in the canonical block');
+          }
+          matches = journalMatches && !!receipt && receipt.status === 1 && sameHash(receipt.hash, txHash) &&
+            receipt.blockNumber === row.block_number && sameHash(receipt.blockHash, row.block_hash) &&
+            matchesCanonicalPosition(receipt, block) && this.settlementEvidence(p, receipt) === 'matching';
         }
         if (!matches) {
           exceptions.push(row.id);

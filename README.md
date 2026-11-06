@@ -71,6 +71,8 @@ npm run build
 npm run source:count
 ```
 
+Reconciliation preserves a settled payment when the RPC omits its receipt but the recorded block still lists the transaction and the journal agrees. The Ganache HTTP regression returned a retryable 503, then reconciled both payments after the receipt returned. Linux CI and Besu acceptance are pending. [Verification evidence](STATUS.md#unavailable-receipt-during-reconciliation).
+
 Reconciliation now ties the saved authorization to the original signed transaction and its hash. Ganache regressions detected a rewritten deadline with a matching fingerprint and conflicting archived bytes. Both retained the journals for review. Linux CI passed all 1,044 tests, and four-validator Besu acceptance passed. [Verification evidence](STATUS.md#signed-transaction-evidence-in-reconciliation) · [Linux CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42252928321) · [Besu acceptance](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42252928316).
 
 Reconciliation now compares each settled payment’s saved authorization with its EIP-712 fingerprint before checking the chain. A Ganache regression changed only the stored deadline and verified that review retained the original signed transaction and journal. Linux CI passed all 1,037 tests, and four-validator Besu acceptance passed. [Verification evidence](STATUS.md#reconciliation-authorization-consistency) · [Linux CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42247545307) · [Besu acceptance](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42247545332).

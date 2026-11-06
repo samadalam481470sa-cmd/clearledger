@@ -64,7 +64,7 @@ async function fixture(run: (context: Awaited<ReturnType<typeof createContext>>)
   }
 }
 async function createContext() {
-  const store = new Store(), gate = deferred<typeof receipt>(), receiptEntered = deferred<void>();
+  const store = new Store(), gate = deferred<typeof receipt | null>(), receiptEntered = deferred<void>();
   const paymentId = store.accept(payment, digest(payment, signingDomain), '0x01').row.id;
   store.broadcast(paymentId, raw, txHash);
   store.finalize(paymentId, 17, blockHash);
@@ -151,7 +151,8 @@ test('two authorized HTTP callers share one held scan while authentication and f
   assert.equal(context.store.events().filter(event => event.action === 'review').length, 1);
 }));
 
-test('a shared RPC failure returns fixed 503 to every caller without review and permits a fresh successful scan', {
+for (const fault of ['RPC failure', 'missing receipt with canonical inclusion'] as const) test(
+  'a shared ' + fault + ' returns fixed 503 without review and permits a fresh successful scan', {
   timeout: 10000
 }, async () => fixture(async context => {
   const before = { row: context.store.get(context.paymentId), journal: context.store.journal(context.paymentId),
@@ -161,7 +162,9 @@ test('a shared RPC failure returns fixed 503 to every caller without review and 
   const second = context.post();
   await within(context.callsEntered[1].promise);
   assert.deepEqual(context.counts(), { receiptReads: 1, blockReads: 0, invocations: 2 });
-  context.gate.reject(Object.assign(new Error('PRIVATE_RPC_CREDENTIAL_SENTINEL'), {
+  const missingReceipt = fault === 'missing receipt with canonical inclusion';
+  if (missingReceipt) context.gate.resolve(null);
+  else context.gate.reject(Object.assign(new Error('PRIVATE_RPC_CREDENTIAL_SENTINEL'), {
     code: 'TIMEOUT', shortMessage: 'PRIVATE_SIGNED_TRANSACTION_SENTINEL',
     info: { url: 'https://synthetic-secret@rpc.invalid', body: 'PRIVATE_RPC_INFO_SENTINEL' }
   }));
@@ -172,7 +175,8 @@ test('a shared RPC failure returns fixed 503 to every caller without review and 
     for (const marker of ['PRIVATE_', 'synthetic-secret', 'rpc.invalid', 'TIMEOUT'])
       assert.ok(!response.text.includes(marker), 'Shared failure leaked synthetic internal RPC evidence');
   }
-  assert.deepEqual(context.counts(), { receiptReads: 1, blockReads: 0, invocations: 2 });
+  const failedBlockReads = missingReceipt ? 1 : 0;
+  assert.deepEqual(context.counts(), { receiptReads: 1, blockReads: failedBlockReads, invocations: 2 });
   assert.equal(context.results.length, 0);
   assert.deepEqual({ row: context.store.get(context.paymentId), journal: context.store.journal(context.paymentId),
     audit: context.store.events() }, before);
@@ -180,7 +184,7 @@ test('a shared RPC failure returns fixed 503 to every caller without review and 
   const retried = await within(context.post());
   assert.equal(retried.status, 200); assert.equal(retried.body.checked, 1);
   assert.deepEqual(retried.body.exceptions, []);
-  assert.deepEqual(context.counts(), { receiptReads: 2, blockReads: 1, invocations: 3 });
+  assert.deepEqual(context.counts(), { receiptReads: 2, blockReads: failedBlockReads + 1, invocations: 3 });
   assert.deepEqual({ row: context.store.get(context.paymentId), journal: context.store.journal(context.paymentId),
     audit: context.store.events() }, before);
 }));

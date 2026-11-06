@@ -252,7 +252,9 @@ test('reconciliation reaches old settlements beyond the previous 10000-record cu
   const service = readService({
     getTransactionReceipt: async (tx: string) => {
       checked++;
-      return tx === oldest.tx_hash ? null : coherentReceipt(tx);
+      const receipt = coherentReceipt(tx);
+      assert.ok(receipt);
+      return tx === oldest.tx_hash ? { ...receipt, status: 0, logs: [] } : receipt;
     }
   });
   const result = await service.reconcile();

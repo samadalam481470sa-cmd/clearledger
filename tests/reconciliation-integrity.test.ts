@@ -2,7 +2,7 @@ import { beforeEach, afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Interface, keccak256, type JsonRpcProvider } from 'ethers';
 import { Store } from '../src/store.ts';
-import { PaymentService } from '../src/service.ts';
+import { PaymentService, ReconciliationReceiptUnavailable } from '../src/service.ts';
 import { digest, domain, type Payment } from '../src/payment.ts';
 import { fixtureRelayer, settleAbi, signedSettlement } from './fixtures/signed-settlement.ts';
 
@@ -11,7 +11,7 @@ const payer = '0x' + '11'.repeat(20);
 const payee = '0x' + '22'.repeat(20);
 const token = '0x' + '33'.repeat(20);
 const routerAddress = '0x' + '44'.repeat(20);
-const blockHash = '0x' + '55'.repeat(32);
+const blockHash = '0x' + 'a5'.repeat(32);
 const iface = new Interface([
   settleAbi,
   'event PaymentSettled(bytes32 indexed paymentId,address indexed payer,address indexed payee,address token,uint256 amount,uint256 nonce)',
@@ -248,8 +248,50 @@ test('an oversized integer journal block number is reviewed without changing its
   assert.equal(raw.get(paymentId)!.block_number, oversized);
 });
 
+test('an indexed transaction with an unavailable receipt keeps its settlement for a healthy retry', async () => {
+  const restored = { ...receipt, index: 1, logs: [{ ...receipt.logs[0], transactionIndex: 1 }] };
+  canonical.hash = '0x' + blockHash.slice(2).toUpperCase();
+  canonical.transactions = ['0x' + '99'.repeat(32), '0x' + txHash.slice(2).toUpperCase()];
+  receipt = null;
+  const snapshot = () => ({ row: store.get(paymentId), journal: store.journal(paymentId), audit: store.events(),
+    changes: store.db.prepare('SELECT total_changes() AS count').get()!.count });
+  const before = snapshot();
+  let receiptReads = 0, blockReads = 0;
+  const worker = service({
+    getTransactionReceipt: async (hash: string) => { receiptReads++; assert.equal(hash, txHash); return receipt; },
+    getBlock: async (number: number) => { blockReads++; assert.equal(number, 17); return canonical; }
+  });
+  await assert.rejects(worker.reconcile(), ReconciliationReceiptUnavailable);
+  assert.deepEqual(snapshot(), before);
+  assert.deepEqual({ receiptReads, blockReads }, { receiptReads: 1, blockReads: 1 });
+
+  receipt = restored;
+  const result = await worker.reconcile();
+  assert.equal(result.checked, 1);
+  assert.deepEqual(result.exceptions, []);
+  assert.deepEqual(snapshot(), before);
+  assert.deepEqual({ receiptReads, blockReads }, { receiptReads: 2, blockReads: 2 });
+});
+
 for (const [description, change] of [
-  ['missing receipt', () => { receipt = null; }],
+  ['a journal disagreement', () => {
+    store.db.prepare('UPDATE journals SET amount=? WHERE payment_id=?').run('1', paymentId);
+  }],
+  ['a missing journal', () => { store.db.prepare('DELETE FROM journals WHERE payment_id=?').run(paymentId); }],
+  ['a missing block', () => { canonical = null; }],
+  ['a different block height', () => { canonical.number = 18; }],
+  ['a different block hash', () => { canonical.hash = '0x' + '99'.repeat(32); }],
+  ['a block excluding the transaction', () => { canonical.transactions = ['0x' + '99'.repeat(32)]; }],
+  ['a malformed block transaction list', () => { canonical.transactions = { 0: txHash }; }]
+] as const) {
+  test('a missing receipt with ' + description + ' still triggers review', async () => {
+    receipt = null;
+    change();
+    await flagged();
+  });
+}
+
+for (const [description, change] of [
   ['different transaction hash', () => { receipt.hash = '0x' + '99'.repeat(32); }],
   ['missing transaction hash', () => { delete receipt.hash; }],
   ['different receipt block number', () => { receipt.blockNumber = 18; }],

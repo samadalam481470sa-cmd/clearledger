@@ -4,7 +4,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { resolve, extname } from 'node:path';
 import { z, ZodError } from 'zod';
 import { Conflict, JournalIntegrityError, PaginationError } from './store.ts';
-import { PaymentService } from './service.ts';
+import { ReconciliationReceiptUnavailable, type PaymentService } from './service.ts';
 import { activeAssetMetadata } from './assets.ts';
 import { type AssetMetadata } from '../shared/asset-metadata.ts';
 
@@ -146,6 +146,7 @@ export function makeServer(options: HttpOptions) {
     } catch (e: any) {
       const status = e instanceof Conflict ? 409 : e instanceof ZodError || e instanceof SyntaxError || e instanceof PaginationError ? 400 :
         e.code === 'ERR_SQLITE_ERROR' ? 500 :
+        e instanceof ReconciliationReceiptUnavailable ||
         e.code === 'NETWORK_ERROR' || e.code === 'SERVER_ERROR' || e.code === 'TIMEOUT' ? 503 : 422;
       json(res, status, { error: status === 500 ? 'Storage operation failed; check payment history before retrying' :
         status === 503 ? 'Upstream RPC unavailable; check payment history before retrying' :
