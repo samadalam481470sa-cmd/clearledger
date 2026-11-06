@@ -168,7 +168,7 @@ test('recovered mismatched raw bytes cannot be sent or release a later queued no
   completed = true;
 });
 
-test('a genuine existing receipt still confirms without retransmitting conflicting archived bytes', { timeout: 30000 }, async t => {
+test('a genuine receipt confirms and reconciliation flags the conflicting archived bytes', { timeout: 30000 }, async t => {
   const input = await signed(), original = await reserve(input);
   const other = await otherSignedTransaction(original.nonce);
   assert.notEqual(other.hash, original.hash);
@@ -189,9 +189,20 @@ test('a genuine existing receipt still confirms without retransmitting conflicti
   assert.equal(await chain.router.nonces(chain.payer.address), 1n);
   assert.equal(await chain.provider.getTransactionCount(chain.relayer.address, 'pending'), original.nonce + 1);
   assert.equal((await service.accept(input)).replay, true);
+  const journal = store!.journal(original.id);
+  const audit = store!.events();
+  const requests = proxy!.calls.length;
   const result = await service.reconcile();
-  assert.equal(result.checked, 1); assert.deepEqual(result.exceptions, []);
-  assert.equal(store!.events().length, 3); assert.equal(sends().length, 0);
-  t.diagnostic(JSON.stringify({ genuineReceiptConfirmations: 1, serviceSendAttempts: 0, journalRows: 1, reconciled: 1 }));
+  assert.equal(result.checked, 1); assert.deepEqual(result.exceptions, [original.id]);
+  const reviewed = store!.get(original.id)!;
+  assert.equal(reviewed.status, 'review');
+  assert.equal(reviewed.error, 'Stored settlement transaction is inconsistent; verify the original transaction and chain history');
+  assert.ok(reviewed.raw_tx === other.raw && reviewed.tx_hash === original.hash);
+  assert.deepEqual(store!.journal(original.id), journal);
+  assert.equal(store!.events()[0].action, 'review');
+  assert.deepEqual(store!.events().slice(1), audit);
+  assert.equal(proxy!.calls.length, requests);
+  assert.equal(sends().length, 0);
+  t.diagnostic(JSON.stringify({ genuineReceiptConfirmations: 1, serviceSendAttempts: 0, journalRows: 1, reviewed: 1 }));
   completed = true;
 });

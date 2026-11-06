@@ -1,14 +1,15 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { Interface, type JsonRpcProvider, type Wallet } from 'ethers';
+import { Interface, type JsonRpcProvider } from 'ethers';
 import { Store } from '../src/store.ts';
 import { PaymentService } from '../src/service.ts';
 import { digest, domain, type Payment } from '../src/payment.ts';
+import { fixtureRelayer, settleAbi, signedSettlement } from './fixtures/signed-settlement.ts';
 
 // Controlled SQLite/provider evidence, not executed EVM transfers.
 const routerAddress = '0x' + '44'.repeat(20), blockHash = '0x' + 'ee'.repeat(32);
 const signingDomain = domain(31337, routerAddress);
-const iface = new Interface(['event PaymentSettled(bytes32 indexed paymentId,address indexed payer,address indexed payee,address token,uint256 amount,uint256 nonce)']);
+const iface = new Interface([settleAbi, 'event PaymentSettled(bytes32 indexed paymentId,address indexed payer,address indexed payee,address token,uint256 amount,uint256 nonce)']);
 const hash = (n: number) => '0x' + n.toString(16).padStart(64, '0');
 let store: Store, payments: Map<string, Payment>, reads: number, blockReads: number, pages: number;
 beforeEach(() => {
@@ -26,8 +27,9 @@ function seed(n: number) {
   const p: Payment = { paymentId: hash(n), payer: '0x' + '11'.repeat(20), payee: '0x' + '22'.repeat(20),
     token: '0x' + '33'.repeat(20), amount: '125000000', nonce: String(n - 1), deadline: '2000000000' };
   const id = store.accept(p, digest(p, signingDomain), '0x01').row.id;
-  const tx = hash(1000 + n); payments.set(tx, p);
-  store.broadcast(id, 'synthetic-raw', tx); store.finalize(id, 17, blockHash);
+  const { raw, hash: tx } = signedSettlement(p, '0x01', routerAddress, n - 1);
+  payments.set(tx, p);
+  store.broadcast(id, raw, tx); store.finalize(id, 17, blockHash);
   return id;
 }
 function receipt(tx: string) {
@@ -41,7 +43,7 @@ function receipt(tx: string) {
 function service(read: (tx: string) => Promise<unknown>) {
   const provider = { getTransactionReceipt: async (tx: string) => { reads++; return read(tx); },
     getBlock: async () => { blockReads++; return { number: 17, hash: blockHash, transactions: [...payments.keys()] }; } };
-  return new PaymentService(store, provider as unknown as JsonRpcProvider, {} as Wallet,
+  return new PaymentService(store, provider as unknown as JsonRpcProvider, fixtureRelayer,
     { interface: iface, connect() { return this; } }, 31337, routerAddress);
 }
 function snapshot() {
@@ -96,8 +98,9 @@ test('a synchronous pre-await Store failure is shared and cannot poison future r
 test('a shared failed scan retains earlier review commits and a later scan starts with remaining settled rows', async () => {
   const oldest = seed(1), reviewed = seed(2), entered = deferred<void>(), gate = deferred<void>();
   const fault = new Error('Controlled later RPC failure'); let failing = true;
+  const reviewedHash = store.get(reviewed)!.tx_hash;
   const worker = service(async tx => {
-    if (failing && tx === hash(1002)) return null;
+    if (failing && tx === reviewedHash) return null;
     if (failing) { entered.resolve(); await gate.promise; throw fault; }
     return receipt(tx);
   });

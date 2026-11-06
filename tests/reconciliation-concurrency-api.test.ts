@@ -1,11 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { Interface, type JsonRpcProvider, type Wallet } from 'ethers';
+import { Interface, type JsonRpcProvider } from 'ethers';
 import { makeServer } from '../src/http.ts';
 import { digest, domain, type Payment } from '../src/payment.ts';
 import { PaymentService } from '../src/service.ts';
 import { Store } from '../src/store.ts';
+import { fixtureRelayer, settleAbi, signedSettlement } from './fixtures/signed-settlement.ts';
 
 // Real authenticated HTTP and SQLite, with synthetic canonical receipt/log
 // evidence. These checks do not execute EVM transactions or prove RPC transport.
@@ -13,10 +14,12 @@ const apiKey = 'reconciliation-concurrency-' + 'a'.repeat(32);
 const payer = '0x' + '11'.repeat(20), payee = '0x' + '22'.repeat(20);
 const token = '0x' + '33'.repeat(20), routerAddress = '0x' + '44'.repeat(20);
 const signingDomain = domain(31337, routerAddress);
-const blockHash = '0x' + '55'.repeat(32), txHash = '0x' + '66'.repeat(32);
+const blockHash = '0x' + '55'.repeat(32);
 const payment: Payment = { paymentId: '0x' + '77'.repeat(32), payer, payee, token,
   amount: '125000000', nonce: '0', deadline: '2000000000' };
+const { raw, hash: txHash } = signedSettlement(payment, '0x01', routerAddress, 0);
 const iface = new Interface([
+  settleAbi,
   'event PaymentSettled(bytes32 indexed paymentId,address indexed payer,address indexed payee,address token,uint256 amount,uint256 nonce)'
 ]);
 const receipt = { hash: txHash, index: 0, status: 1, blockNumber: 17, blockHash, logs: [
@@ -63,7 +66,7 @@ async function fixture(run: (context: Awaited<ReturnType<typeof createContext>>)
 async function createContext() {
   const store = new Store(), gate = deferred<typeof receipt>(), receiptEntered = deferred<void>();
   const paymentId = store.accept(payment, digest(payment, signingDomain), '0x01').row.id;
-  store.broadcast(paymentId, 'synthetic-signed-bytes', txHash);
+  store.broadcast(paymentId, raw, txHash);
   store.finalize(paymentId, 17, blockHash);
   let hold = true, receiptReads = 0, blockReads = 0, invocations = 0;
   const callsEntered = Array.from({ length: 5 }, () => deferred<void>());
@@ -75,7 +78,7 @@ async function createContext() {
     getBlock: async () => { blockReads++; return { number: 17, hash: blockHash, transactions: [txHash] }; }
   };
   const router = { interface: iface, connect() { return this; } };
-  const service = new PaymentService(store, provider as unknown as JsonRpcProvider, {} as Wallet,
+  const service = new PaymentService(store, provider as unknown as JsonRpcProvider, fixtureRelayer,
     router, 31337, routerAddress);
   const results: Awaited<ReturnType<PaymentService['reconcile']>>[] = [];
   const reconcile = service.reconcile.bind(service);

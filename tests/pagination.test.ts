@@ -1,11 +1,12 @@
 import { beforeEach, afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { getAddress, Interface, type JsonRpcProvider, type Wallet } from 'ethers';
+import { getAddress, Interface, type JsonRpcProvider } from 'ethers';
 import { Store, type Status } from '../src/store.ts';
 import { PaymentService } from '../src/service.ts';
 import { makeServer } from '../src/http.ts';
 import { digest, domain, type Payment } from '../src/payment.ts';
+import { fixtureRelayer, settleAbi, signedSettlement } from './fixtures/signed-settlement.ts';
 
 // Synthetic projection records test pagination/accounting, not EVM settlement.
 const payer = '0x' + '11'.repeat(20);
@@ -16,11 +17,18 @@ const blockHash = '0x' + 'ee'.repeat(32);
 const routerAddress = '0x' + '44'.repeat(20);
 const signingDomain = domain(31337, routerAddress);
 const settlementInterface = new Interface([
+  settleAbi,
   'event PaymentSettled(bytes32 indexed paymentId,address indexed payer,address indexed payee,address token,uint256 amount,uint256 nonce)'
 ]);
 const hash = (n: number) => '0x' + n.toString(16).padStart(64, '0');
+const paymentIdsByHash = new Map<string, string>();
+const transactionsByBlock = new Map<number, string[]>();
 let store: Store;
-beforeEach(() => { store = new Store(); });
+beforeEach(() => {
+  store = new Store();
+  paymentIdsByHash.clear();
+  transactionsByBlock.clear();
+});
 afterEach(() => { store.close(); });
 
 function seed(n: number, status: Status = 'queued', amount = '1000000', token = tokenA, reconcile = false) {
@@ -31,8 +39,14 @@ function seed(n: number, status: Status = 'queued', amount = '1000000', token = 
   const signature = reconcile ? '0x01' : 'private-signature-' + n;
   const row = store.accept(payment, fingerprint, signature).row;
   if (status === 'settled' || status === 'review' || status === 'broadcast') {
-    store.broadcast(row.id, 'private-raw-transaction-' + n, hash(100000 + n));
+    const { raw, hash: txHash } = reconcile ? signedSettlement(payment, signature, routerAddress, n - 1)
+      : { raw: 'private-raw-transaction-' + n, hash: hash(100000 + n) };
+    store.broadcast(row.id, raw, txHash);
     if (status !== 'broadcast') store.finalize(row.id, n, blockHash);
+    if (reconcile) {
+      paymentIdsByHash.set(txHash, row.id);
+      transactionsByBlock.set(n, [txHash]);
+    }
   }
   if (status === 'review' || status === 'failed') store.setStatus(row.id, status, 'Synthetic fixture status');
   return store.get(row.id)!;
@@ -41,10 +55,9 @@ function seedForReconciliation(n: number) {
   return seed(n, 'settled', '1000000', tokenA, true);
 }
 function coherentReceipt(tx: string) {
-  // Synthetic transaction IDs encode the fixture number, avoiding an unindexed
-  // scan per receipt in the >10,000-record traversal test.
-  const n = Number(BigInt(tx) - 100000n);
-  const row = store.get(payer.toLowerCase() + ':' + hash(n));
+  const id = paymentIdsByHash.get(tx);
+  if (id === undefined) return null;
+  const row = store.get(id);
   if (!row || row.tx_hash !== tx) return null;
   const payment = JSON.parse(row.payload) as Payment;
   const log = settlementInterface.encodeEventLog(settlementInterface.getEvent('PaymentSettled')!,
@@ -58,13 +71,13 @@ function readService(overrides: Record<string, unknown> = {}) {
     getBlockNumber: async () => 12345,
     getBlock: async (number: number | string) => ({
       hash: blockHash, number: typeof number === 'number' ? number : 12345, timestamp: 1800000000,
-      transactions: typeof number === 'number' ? [hash(100000 + number)] : []
+      transactions: typeof number === 'number' ? transactionsByBlock.get(number) ?? [] : []
     }),
     getTransactionReceipt: async (tx: string) => coherentReceipt(tx),
     ...overrides
   };
   const router = { interface: settlementInterface, connect() { return this; } };
-  return new PaymentService(store, provider as unknown as JsonRpcProvider, {} as Wallet,
+  return new PaymentService(store, provider as unknown as JsonRpcProvider, fixtureRelayer,
     router, 31337, routerAddress);
 }
 async function withApi(action: (url: string, headers: Record<string, string>) => Promise<void>) {
@@ -233,23 +246,20 @@ test('overview bounds payment and journal previews to the latest 100 rows', asyn
 });
 
 test('reconciliation reaches old settlements beyond the previous 10000-record cutoff', async () => {
-  let oldest = '';
-  for (let i = 1; i <= 10005; i++) {
-    const row = seedForReconciliation(i);
-    if (i === 1) oldest = row.id;
-  }
+  const oldest = seedForReconciliation(1);
+  for (let i = 2; i <= 10005; i++) seedForReconciliation(i);
   let checked = 0;
   const service = readService({
     getTransactionReceipt: async (tx: string) => {
       checked++;
-      return tx === hash(100001) ? null : coherentReceipt(tx);
+      return tx === oldest.tx_hash ? null : coherentReceipt(tx);
     }
   });
   const result = await service.reconcile();
   assert.equal(result.checked, 10005);
   assert.equal(checked, 10005);
-  assert.deepEqual(result.exceptions, [oldest]);
-  assert.equal(store.get(oldest)!.status, 'review');
+  assert.deepEqual(result.exceptions, [oldest.id]);
+  assert.equal(store.get(oldest.id)!.status, 'review');
 });
 
 test('reconciliation freezes its upper rowid while new settled records arrive', async () => {

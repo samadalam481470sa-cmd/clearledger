@@ -1,9 +1,10 @@
 import { beforeEach, afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Interface, type JsonRpcProvider, type Wallet } from 'ethers';
+import { Interface, keccak256, type JsonRpcProvider } from 'ethers';
 import { Store } from '../src/store.ts';
 import { PaymentService } from '../src/service.ts';
 import { digest, domain, type Payment } from '../src/payment.ts';
+import { fixtureRelayer, settleAbi, signedSettlement } from './fixtures/signed-settlement.ts';
 
 // Synthetic receipt/projection fixtures exercise integrity decisions, not EVM execution.
 const payer = '0x' + '11'.repeat(20);
@@ -11,15 +12,18 @@ const payee = '0x' + '22'.repeat(20);
 const token = '0x' + '33'.repeat(20);
 const routerAddress = '0x' + '44'.repeat(20);
 const blockHash = '0x' + '55'.repeat(32);
-const txHash = '0x' + '66'.repeat(32);
 const iface = new Interface([
+  settleAbi,
   'event PaymentSettled(bytes32 indexed paymentId,address indexed payer,address indexed payee,address token,uint256 amount,uint256 nonce)',
   'event Unrelated(uint256 value)'
 ]);
 const payment: Payment = { paymentId: '0x' + 'ab'.repeat(32), payer, payee, token,
   amount: '125000000', nonce: '0', deadline: '2000000000' };
-const fingerprint = digest(payment, domain(31337, routerAddress));
+const signingDomain = domain(31337, routerAddress);
+const fingerprint = digest(payment, signingDomain);
+const { raw: rawTx, hash: txHash } = signedSettlement(payment, '0x', routerAddress, 0);
 const authorizationError = 'Stored settlement authorization is inconsistent; verify the original authorization and chain history';
+const transactionError = 'Stored settlement transaction is inconsistent; verify the original transaction and chain history';
 let store: Store;
 let paymentId: string;
 let receipt: any;
@@ -27,7 +31,7 @@ let canonical: any;
 beforeEach(() => {
   store = new Store();
   paymentId = store.accept(payment, fingerprint, '0x').row.id;
-  store.broadcast(paymentId, 'synthetic-signed-bytes', txHash);
+  store.broadcast(paymentId, rawTx, txHash);
   store.finalize(paymentId, 17, blockHash);
   receipt = { hash: txHash, index: 0, blockNumber: 17, status: 1, blockHash, logs: [settlementLog()] };
   canonical = { number: 17, hash: blockHash, transactions: [txHash] };
@@ -47,7 +51,7 @@ function service(overrides: Record<string, unknown> = {}) {
     ...overrides
   };
   const router = { interface: iface, connect() { return this; } };
-  return new PaymentService(store, provider as unknown as JsonRpcProvider, {} as Wallet,
+  return new PaymentService(store, provider as unknown as JsonRpcProvider, fixtureRelayer,
     router, 31337, routerAddress);
 }
 async function flagged() {
@@ -63,7 +67,7 @@ async function flagged() {
   assert.equal(store.events().filter(event => event.action === 'review').length, 1);
 }
 
-async function authorizationFlagged() {
+async function locallyFlagged(error: string) {
   const before = { row: store.get(paymentId)!, journal: store.journal(paymentId), audit: store.events() };
   let rpcReads = 0;
   const reconciling = service({
@@ -75,13 +79,13 @@ async function authorizationFlagged() {
   assert.deepEqual(result.exceptions, [paymentId]);
   assert.equal(rpcReads, 0);
   const reviewed = store.get(paymentId)!;
-  assert.deepEqual(reviewed, { ...before.row, status: 'review', error: authorizationError, updated_at: reviewed.updated_at });
+  assert.deepEqual(reviewed, { ...before.row, status: 'review', error, updated_at: reviewed.updated_at });
   assert.deepEqual(store.journal(paymentId), before.journal);
   const audit = store.events();
   assert.deepEqual(audit.slice(1), before.audit);
   assert.equal(audit[0].payment_id, paymentId);
   assert.equal(audit[0].action, 'review');
-  assert.equal(audit[0].detail, authorizationError);
+  assert.equal(audit[0].detail, error);
   const repeat = await reconciling.reconcile();
   assert.equal(repeat.checked, 0);
   assert.deepEqual(repeat.exceptions, []);
@@ -93,7 +97,7 @@ async function authorizationFlagged() {
 test('changed stored deadline omitted from the event is reviewed locally', async () => {
   store.db.prepare('UPDATE payments SET payload=? WHERE id=?')
     .run(JSON.stringify({ ...payment, deadline: '2000000001' }), paymentId);
-  await authorizationFlagged();
+  await locallyFlagged(authorizationError);
 });
 
 for (const [description, field, value] of [
@@ -104,15 +108,51 @@ for (const [description, field, value] of [
 ] as const) {
   test(description + ' is reviewed before any RPC query', async () => {
     store.db.prepare('UPDATE payments SET ' + field + '=? WHERE id=?').run(value, paymentId);
-    await authorizationFlagged();
+    await locallyFlagged(authorizationError);
   });
 }
+
+for (const [description, raw] of [
+  ['missing archived transaction', null],
+  ['malformed archived bytes', '0x123'],
+  ['different signed transaction', signedSettlement(payment, '0x', routerAddress, 1).raw]
+] as const) {
+  test(description + ' is reviewed before any RPC query', async () => {
+    store.db.prepare('UPDATE payments SET raw_tx=? WHERE id=?').run(raw, paymentId);
+    await locallyFlagged(transactionError);
+  });
+}
+
+test('hash-coherent undecodable archived bytes are reviewed before any RPC query', async () => {
+  const raw = '0x00';
+  const hash = keccak256(raw);
+  store.db.prepare('UPDATE payments SET raw_tx=?,tx_hash=? WHERE id=?').run(raw, hash, paymentId);
+  store.db.prepare('UPDATE journals SET tx_hash=? WHERE payment_id=?').run(hash, paymentId);
+  await locallyFlagged(transactionError);
+});
+
+test('a different well-formed stored signature disagrees with archived calldata', async () => {
+  store.db.prepare('UPDATE payments SET signature=? WHERE id=?').run('0x0123Abcd', paymentId);
+  await locallyFlagged(transactionError);
+});
+
+test('rewriting the saved deadline and fingerprint together disagrees with archived calldata', async () => {
+  const changed = { ...payment, deadline: '2000000001' };
+  store.db.prepare('UPDATE payments SET payload=?,fingerprint=? WHERE id=?')
+    .run(JSON.stringify(changed), digest(changed, signingDomain), paymentId);
+  await locallyFlagged(transactionError);
+});
 
 for (const signature of ['0x', '0x0123Abcd']) {
   test('mixed-case fingerprint and opaque signature ' + signature + ' remain settled', async () => {
     const mixedCase = '0x' + fingerprint.slice(2, 34).toUpperCase() + fingerprint.slice(34);
     assert.notEqual(mixedCase, fingerprint);
-    store.db.prepare('UPDATE payments SET fingerprint=?,signature=? WHERE id=?').run(mixedCase, signature, paymentId);
+    const { raw, hash } = signedSettlement(payment, signature, routerAddress, 0);
+    store.db.prepare('UPDATE payments SET fingerprint=?,signature=?,raw_tx=?,tx_hash=? WHERE id=?')
+      .run(mixedCase, signature, raw, hash, paymentId);
+    store.db.prepare('UPDATE journals SET tx_hash=? WHERE payment_id=?').run(hash, paymentId);
+    receipt = { ...receipt, hash, logs: [{ ...settlementLog(), transactionHash: hash }] };
+    canonical.transactions = [hash];
     const before = { row: store.get(paymentId), journal: store.journal(paymentId), audit: store.events() };
     const result = await service().reconcile();
     assert.equal(result.checked, 1);
@@ -258,15 +298,15 @@ test('a genuine matching settlement remains valid alongside unrelated or malform
 });
 
 test('valid receipt and canonical hash hex casing does not create a false integrity exception', async () => {
-  const transaction = '0x' + 'ab'.repeat(32);
+  const transaction = '0x' + txHash.slice(2).toUpperCase();
   const recordedBlock = '0x' + 'cd'.repeat(32);
   store.db.prepare('UPDATE payments SET tx_hash=?,block_hash=? WHERE id=?').run(transaction, recordedBlock, paymentId);
   store.db.prepare('UPDATE journals SET tx_hash=?,block_hash=? WHERE payment_id=?').run(transaction, recordedBlock, paymentId);
-  receipt = { ...receipt, index: 1, hash: '0x' + 'AB'.repeat(32), blockHash: '0x' + 'CD'.repeat(32) };
+  receipt = { ...receipt, index: 1, hash: txHash, blockHash: '0x' + 'CD'.repeat(32) };
   receipt.logs = receipt.logs.map((log: any) => ({ ...log,
-    transactionIndex: 1, transactionHash: '0x' + 'aB'.repeat(32), blockHash: '0x' + 'cD'.repeat(32) }));
+    transactionIndex: 1, transactionHash: transaction, blockHash: '0x' + 'cD'.repeat(32) }));
   canonical = { ...canonical, hash: '0x' + 'CD'.repeat(32),
-    transactions: ['0x' + '99'.repeat(32), '0x' + 'AB'.repeat(32)] };
+    transactions: ['0x' + '99'.repeat(32), txHash] };
   const before = { row: store.get(paymentId), journal: store.journal(paymentId), audit: store.events() };
   const result = await service().reconcile();
   assert.deepEqual(result.exceptions, []);

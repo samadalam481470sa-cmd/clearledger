@@ -130,12 +130,14 @@ export class PaymentService {
     this.store.broadcast(row.id, raw, keccak256(raw));
   }
 
-  private recoveryEnvelopeMatches(row: RecordRow): boolean {
-    if (!Number.isSafeInteger(this.chainId) || this.chainId < 1) return false;
-    const p = this.storedPayment(row);
+  private storedEnvelopeMatches(row: RecordRow, payment?: Payment): boolean {
+    if (!Number.isSafeInteger(this.chainId) || this.chainId < 1 || !isHash(row.tx_hash) ||
+      typeof row.raw_tx !== 'string' || !/^0x(?:[0-9a-fA-F]{2})+$/.test(row.raw_tx) ||
+      !sameHash(keccak256(row.raw_tx), row.tx_hash)) return false;
+    const p = payment ?? this.storedPayment(row);
     if (!p) return false;
     try {
-      const transaction = Transaction.from(row.raw_tx!);
+      const transaction = Transaction.from(row.raw_tx);
       // Ordinary signed calls only: blob/delegation envelopes have additional
       // effects that are not part of the persisted payment authorization.
       return [0, 1, 2].includes(transaction.type!) && transaction.isSigned() &&
@@ -152,9 +154,7 @@ export class PaymentService {
     if (!receipt) {
       // Recovery may only resend the exact bytes identified by the reservation.
       // A broken binding retains nonce priority; it cannot authorize another send.
-      if (typeof row.raw_tx !== 'string' || !/^0x(?:[0-9a-fA-F]{2})+$/.test(row.raw_tx) ||
-        !sameHash(keccak256(row.raw_tx), row.tx_hash)) return;
-      if (!this.recoveryEnvelopeMatches(row)) return;
+      if (!this.storedEnvelopeMatches(row)) return;
       try { await this.provider.broadcastTransaction(row.raw_tx!); }
       catch { /* already known, connection loss, or uncertain outcome: inspect hash */ }
       receipt = await this.provider.getTransactionReceipt(row.tx_hash);
@@ -239,8 +239,9 @@ export class PaymentService {
       for (const row of page.items) {
         checked++;
         const p = this.storedPayment(row);
+        const envelopeMatches = p && this.storedEnvelopeMatches(row, p);
         let matches = false;
-        if (p && isHash(row.tx_hash) && isHash(row.block_hash) &&
+        if (p && envelopeMatches && isHash(row.tx_hash) && isHash(row.block_hash) &&
           Number.isSafeInteger(row.block_number) && row.block_number! >= 0) {
           // RPC errors abort the scan; unavailable transport is not evidence of corruption.
           const receipt = await this.provider.getTransactionReceipt(row.tx_hash);
@@ -258,9 +259,12 @@ export class PaymentService {
         }
         if (!matches) {
           exceptions.push(row.id);
-          this.store.setStatus(row.id, 'review', p
-            ? 'Recorded settlement no longer matches canonical receipt and journal'
-            : 'Stored settlement authorization is inconsistent; verify the original authorization and chain history');
+          const error = !p
+            ? 'Stored settlement authorization is inconsistent; verify the original authorization and chain history'
+            : !envelopeMatches
+              ? 'Stored settlement transaction is inconsistent; verify the original transaction and chain history'
+              : 'Recorded settlement no longer matches canonical receipt and journal';
+          this.store.setStatus(row.id, 'review', error);
         }
       }
       cursor = page.nextCursor ?? undefined;

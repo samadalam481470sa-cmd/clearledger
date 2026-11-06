@@ -7,7 +7,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { id, parseUnits, Wallet, keccak256, type JsonRpcProvider } from 'ethers';
 import { compile } from '../scripts/compile.ts';
 import { localChain } from '../scripts/local-chain.ts';
-import { domain, paymentTypes, paymentSchema, type Payment } from '../src/payment.ts';
+import { digest, domain, paymentTypes, paymentSchema, type Payment } from '../src/payment.ts';
 import { Store, Conflict } from '../src/store.ts';
 import { PaymentService } from '../src/service.ts';
 import { makeServer } from '../src/http.ts';
@@ -286,7 +286,9 @@ test('reconciliation flags a corrupt journal after genuine EVM settlement withou
   assert.equal(store.journals().length, 1);
   assert.equal(await chain.token.balanceOf(chain.payee.address), balance);
 });
-test('reconciliation detects a changed authorization deadline after genuine EVM settlement', async t => {
+for (const rewriteFingerprint of [false, true]) test(rewriteFingerprint
+  ? 'reconciliation detects a coherently rewritten deadline and fingerprint after genuine EVM settlement'
+  : 'reconciliation detects a changed authorization deadline after genuine EVM settlement', async t => {
   const first = await settled(await signed());
   const second = await settled(await signed({ amount: '7000000' }));
   assert.equal(first.status, 'settled');
@@ -299,17 +301,21 @@ test('reconciliation detects a changed authorization deadline after genuine EVM 
   assert.ok(receipt?.status === 1);
   const relayerNonce = await chain.provider.getTransactionCount(chain.relayer.address, 'pending');
   const original: Payment = JSON.parse(first.payload);
-  const payload = JSON.stringify({ ...original, deadline: String(BigInt(original.deadline) + 1n) });
-  store.db.prepare('UPDATE payments SET payload=? WHERE id=?').run(payload, first.id);
+  const changed = { ...original, deadline: String(BigInt(original.deadline) + 1n) };
+  const payload = JSON.stringify(changed);
+  const fingerprint = rewriteFingerprint ? digest(changed, service.signingDomain) : first.fingerprint;
+  store.db.prepare('UPDATE payments SET payload=?,fingerprint=? WHERE id=?').run(payload, fingerprint, first.id);
 
   const result = await service.reconcile();
-  t.diagnostic(JSON.stringify({ healthyChecked: healthy.checked, checked: result.checked,
+  t.diagnostic(JSON.stringify({ rewriteFingerprint, healthyChecked: healthy.checked, checked: result.checked,
     exceptions: result.exceptions.length, retainedJournals: store.journals().length }));
   assert.equal(result.checked, 2);
   assert.deepEqual(result.exceptions, [first.id]);
   const reviewed = store.get(first.id)!;
-  assert.ok(isDeepStrictEqual(reviewed, { ...first, payload, status: 'review',
-    error: 'Stored settlement authorization is inconsistent; verify the original authorization and chain history',
+  const error = rewriteFingerprint
+    ? 'Stored settlement transaction is inconsistent; verify the original transaction and chain history'
+    : 'Stored settlement authorization is inconsistent; verify the original authorization and chain history';
+  assert.ok(isDeepStrictEqual(reviewed, { ...first, payload, fingerprint, status: 'review', error,
     updated_at: reviewed.updated_at }), 'Review must retain all stored evidence');
   assert.ok(isDeepStrictEqual(store.get(second.id), second), 'The unaffected payment must remain unchanged');
   assert.deepEqual(store.journals(), journals);

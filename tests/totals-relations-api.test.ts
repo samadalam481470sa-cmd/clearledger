@@ -1,12 +1,13 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { getAddress, Interface, type JsonRpcProvider, type Wallet } from 'ethers';
+import { getAddress, Interface, type JsonRpcProvider } from 'ethers';
 import { makeServer } from '../src/http.ts';
 import { digest, domain, type Payment } from '../src/payment.ts';
 import { PaymentService } from '../src/service.ts';
 import { Store } from '../src/store.ts';
 import { emptyTotals, reduceTotals, totalsCounts } from '../web/totals.ts';
+import { fixtureRelayer, settleAbi, signedSettlement } from './fixtures/signed-settlement.ts';
 
 // Authenticated HTTP and real SQLite with synthetic canonical receipt evidence.
 // These tests do not execute EVM transfers, mount React, or establish browser UI.
@@ -17,6 +18,7 @@ const tokenA = getAddress('0x' + 'ab'.repeat(20)), tokenB = getAddress('0x' + 'c
 const blockHash = '0x' + 'ee'.repeat(32), routerAddress = '0x' + '44'.repeat(20);
 const signingDomain = domain(31337, routerAddress);
 const iface = new Interface([
+  settleAbi,
   'event PaymentSettled(bytes32 indexed paymentId,address indexed payer,address indexed payee,address token,uint256 amount,uint256 nonce)'
 ]);
 const expected = { assets: [
@@ -24,19 +26,21 @@ const expected = { assets: [
   { token: tokenB.toLowerCase(), settledPayments: 1, settledBaseUnits: '7000000', reviewPayments: 0, reviewBaseUnits: '0' }
 ] };
 const fixtureTransactionHash = (n: number) => '0x' + (1000 + n).toString(16).padStart(64, '0');
+const transactionsByBlock = new Map<number, string[]>();
 let store: Store, server: ReturnType<typeof makeServer>, url: string, rpcCalls: number;
 let receipts: Map<string, unknown>;
 beforeEach(async () => {
   store = new Store(); receipts = new Map(); rpcCalls = 0;
+  transactionsByBlock.clear();
   const provider = {
     getTransactionReceipt: async (hash: string) => { rpcCalls++; return receipts.get(hash) ?? null; },
     getBlock: async (number: number) => {
       rpcCalls++;
-      return { number, hash: blockHash, transactions: [fixtureTransactionHash(number)] };
+      return { number, hash: blockHash, transactions: transactionsByBlock.get(number) ?? [] };
     }
   };
   const router = { interface: iface, connect() { return this; } };
-  const service = new PaymentService(store, provider as unknown as JsonRpcProvider, {} as Wallet,
+  const service = new PaymentService(store, provider as unknown as JsonRpcProvider, fixtureRelayer,
     router, 31337, routerAddress);
   server = makeServer({ service, apiKey, port: 0, mode: 'rpc' });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
@@ -53,8 +57,10 @@ function seed(n: number, asset = tokenA, amount = '125000000', reconcile = false
   const fingerprint = reconcile ? digest(payment, signingDomain) : privateMarker + '_fingerprint';
   const signature = reconcile ? '0x01' : privateMarker + '_signature';
   const row = store.accept(payment, fingerprint, signature).row;
-  const hash = fixtureTransactionHash(n);
-  store.broadcast(row.id, privateMarker + '_raw', hash); store.finalize(row.id, n, blockHash);
+  const { raw, hash } = reconcile ? signedSettlement(payment, signature, routerAddress, n - 1)
+    : { raw: privateMarker + '_raw', hash: fixtureTransactionHash(n) };
+  store.broadcast(row.id, raw, hash); store.finalize(row.id, n, blockHash);
+  transactionsByBlock.set(n, [hash]);
   const log = iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
     [payment.paymentId, payment.payer, payment.payee, payment.token, payment.amount, payment.nonce]);
   receipts.set(hash, { hash, index: 0, blockNumber: n, blockHash, status: 1,
