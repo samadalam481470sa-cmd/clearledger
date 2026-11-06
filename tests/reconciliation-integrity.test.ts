@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { Interface, type JsonRpcProvider, type Wallet } from 'ethers';
 import { Store } from '../src/store.ts';
 import { PaymentService } from '../src/service.ts';
-import { type Payment } from '../src/payment.ts';
+import { digest, domain, type Payment } from '../src/payment.ts';
 
 // Synthetic receipt/projection fixtures exercise integrity decisions, not EVM execution.
 const payer = '0x' + '11'.repeat(20);
@@ -16,15 +16,17 @@ const iface = new Interface([
   'event PaymentSettled(bytes32 indexed paymentId,address indexed payer,address indexed payee,address token,uint256 amount,uint256 nonce)',
   'event Unrelated(uint256 value)'
 ]);
-const payment: Payment = { paymentId: '0x' + '77'.repeat(32), payer, payee, token,
+const payment: Payment = { paymentId: '0x' + 'ab'.repeat(32), payer, payee, token,
   amount: '125000000', nonce: '0', deadline: '2000000000' };
+const fingerprint = digest(payment, domain(31337, routerAddress));
+const authorizationError = 'Stored settlement authorization is inconsistent; verify the original authorization and chain history';
 let store: Store;
 let paymentId: string;
 let receipt: any;
 let canonical: any;
 beforeEach(() => {
   store = new Store();
-  paymentId = store.accept(payment, 'synthetic-fingerprint', 'synthetic-signature').row.id;
+  paymentId = store.accept(payment, fingerprint, '0x').row.id;
   store.broadcast(paymentId, 'synthetic-signed-bytes', txHash);
   store.finalize(paymentId, 17, blockHash);
   receipt = { hash: txHash, index: 0, blockNumber: 17, status: 1, blockHash, logs: [settlementLog()] };
@@ -59,6 +61,64 @@ async function flagged() {
   assert.deepEqual(reviewed, { ...beforeRow, status: 'review', error: reviewed.error, updated_at: reviewed.updated_at });
   assert.deepEqual(store.journal(paymentId), beforeJournal, 'Integrity review must preserve the existing journal evidence');
   assert.equal(store.events().filter(event => event.action === 'review').length, 1);
+}
+
+async function authorizationFlagged() {
+  const before = { row: store.get(paymentId)!, journal: store.journal(paymentId), audit: store.events() };
+  let rpcReads = 0;
+  const reconciling = service({
+    getTransactionReceipt: async () => { rpcReads++; return receipt; },
+    getBlock: async () => { rpcReads++; return canonical; }
+  });
+  const result = await reconciling.reconcile();
+  assert.equal(result.checked, 1);
+  assert.deepEqual(result.exceptions, [paymentId]);
+  assert.equal(rpcReads, 0);
+  const reviewed = store.get(paymentId)!;
+  assert.deepEqual(reviewed, { ...before.row, status: 'review', error: authorizationError, updated_at: reviewed.updated_at });
+  assert.deepEqual(store.journal(paymentId), before.journal);
+  const audit = store.events();
+  assert.deepEqual(audit.slice(1), before.audit);
+  assert.equal(audit[0].payment_id, paymentId);
+  assert.equal(audit[0].action, 'review');
+  assert.equal(audit[0].detail, authorizationError);
+  const repeat = await reconciling.reconcile();
+  assert.equal(repeat.checked, 0);
+  assert.deepEqual(repeat.exceptions, []);
+  assert.equal(rpcReads, 0);
+  assert.deepEqual({ row: store.get(paymentId), journal: store.journal(paymentId), audit: store.events() },
+    { row: reviewed, journal: before.journal, audit });
+}
+
+test('changed stored deadline omitted from the event is reviewed locally', async () => {
+  store.db.prepare('UPDATE payments SET payload=? WHERE id=?')
+    .run(JSON.stringify({ ...payment, deadline: '2000000001' }), paymentId);
+  await authorizationFlagged();
+});
+
+for (const [description, field, value] of [
+  ['a fingerprint from another chain', 'fingerprint', digest(payment, domain(31338, routerAddress))],
+  ['a malformed fingerprint', 'fingerprint', '0x1234'],
+  ['a malformed stored signature', 'signature', '0x123'],
+  ['a payment ID that only matches after normalization', 'payload', JSON.stringify({ ...payment, paymentId: '0x' + 'AB'.repeat(32) })]
+] as const) {
+  test(description + ' is reviewed before any RPC query', async () => {
+    store.db.prepare('UPDATE payments SET ' + field + '=? WHERE id=?').run(value, paymentId);
+    await authorizationFlagged();
+  });
+}
+
+for (const signature of ['0x', '0x0123Abcd']) {
+  test('mixed-case fingerprint and opaque signature ' + signature + ' remain settled', async () => {
+    const mixedCase = '0x' + fingerprint.slice(2, 34).toUpperCase() + fingerprint.slice(34);
+    assert.notEqual(mixedCase, fingerprint);
+    store.db.prepare('UPDATE payments SET fingerprint=?,signature=? WHERE id=?').run(mixedCase, signature, paymentId);
+    const before = { row: store.get(paymentId), journal: store.journal(paymentId), audit: store.events() };
+    const result = await service().reconcile();
+    assert.equal(result.checked, 1);
+    assert.deepEqual(result.exceptions, []);
+    assert.deepEqual({ row: store.get(paymentId), journal: store.journal(paymentId), audit: store.events() }, before);
+  });
 }
 
 test('the reserved hash at a different canonical transaction slot is reviewed', async () => {

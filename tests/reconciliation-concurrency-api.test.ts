@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { Interface, type JsonRpcProvider, type Wallet } from 'ethers';
 import { makeServer } from '../src/http.ts';
-import { type Payment } from '../src/payment.ts';
+import { digest, domain, type Payment } from '../src/payment.ts';
 import { PaymentService } from '../src/service.ts';
 import { Store } from '../src/store.ts';
 
@@ -12,6 +12,7 @@ import { Store } from '../src/store.ts';
 const apiKey = 'reconciliation-concurrency-' + 'a'.repeat(32);
 const payer = '0x' + '11'.repeat(20), payee = '0x' + '22'.repeat(20);
 const token = '0x' + '33'.repeat(20), routerAddress = '0x' + '44'.repeat(20);
+const signingDomain = domain(31337, routerAddress);
 const blockHash = '0x' + '55'.repeat(32), txHash = '0x' + '66'.repeat(32);
 const payment: Payment = { paymentId: '0x' + '77'.repeat(32), payer, payee, token,
   amount: '125000000', nonce: '0', deadline: '2000000000' };
@@ -61,7 +62,7 @@ async function fixture(run: (context: Awaited<ReturnType<typeof createContext>>)
 }
 async function createContext() {
   const store = new Store(), gate = deferred<typeof receipt>(), receiptEntered = deferred<void>();
-  const paymentId = store.accept(payment, 'synthetic-fingerprint', 'synthetic-signature').row.id;
+  const paymentId = store.accept(payment, digest(payment, signingDomain), '0x01').row.id;
   store.broadcast(paymentId, 'synthetic-signed-bytes', txHash);
   store.finalize(paymentId, 17, blockHash);
   let hold = true, receiptReads = 0, blockReads = 0, invocations = 0;

@@ -71,6 +71,8 @@ npm run build
 npm run source:count
 ```
 
+Reconciliation now compares each settled payment’s saved authorization with its EIP-712 fingerprint before checking the chain. A Ganache regression changed only the stored deadline and verified that review retained the original signed transaction and journal. Linux CI and Besu acceptance are pending. [Verification evidence](STATUS.md#reconciliation-authorization-consistency).
+
 Totals now require each posted journal's asset, payer, payee and amount to match the saved payment. Authenticated HTTP tests caught valid-looking mismatches and unreadable transfer data, then restored exact totals after explicit fixture repair. Linux CI passed all 1,029 tests, and four-validator Besu acceptance passed. [Verification evidence](STATUS.md#journal-transfer-field-consistency) · [Linux CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42210601302) · [Besu acceptance](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42210601232).
 
 Totals now become unavailable when a payment and its journal share malformed transaction or block metadata. The authenticated HTTP regressions verified that the client clears cached counts and restores exact totals after the fixture is repaired. Linux CI passed all 1,005 tests, and four-validator Besu acceptance passed. [Verification evidence](STATUS.md#journal-inclusion-metadata-shape) · [Linux CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42206564497) · [Besu acceptance](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42206564413).

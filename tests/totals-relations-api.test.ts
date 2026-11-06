@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { getAddress, Interface, type JsonRpcProvider, type Wallet } from 'ethers';
 import { makeServer } from '../src/http.ts';
-import { type Payment } from '../src/payment.ts';
+import { digest, domain, type Payment } from '../src/payment.ts';
 import { PaymentService } from '../src/service.ts';
 import { Store } from '../src/store.ts';
 import { emptyTotals, reduceTotals, totalsCounts } from '../web/totals.ts';
@@ -15,6 +15,7 @@ const privateMarker = 'PRIVATE_TOTALS_RELATION_EVIDENCE';
 const unavailable = { assets: null, integrityError: 'Stored journal data is invalid; totals are unavailable' } as const;
 const tokenA = getAddress('0x' + 'ab'.repeat(20)), tokenB = getAddress('0x' + 'cd'.repeat(20));
 const blockHash = '0x' + 'ee'.repeat(32), routerAddress = '0x' + '44'.repeat(20);
+const signingDomain = domain(31337, routerAddress);
 const iface = new Interface([
   'event PaymentSettled(bytes32 indexed paymentId,address indexed payer,address indexed payee,address token,uint256 amount,uint256 nonce)'
 ]);
@@ -46,10 +47,12 @@ afterEach(async () => {
   if (server.listening) await new Promise<void>(resolveClose => server.close(() => resolveClose()));
   store.close();
 });
-function seed(n: number, asset = tokenA, amount = '125000000') {
+function seed(n: number, asset = tokenA, amount = '125000000', reconcile = false) {
   const payment: Payment = { paymentId: '0x' + n.toString(16).padStart(64, '0'), payer: '0x' + '11'.repeat(20),
     payee: '0x' + '22'.repeat(20), token: asset, amount, nonce: String(n - 1), deadline: '2000000000' };
-  const row = store.accept(payment, privateMarker + '_fingerprint', privateMarker + '_signature').row;
+  const fingerprint = reconcile ? digest(payment, signingDomain) : privateMarker + '_fingerprint';
+  const signature = reconcile ? '0x01' : privateMarker + '_signature';
+  const row = store.accept(payment, fingerprint, signature).row;
   const hash = fixtureTransactionHash(n);
   store.broadcast(row.id, privateMarker + '_raw', hash); store.finalize(row.id, n, blockHash);
   const log = iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
@@ -58,7 +61,9 @@ function seed(n: number, asset = tokenA, amount = '125000000') {
     logs: [{ address: routerAddress, transactionHash: hash, transactionIndex: 0, blockNumber: n, blockHash, ...log }] });
   return store.get(row.id)!;
 }
-function baseline() { return { first: seed(1), second: seed(2, tokenB, '7000000') }; }
+function baseline(reconcile = false) {
+  return { first: seed(1, tokenA, '125000000', reconcile), second: seed(2, tokenB, '7000000', reconcile) };
+}
 function restoreJournal(journal: NonNullable<ReturnType<Store['journal']>>) {
   store.db.prepare('INSERT INTO journals VALUES(?,?,?,?,?,?,?,?)').run(journal.payment_id, journal.token,
     journal.debit_account, journal.credit_account, journal.amount, journal.tx_hash, journal.block_number, journal.block_hash);
@@ -165,7 +170,7 @@ test('an unjournaled review without either block field remains excluded from val
 });
 
 test('reconciliation of a missing settled journal retains block evidence and keeps HTTP totals unavailable', async () => {
-  const { first, second } = baseline();
+  const { first, second } = baseline(true);
   const good = await readUnchanged(); assert.deepEqual(good, { status: 200, body: expected });
   let model = reduceTotals(emptyTotals(), { type: 'report', report: good.body });
   const retainedJournal = store.journal(second.id);

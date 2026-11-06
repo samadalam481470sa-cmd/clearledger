@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 import { Interface, type JsonRpcProvider, type Wallet } from 'ethers';
 import { Store } from '../src/store.ts';
 import { PaymentService } from '../src/service.ts';
-import { type Payment } from '../src/payment.ts';
+import { digest, domain, type Payment } from '../src/payment.ts';
 
 // Controlled SQLite/provider evidence, not executed EVM transfers.
 const routerAddress = '0x' + '44'.repeat(20), blockHash = '0x' + 'ee'.repeat(32);
+const signingDomain = domain(31337, routerAddress);
 const iface = new Interface(['event PaymentSettled(bytes32 indexed paymentId,address indexed payer,address indexed payee,address token,uint256 amount,uint256 nonce)']);
 const hash = (n: number) => '0x' + n.toString(16).padStart(64, '0');
 let store: Store, payments: Map<string, Payment>, reads: number, blockReads: number, pages: number;
@@ -24,7 +25,7 @@ function deferred<T>() {
 function seed(n: number) {
   const p: Payment = { paymentId: hash(n), payer: '0x' + '11'.repeat(20), payee: '0x' + '22'.repeat(20),
     token: '0x' + '33'.repeat(20), amount: '125000000', nonce: String(n - 1), deadline: '2000000000' };
-  const id = store.accept(p, 'synthetic-fingerprint-' + n, 'synthetic-signature').row.id;
+  const id = store.accept(p, digest(p, signingDomain), '0x01').row.id;
   const tx = hash(1000 + n); payments.set(tx, p);
   store.broadcast(id, 'synthetic-raw', tx); store.finalize(id, 17, blockHash);
   return id;

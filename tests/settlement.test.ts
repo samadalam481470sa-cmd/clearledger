@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { request } from 'node:http';
 import { randomBytes } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { id, parseUnits, Wallet, keccak256, type JsonRpcProvider } from 'ethers';
 import { compile } from '../scripts/compile.ts';
 import { localChain } from '../scripts/local-chain.ts';
@@ -284,6 +285,44 @@ test('reconciliation flags a corrupt journal after genuine EVM settlement withou
   assert.deepEqual((await service.reconcile()).exceptions, []);
   assert.equal(store.journals().length, 1);
   assert.equal(await chain.token.balanceOf(chain.payee.address), balance);
+});
+test('reconciliation detects a changed authorization deadline after genuine EVM settlement', async t => {
+  const first = await settled(await signed());
+  const second = await settled(await signed({ amount: '7000000' }));
+  assert.equal(first.status, 'settled');
+  assert.equal(second.status, 'settled');
+  const healthy = await service.reconcile();
+  assert.equal(healthy.checked, 2);
+  assert.deepEqual(healthy.exceptions, []);
+  const journals = store.journals();
+  const receipt = await chain.provider.getTransactionReceipt(first.tx_hash!);
+  assert.ok(receipt?.status === 1);
+  const relayerNonce = await chain.provider.getTransactionCount(chain.relayer.address, 'pending');
+  const original: Payment = JSON.parse(first.payload);
+  const payload = JSON.stringify({ ...original, deadline: String(BigInt(original.deadline) + 1n) });
+  store.db.prepare('UPDATE payments SET payload=? WHERE id=?').run(payload, first.id);
+
+  const result = await service.reconcile();
+  t.diagnostic(JSON.stringify({ healthyChecked: healthy.checked, checked: result.checked,
+    exceptions: result.exceptions.length, retainedJournals: store.journals().length }));
+  assert.equal(result.checked, 2);
+  assert.deepEqual(result.exceptions, [first.id]);
+  const reviewed = store.get(first.id)!;
+  assert.ok(isDeepStrictEqual(reviewed, { ...first, payload, status: 'review',
+    error: 'Stored settlement authorization is inconsistent; verify the original authorization and chain history',
+    updated_at: reviewed.updated_at }), 'Review must retain all stored evidence');
+  assert.ok(isDeepStrictEqual(store.get(second.id), second), 'The unaffected payment must remain unchanged');
+  assert.deepEqual(store.journals(), journals);
+  assert.deepEqual((await chain.provider.getTransactionReceipt(first.tx_hash!))?.toJSON(), receipt.toJSON());
+  assert.equal(await chain.token.balanceOf(chain.payee.address), 132000000n);
+  assert.equal(await chain.router.nonces(chain.payer.address), 2n);
+  assert.equal(await chain.provider.getTransactionCount(chain.relayer.address, 'pending'), relayerNonce);
+  assert.deepEqual(store.assetTotals(), [{ token: original.token.toLowerCase(), settledPayments: 1,
+    settledBaseUnits: '7000000', reviewPayments: 1, reviewBaseUnits: '125000000' }]);
+  const repeated = await service.reconcile();
+  assert.equal(repeated.checked, 1);
+  assert.deepEqual(repeated.exceptions, []);
+  assert.deepEqual(store.events().filter(event => event.action === 'review').map(event => event.payment_id), [first.id]);
 });
 test('concurrent worker ticks do not settle a payment twice', async () => {
   const accepted = await service.accept(await signed());

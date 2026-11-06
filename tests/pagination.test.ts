@@ -5,7 +5,7 @@ import { getAddress, Interface, type JsonRpcProvider, type Wallet } from 'ethers
 import { Store, type Status } from '../src/store.ts';
 import { PaymentService } from '../src/service.ts';
 import { makeServer } from '../src/http.ts';
-import { type Payment } from '../src/payment.ts';
+import { digest, domain, type Payment } from '../src/payment.ts';
 
 // Synthetic projection records test pagination/accounting, not EVM settlement.
 const payer = '0x' + '11'.repeat(20);
@@ -14,6 +14,7 @@ const tokenA = getAddress('0x' + 'ab'.repeat(20));
 const tokenB = getAddress('0x' + 'cd'.repeat(20));
 const blockHash = '0x' + 'ee'.repeat(32);
 const routerAddress = '0x' + '44'.repeat(20);
+const signingDomain = domain(31337, routerAddress);
 const settlementInterface = new Interface([
   'event PaymentSettled(bytes32 indexed paymentId,address indexed payer,address indexed payee,address token,uint256 amount,uint256 nonce)'
 ]);
@@ -22,17 +23,22 @@ let store: Store;
 beforeEach(() => { store = new Store(); });
 afterEach(() => { store.close(); });
 
-function seed(n: number, status: Status = 'queued', amount = '1000000', token = tokenA) {
+function seed(n: number, status: Status = 'queued', amount = '1000000', token = tokenA, reconcile = false) {
   const payment: Payment = {
     paymentId: hash(n), payer, payee, token, amount, nonce: String(n - 1), deadline: '2000000000'
   };
-  const row = store.accept(payment, 'private-fingerprint-' + n, 'private-signature-' + n).row;
+  const fingerprint = reconcile ? digest(payment, signingDomain) : 'private-fingerprint-' + n;
+  const signature = reconcile ? '0x01' : 'private-signature-' + n;
+  const row = store.accept(payment, fingerprint, signature).row;
   if (status === 'settled' || status === 'review' || status === 'broadcast') {
     store.broadcast(row.id, 'private-raw-transaction-' + n, hash(100000 + n));
     if (status !== 'broadcast') store.finalize(row.id, n, blockHash);
   }
   if (status === 'review' || status === 'failed') store.setStatus(row.id, status, 'Synthetic fixture status');
   return store.get(row.id)!;
+}
+function seedForReconciliation(n: number) {
+  return seed(n, 'settled', '1000000', tokenA, true);
 }
 function coherentReceipt(tx: string) {
   // Synthetic transaction IDs encode the fixture number, avoiding an unindexed
@@ -229,7 +235,7 @@ test('overview bounds payment and journal previews to the latest 100 rows', asyn
 test('reconciliation reaches old settlements beyond the previous 10000-record cutoff', async () => {
   let oldest = '';
   for (let i = 1; i <= 10005; i++) {
-    const row = seed(i, 'settled');
+    const row = seedForReconciliation(i);
     if (i === 1) oldest = row.id;
   }
   let checked = 0;
@@ -247,13 +253,13 @@ test('reconciliation reaches old settlements beyond the previous 10000-record cu
 });
 
 test('reconciliation freezes its upper rowid while new settled records arrive', async () => {
-  for (let i = 1; i <= 105; i++) seed(i, 'settled');
+  for (let i = 1; i <= 105; i++) seedForReconciliation(i);
   let inserted = false;
   let reads = 0;
   const service = readService({
     getTransactionReceipt: async (tx: string) => {
       reads++;
-      if (!inserted) { inserted = true; seed(106, 'settled'); }
+      if (!inserted) { inserted = true; seedForReconciliation(106); }
       return coherentReceipt(tx);
     }
   });

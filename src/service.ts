@@ -84,8 +84,7 @@ export class PaymentService {
             .every(field => raw[field] === parsed.data.payment[field])) p = parsed.data.payment;
       }
     } catch { /* Keep parser/schema details and stored private fields out of diagnostics. */ }
-    // Hashing/configuration and storage failures propagate. They are not proof
-    // that an authorization is corrupt, and must not advance the queue.
+    // Keep hashing and configuration failures separate from invalid stored evidence.
     if (!p || !isHash(row.fingerprint) || !sameHash(row.fingerprint, digest(p, this.signingDomain))) return;
     return p;
   }
@@ -239,15 +238,9 @@ export class PaymentService {
       const page = this.store.pagePayments({ status: 'settled', limit: 100, cursor });
       for (const row of page.items) {
         checked++;
-        let p: Payment | undefined;
-        try {
-          const parsed = paymentSchema.safeParse(JSON.parse(row.payload));
-          if (parsed.success) p = parsed.data;
-        } catch { /* Invalid persisted JSON is an integrity exception. */ }
+        const p = this.storedPayment(row);
         let matches = false;
-        if (p && paymentKey(p) === row.id &&
-          typeof row.tx_hash === 'string' && /^0x[0-9a-fA-F]{64}$/.test(row.tx_hash) &&
-          typeof row.block_hash === 'string' && /^0x[0-9a-fA-F]{64}$/.test(row.block_hash) &&
+        if (p && isHash(row.tx_hash) && isHash(row.block_hash) &&
           Number.isSafeInteger(row.block_number) && row.block_number! >= 0) {
           // RPC errors abort the scan; unavailable transport is not evidence of corruption.
           const receipt = await this.provider.getTransactionReceipt(row.tx_hash);
@@ -265,7 +258,9 @@ export class PaymentService {
         }
         if (!matches) {
           exceptions.push(row.id);
-          this.store.setStatus(row.id, 'review', 'Recorded settlement no longer matches canonical receipt and journal');
+          this.store.setStatus(row.id, 'review', p
+            ? 'Recorded settlement no longer matches canonical receipt and journal'
+            : 'Stored settlement authorization is inconsistent; verify the original authorization and chain history');
         }
       }
       cursor = page.nextCursor ?? undefined;
