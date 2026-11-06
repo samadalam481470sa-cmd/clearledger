@@ -1,6 +1,6 @@
 # ClearLedger status
 
-Updated: November 5, 2026.
+Updated: November 6, 2026.
 
 ## Scope and constraints
 
@@ -474,7 +474,9 @@ Project writes are confined to the new `outputs/clearledger/` directory and task
 - All 154 synthetic confirmation and recovery-envelope checks passed in 1,999.2248 ms with zero failures or skips. They include missing, malformed and nonempty revert log evidence, a valid revert after evidence heals, and pre-existing confirmation depth and canonical block checks. Strict typecheck passed on Windows with Node 24.22.1.
 - A separate 37-case local run passed in 93,589.1717 ms with zero failures or skips. The actual CLI wallet-revocation case recovered the original reserved transaction into a genuine revert once, then finished with two successful journals and zero reconciliation exceptions. The settlement, canonical-position and UTC rollover regressions also passed.
 - The injected faults use a local Ganache HTTP proxy, manual service ticks and in-memory SQLite. The guard checks internal agreement in the configured provider's receipt. A provider could still present a coherent false status, log array and bloom.
-- The source count is 638,497 nonblank lines, with 15,585 across 112 application files and 622,912 across 4,484 attributed Besu files. Regular CI and Besu acceptance are pending.
+- The source count is 638,497 nonblank lines, with 15,585 across 112 application files and 622,912 across 4,484 attributed Besu files.
+- Linux job `127730810994` passed all 981 tests in 529,281.211796 ms with zero failures or skips on source `b6c86ab2e1422bebb0a530d355f02f5d6216f0a9` and tree `bdbd6ca87ef2c529a435d4c4cb337376b489d1b7`. The real receipt case passed in 1,632.224582 ms with three altered replies per mode and two recovered journals. The actual CLI genuine revert case passed in 17,587.297212 ms. Fresh install, strict typecheck, Solidity 0.8.30 targeting Paris, the 35-module Vite build and source count passed. [Linux CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42168585152).
+- Besu job `127730810521` passed all 15 steps on the same source. The nine acceptance checks took 170,904 ms on one Docker host. The EOA settled 125 dUSD. One stopped validator allowed progress from height 24 to 26, and two stopped validators held height 26 for 20,101.661059 ms over 20 observations. Restored quorum settled the original pending 37.5 dUSD transaction. The wallet settled 12.5 dUSD, revoked authorization failed before broadcast, and three journals reconciled with zero exceptions. All four validators reached height 44 and teardown passed. The contradictory receipt evidence comes from the separate Ganache case. [Besu acceptance](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42168585028).
 
 ## Settlement gas across UTC day rollover
 
