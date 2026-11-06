@@ -220,6 +220,7 @@ for (const reportedStatus of [0, 1]) {
         return receipt && inconsistent ? { ...receipt, hash: '0x' + 'ab'.repeat(32), status: reportedStatus } : receipt;
       },
       broadcastTransaction: chain.provider.broadcastTransaction.bind(chain.provider),
+      getBalance: chain.provider.getBalance.bind(chain.provider),
       getBlockNumber: chain.provider.getBlockNumber.bind(chain.provider),
       getBlock: chain.provider.getBlock.bind(chain.provider)
     };
