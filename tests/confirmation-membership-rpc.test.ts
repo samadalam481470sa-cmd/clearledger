@@ -252,6 +252,24 @@ test('actual RPC block membership guards confirmation and reviews only the affec
   assert.equal(relay.withheldBlocks(), 2);
   await assertHealedReconciliation();
 
+  const malformedReceiptMarker = 'PRIVATE_MALFORMED_RPC_RECEIPT_FROM';
+  relay.corruptEndpoint('from', malformedReceiptMarker);
+  let receiptFormattingCode: string | undefined;
+  try { await operation(rpc.getTransactionReceipt(hash)); }
+  catch (error) {
+    const code = (error as { code?: unknown }).code;
+    if (typeof code === 'string') receiptFormattingCode = code;
+  }
+  assert.equal(receiptFormattingCode, 'BAD_DATA', 'The genuine ethers receipt formatter must reject the altered address');
+  const malformedReceipt = await operation(requestReconciliation());
+  const privateMarkerLeaked = JSON.stringify(malformedReceipt.body).includes(malformedReceiptMarker);
+  t.diagnostic(JSON.stringify({ receiptFormattingCode, malformedReceiptHttpStatus: malformedReceipt.status, privateMarkerLeaked }));
+  assertSettlementsUnchanged();
+  assert.equal(malformedReceipt.status, 503);
+  assert.ok(!privateMarkerLeaked, 'Reconciliation exposed the private malformed receipt value');
+  assert.ok(isDeepStrictEqual(malformedReceipt, unavailableResponse), 'Malformed receipt must return the fixed redacted upstream response');
+  await assertHealedReconciliation();
+
   relay.corrupt();
   const contradictory = await operation(service.reconcile());
   assert.equal(relay.altered(), confirmationContradictions + 1, 'Reconciliation must receive one altered block');

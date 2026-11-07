@@ -33,11 +33,13 @@ This branch recognizes only the top-level native code. Closed-handle `ERR_INVALI
 
 ## RPC error responses
 
-Catch-path RPC failures with top-level codes `TIMEOUT`, `NETWORK_ERROR`, or `SERVER_ERROR` return HTTP 503 with this fixed body, preserving the other existing status classifications:
+Catch-path RPC failures and unusable upstream data with top-level codes `TIMEOUT`, `NETWORK_ERROR`, `SERVER_ERROR` or `BAD_DATA` return HTTP 503 with this fixed body:
 
 ```json
 {"error":"Upstream RPC unavailable; check payment history before retrying"}
 ```
+
+Ethers uses `BAD_DATA` for malformed receipt or block fields and unusable contract return data. Only the top-level code selects this response. A `BAD_DATA` value nested inside a `CALL_EXCEPTION` retains the contract-rejection path. A persistent malformed response can require correcting RPC or contract-deployment data before retry. [Malformed-reply verification](../STATUS.md#unusable-rpc-data-at-the-http-boundary).
 
 Shutdown-drain 503 responses retain their distinct `Service is shutting down` body. This change adds no error fields or `Retry-After` header.
 

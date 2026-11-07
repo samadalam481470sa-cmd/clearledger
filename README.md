@@ -37,7 +37,7 @@ On the original Windows workspace, `Start-ClearLedger.ps1` can use the Node runt
 - Atomic Store transition guards reject conflicting lifecycle/journal updates, while exact repetitions preserve the existing audit history without duplicate entries.
 - Native failures with top-level `ERR_SQLITE_ERROR` return a fixed HTTP 500 diagnostic without SQL/trigger details. Acceptance may already be committed when a later storage step fails; inspect history before retrying the original instruction. See [storage-error behavior](docs/API.md#sqlite-http-errors).
 - Invalid queued records with no stored transaction reservation fail with a fixed diagnostic and retained evidence, allowing independent work to proceed. Any queued raw/hash reservation blocks new allocation and cannot be overwritten or discarded through Store mutations. See [queued integrity](docs/API.md#invalid-queued-authorization).
-- Controlled HTTP-proxy tests verify retry after 503 responses, dropped connections, silent transport timeouts, and a lost response after upstream transaction acceptance. RPC-mode HTTP exchanges have a configurable timeout.
+- Controlled HTTP-proxy tests verify retry after 503 responses, dropped connections, silent transport timeouts, and a lost response after upstream transaction acceptance. RPC-mode HTTP exchanges have a configurable timeout. Upstream errors classified as `BAD_DATA` receive a fixed redacted HTTP 503 response. [RPC error behavior](docs/API.md#rpc-error-responses).
 - RPC startup binds each database to its chain, genesis, router and relayer identity. Incompatible deployments and nonempty unbound legacy databases are refused; review [database context guidance](docs/API.md#rpc-database-context) before changing deployments.
 - The durable RPC CLI awaits a bound loopback listener before worker dispatch. A refused port preserves existing payment, audit and journal records; cleanup closes Store before releasing ownership. Earlier schema/context initialization can still write. See [listener readiness](docs/API.md#rpc-listener-readiness).
 - RPC startup also acquires exclusive ownership of its canonical local database file before opening the ledger or starting HTTP/dispatch. A second cooperating CLI refuses startup; process exit permits restart without deleting the persistent SQLite lock sidecar. Separate databases sharing a relayer key still require operator coordination; see [ownership limits](docs/API.md#rpc-database-ownership).
@@ -71,7 +71,7 @@ npm run build
 npm run source:count
 ```
 
-The latest application source verified by both main workflows is `98f51556738621d266fa9bd8060975c007784068`. Results below belong to the stated revision. Documentation-only commits can follow that source.
+The results below belong to the stated source revisions. Documentation-only commits can follow those revisions.
 
 | Verification | Reviewed source | Completed evidence |
 | --- | --- | --- |
@@ -88,13 +88,13 @@ Detailed regression results and earlier failures retain their original source re
 
 ## More than 100,000 source lines
 
-The [machine-readable count](docs/source-count.json) records **639,897 nonblank source lines**, including comments and tests.
+The [machine-readable count](docs/source-count.json) records **639,915 nonblank source lines**, including comments and tests.
 
 | Source area | Files | Nonblank lines |
 | --- | --- | --- |
-| ClearLedger application area | 115 | 16,985 |
+| ClearLedger application area | 115 | 17,003 |
 | Attributed Besu snapshot | 4,484 | 622,912 |
-| Combined | 4,599 | 639,897 |
+| Combined | 4,599 | 639,915 |
 
 Package installs, lockfiles, JSON, documentation, generated output and databases are excluded. Application-area counting includes the clearly attributed OpenZeppelin-derived signature-check adaptation. Application code is MIT-licensed. Besu and dependencies retain their own licenses, and the consensus implementation belongs to Besu. [Provenance and licenses](docs/PROVENANCE.md).
 

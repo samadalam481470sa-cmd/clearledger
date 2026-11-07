@@ -55,7 +55,7 @@ const routes = [
   { name: 'reconciliation', path: '/api/reconcile', body: {} },
   { name: 'demo payment', path: '/api/demo/payment', body: { amount: '1.25' }, demo: true }
 ];
-for (const code of ['TIMEOUT', 'NETWORK_ERROR', 'SERVER_ERROR']) for (const route of routes) {
+for (const code of ['TIMEOUT', 'NETWORK_ERROR', 'SERVER_ERROR', 'BAD_DATA']) for (const route of routes) {
   test(code + ' on ' + route.name + ' returns a redacted 503 without retrying', { timeout: 5000 }, async () => {
     const error = Object.assign(new Error(markers[0]), {
       code, shortMessage: markers[1], info: { payload: markers[2], url: 'https://test-user:synthetic-secret@rpc.invalid' }
@@ -142,10 +142,11 @@ test('a deterministic signature rejection retains 422', { timeout: 5000 }, async
   });
 });
 
-test('CALL_EXCEPTION remains 422 even when nested RPC information contains a timeout code', { timeout: 5000 }, async () => {
+for (const nestedCode of ['TIMEOUT', 'BAD_DATA']) test(
+  'CALL_EXCEPTION remains 422 even when nested RPC information contains ' + nestedCode, { timeout: 5000 }, async () => {
   const error = Object.assign(new Error('Contract rejected the instruction'), {
     code: 'CALL_EXCEPTION', shortMessage: 'execution reverted: PolicyLimit', data: '0x12345678',
-    info: { error: { code: 'TIMEOUT' } }
+    info: { error: { code: nestedCode } }
   });
   const fixture = serviceFixture(() => { throw error; });
   await withHttp(fixture.service, async url => {
