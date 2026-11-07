@@ -228,6 +228,8 @@ Missing, empty or malformed preflight revert data remains retryable even when th
 
 A stuck/replaced transaction can block the queue. Fee replacement and administrative resolution are not implemented. Inspect signer nonce and transaction state rather than re-signing an uncertain business payment under another ID.
 
+A controlled Ganache test also exercises an unjournaled transaction whose mined block is removed while the CLI is stopped. The restarted CLI recovers the original reservation on the replacement chain and then processes its queued successor. [Crash and rollback verification](../STATUS.md#cli-recovery-after-a-rolled-back-settlement).
+
 ### Invalid queued authorization
 
 Before preparing a queued transaction, the worker validates stored JSON/submission structure, payer/payment-ID identity, and the fingerprint under its current signing domain. Logical payment fields must already be canonical, as written by normal API acceptance; JSON whitespace/key order and hexadecimal fingerprint casing are immaterial. History may normalize a response copy, but dispatch never silently repairs stored fields.
