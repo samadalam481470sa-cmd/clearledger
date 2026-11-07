@@ -137,6 +137,7 @@ test('an older canonical broadcast can settle before queued reservation anomalie
     paymentId: payment().paymentId, payer: payment().payer, payee: payment().payee,
     token: payment().token, amount: payment().amount, nonce: payment().nonce }));
   receipt = { hash: originalHash, index: 0, blockHash, blockNumber: 17, status: 1,
+    from: fixtureRelayer.address, to: routerAddress,
     logs: [{ address: routerAddress, ...log, transactionHash: originalHash, transactionIndex: 0, blockHash, blockNumber: 17 }] };
   await assert.rejects(service.tick(), error => error instanceof Error && error.message === blockedError);
   assert.equal(store.get(old)!.status, 'settled'); assert.equal(store.journals().length, 1);

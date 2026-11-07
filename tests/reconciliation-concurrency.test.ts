@@ -37,7 +37,7 @@ function receipt(tx: string) {
   const log = iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
     [p.paymentId, p.payer, p.payee, p.token, p.amount, p.nonce]);
   const index = [...payments.keys()].indexOf(tx);
-  return { hash: tx, index, status: 1, blockNumber: 17, blockHash,
+  return { hash: tx, index, status: 1, blockNumber: 17, blockHash, from: fixtureRelayer.address, to: routerAddress,
     logs: [{ address: routerAddress, ...log, transactionHash: tx, transactionIndex: index, blockHash, blockNumber: 17 }] };
 }
 function service(read: (tx: string) => Promise<unknown>) {

@@ -148,6 +148,11 @@ export class PaymentService {
     } catch { return false; }
   }
 
+  private receiptMatchesSettlementCall(receipt: TransactionReceipt): boolean {
+    return typeof receipt.from === 'string' && receipt.from.toLowerCase() === this.relayer.address.toLowerCase() &&
+      typeof receipt.to === 'string' && receipt.to.toLowerCase() === this.routerAddress.toLowerCase();
+  }
+
   private async confirm(row: RecordRow) {
     if (!isHash(row.tx_hash)) return;
     let receipt = await this.provider.getTransactionReceipt(row.tx_hash);
@@ -162,7 +167,7 @@ export class PaymentService {
     // Inconsistent RPC evidence cannot consume a durable reservation or release
     // its nonce priority. Both success and revert decisions need the same
     // transaction identity, canonical inclusion, and configured depth checks.
-    if (!receipt || !sameHash(receipt.hash, row.tx_hash) ||
+    if (!receipt || !sameHash(receipt.hash, row.tx_hash) || !this.receiptMatchesSettlementCall(receipt) ||
       !Number.isSafeInteger(receipt.index) || receipt.index < 0 ||
       !Number.isSafeInteger(receipt.blockNumber) || receipt.blockNumber < 0 ||
       !isHash(receipt.blockHash) || (receipt.status !== 0 && receipt.status !== 1) ||
@@ -260,7 +265,8 @@ export class PaymentService {
               throw new ReconciliationReceiptUnavailable('Receipt unavailable for transaction listed in the canonical block');
           }
           matches = journalMatches && !!receipt && receipt.status === 1 && sameHash(receipt.hash, txHash) &&
-            receipt.blockNumber === row.block_number && sameHash(receipt.blockHash, row.block_hash) &&
+            this.receiptMatchesSettlementCall(receipt) && receipt.blockNumber === row.block_number &&
+            sameHash(receipt.blockHash, row.block_hash) &&
             Number.isSafeInteger(receipt.index) && receipt.index >= 0 &&
             (block === null || matchesCanonicalPosition(receipt, block)) &&
             this.settlementEvidence(p, receipt) === 'matching';

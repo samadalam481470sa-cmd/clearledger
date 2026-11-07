@@ -10,7 +10,7 @@ import { fixtureRelayer, settleAbi, signedSettlement } from './fixtures/signed-s
 const payer = '0x' + '11'.repeat(20);
 const payee = '0x' + '22'.repeat(20);
 const token = '0x' + '33'.repeat(20);
-const routerAddress = '0x' + '44'.repeat(20);
+const routerAddress = '0x' + 'a4'.repeat(20);
 const blockHash = '0x' + 'a5'.repeat(32);
 const iface = new Interface([
   settleAbi,
@@ -33,7 +33,8 @@ beforeEach(() => {
   paymentId = store.accept(payment, fingerprint, '0x').row.id;
   store.broadcast(paymentId, rawTx, txHash);
   store.finalize(paymentId, 17, blockHash);
-  receipt = { hash: txHash, index: 0, blockNumber: 17, status: 1, blockHash, logs: [settlementLog()] };
+  receipt = { hash: txHash, from: fixtureRelayer.address, to: routerAddress,
+    index: 0, blockNumber: 17, status: 1, blockHash, logs: [settlementLog()] };
   canonical = { number: 17, hash: blockHash, transactions: [txHash] };
 });
 afterEach(() => { store.close(); });
@@ -318,6 +319,21 @@ for (const [description, change] of [
     change();
     await flagged();
   });
+}
+
+for (const field of ['from', 'to'] as const) {
+  for (const [description, value] of [
+    ['missing', undefined], ['null', null], ['malformed', '0x1234'], ['wrong', '0x' + '99'.repeat(20)]
+  ] as const) {
+    for (const missingBlock of [false, true]) {
+      test(description + ' receipt ' + field + ' triggers review ' + (missingBlock ? 'without' : 'with') +
+        ' a canonical block', async () => {
+        if (value === undefined) delete receipt[field]; else receipt[field] = value;
+        if (missingBlock) canonical = null;
+        await flagged();
+      });
+    }
+  }
 }
 
 for (const [description, change] of [

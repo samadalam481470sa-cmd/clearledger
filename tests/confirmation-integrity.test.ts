@@ -1,6 +1,6 @@
 import { beforeEach, afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Interface, type JsonRpcProvider, type Wallet } from 'ethers';
+import { getAddress, Interface, type JsonRpcProvider, type Wallet } from 'ethers';
 import { Store } from '../src/store.ts';
 import { PaymentService } from '../src/service.ts';
 import { digest, domain, type Payment } from '../src/payment.ts';
@@ -11,7 +11,7 @@ import { fixtureRelayer, settleAbi, signedSettlement } from './fixtures/signed-s
 const payer = '0x' + '11'.repeat(20);
 const payee = '0x' + '22'.repeat(20);
 const token = '0x' + '33'.repeat(20);
-const routerAddress = '0x' + '44'.repeat(20);
+const routerAddress = getAddress('0x' + 'ab'.repeat(20));
 const otherTxHash = '0x' + 'ef'.repeat(32);
 const blockHash = '0x' + 'cd'.repeat(32);
 const emptyLogsBloom = '0x' + '0'.repeat(512);
@@ -42,6 +42,7 @@ beforeEach(() => {
   const log = iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
     [payment.paymentId, payment.payer, payment.payee, payment.token, payment.amount, payment.nonce]);
   receipt = { hash: txHash, index: 0, blockNumber: 17, blockHash, status: 1,
+    from: fixtureRelayer.address, to: routerAddress,
     logs: [{ address: routerAddress, transactionHash: txHash, transactionIndex: 0, blockNumber: 17, blockHash, ...log }] };
   canonical = { number: 17, hash: blockHash, transactions: [txHash] };
   latest = 18;
@@ -163,6 +164,22 @@ test('a coherent matching event remains accepted alongside unrelated contracts a
   assert.equal(store.get(firstId)!.status, 'settled');
   assert.equal(store.journals().length, 1);
 });
+
+for (const status of [0, 1]) {
+  for (const field of ['from', 'to'] as const) {
+    for (const [description, value] of [
+      ['missing', undefined], ['null', null], ['different', payee]
+    ] as const) {
+      test(description + ' receipt ' + field + ' preserves the status-' + status + ' broadcast', async () => {
+        setReceiptStatus(status);
+        if (value === undefined) delete receipt[field];
+        else receipt[field] = value;
+        await remainsUncertain();
+        assert.equal(blockReads, 0);
+      });
+    }
+  }
+}
 
 for (const status of [0, 1]) {
   for (const [description, hash] of [
@@ -373,7 +390,9 @@ test('successful receipt waits for confirmation depth and then journals once', a
   assert.equal(store.events().filter(event => event.action === 'settled').length, 1);
 });
 
-test('matching hash bytes with mixed-case hexadecimal receipt and canonical forms remain valid', async () => {
+test('matching receipt addresses and hashes remain valid across hexadecimal case', async () => {
+  receipt.from = fixtureRelayer.address.toLowerCase();
+  receipt.to = routerAddress.toLowerCase();
   const uppercaseHash = '0x' + txHash.slice(2).toUpperCase();
   receipt.hash = uppercaseHash;
   receipt.blockHash = '0x' + 'Cd'.repeat(32);

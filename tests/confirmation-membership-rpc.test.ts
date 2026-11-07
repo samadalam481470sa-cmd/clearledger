@@ -15,7 +15,10 @@ import { paymentTypes, type Payment } from '../src/payment.ts';
 
 const replacementHash = id('conflicting block transaction membership');
 type RpcCall = { id: number | string; method: string; params: string[] };
-type RpcReply = { id: number | string; result?: { hash?: string; transactions?: string[]; transactionHash?: string } | null };
+type ReceiptEndpoint = 'from' | 'to';
+type RpcReply = { id: number | string; result?: {
+  hash?: string; transactions?: string[]; transactionHash?: string; from?: string; to?: string
+} | null };
 
 async function blockProxy(upstream: string) {
   let fault = true;
@@ -24,6 +27,8 @@ async function blockProxy(upstream: string) {
   let withheldBlockHash: string | undefined;
   let withheldReceipts = 0;
   let withheldBlocks = 0;
+  let endpointFault: { field: ReceiptEndpoint; address: string } | undefined;
+  let contradictedEndpoints = 0;
   const sends: string[] = [];
   const active = new Set<Promise<void>>();
   const server = createServer((req, res) => {
@@ -55,6 +60,11 @@ async function blockProxy(upstream: string) {
             withheldBlocks++;
             continue;
           }
+          if (endpointFault && sends.length && call?.method === 'eth_getTransactionReceipt' &&
+            call.params[0] === sends[0] && reply.result?.transactionHash === sends[0]) {
+            reply.result[endpointFault.field] = endpointFault.address;
+            contradictedEndpoints++;
+          }
           const transactions = reply.result?.transactions;
           if (!fault || !sends.length || !Array.isArray(transactions) || call?.method !== 'eth_getBlockByNumber') continue;
           const index = transactions.indexOf(sends[0]);
@@ -78,9 +88,11 @@ async function blockProxy(upstream: string) {
     altered: () => altered,
     withheldReceipts: () => withheldReceipts,
     withheldBlocks: () => withheldBlocks,
+    contradictedEndpoints: () => contradictedEndpoints,
     withholdReceipt(hash: string) { withheldReceiptHash = hash; },
     withholdBlock(hash: string) { withheldBlockHash = hash; },
-    heal() { fault = false; withheldReceiptHash = withheldBlockHash = undefined; },
+    corruptEndpoint(field: ReceiptEndpoint, address: string) { endpointFault = { field, address }; },
+    heal() { fault = false; withheldReceiptHash = withheldBlockHash = endpointFault = undefined; },
     corrupt() { fault = true; },
     async close() {
       server.closeAllConnections();
@@ -265,5 +277,105 @@ test('actual RPC block membership guards confirmation and reviews only the affec
   assert.deepEqual(relay.sends, [hash, next.tx_hash]);
   t.diagnostic(JSON.stringify({ contradictoryBlocks: confirmationContradictions, recoveredSettlements: 2,
     reconciliationContradictoryBlocks: relay.altered() - confirmationContradictions, reviewedSettlements: 1,
+    retainedJournals: journals.length, nativeSends: relay.sends.length }));
+});
+
+test('actual RPC receipt endpoint contradictions hold confirmation and flag the affected settlement', { timeout: 30000 }, async t => {
+  compile();
+  const local = await localChain();
+  t.after(() => local.close());
+  const relay = await blockProxy(local.provider._getConnection().url);
+  t.after(() => relay.close());
+  relay.heal();
+  const rpc = createRpcProvider(relay.url, 2000);
+  t.after(() => rpc.destroy());
+  const ledger = new Store();
+  t.after(() => ledger.close());
+  const routerAddress = String(local.router.target);
+  const relayer = new Wallet(local.relayer.privateKey, rpc);
+  const service = new PaymentService(ledger, rpc, relayer, connectRouter(routerAddress, relayer), 31337, routerAddress);
+  const latest = await local.provider.getBlock('latest');
+  assert.ok(latest);
+  async function accept(amount: string, nonce: string) {
+    const payment: Payment = {
+      paymentId: id('receipt endpoint payment ' + nonce), payer: local.payer.address, payee: local.payee.address,
+      token: String(local.token.target), amount, nonce, deadline: String(latest!.timestamp + 3600)
+    };
+    const signature = await local.payer.signTypedData(service.signingDomain, paymentTypes, payment);
+    return (await service.accept({ payment, signature })).row;
+  }
+  const first = await accept('125000000', '0'), second = await accept('7000000', '1');
+  const wrong = local.payee.address;
+  relay.corruptEndpoint('from', wrong);
+  await service.tick();
+  const reserved = ledger.get(first.id)!;
+  assert.ok(reserved.raw_tx && reserved.tx_hash);
+  const hash = reserved.tx_hash;
+  const receipt = await local.provider.getTransactionReceipt(hash);
+  assert.ok(receipt?.status === 1);
+  assert.equal(receipt.from, relayer.address);
+  assert.equal(receipt.to, routerAddress);
+  const block = await local.provider.getBlock(receipt.blockNumber);
+  assert.ok(block && block.transactions[receipt.index] === hash);
+  async function assertPresentedEndpoint(field: ReceiptEndpoint) {
+    const presented = await rpc.getTransactionReceipt(hash);
+    assert.ok(presented);
+    assert.equal(presented[field], wrong);
+    assert.deepEqual({ ...presented.toJSON(), [field]: receipt![field] }, receipt!.toJSON());
+    assert.deepEqual((await rpc.getBlock(receipt!.blockNumber))?.toJSON(), block!.toJSON());
+  }
+  await assertPresentedEndpoint('from');
+  t.diagnostic(JSON.stringify({ contradictedReceiptEndpoint: 'from', firstStatus: reserved.status,
+    secondStatus: ledger.get(second.id)?.status, nativeSends: relay.sends.length, journalRows: ledger.journals().length }));
+  assert.equal(reserved.status, 'broadcast');
+  assert.ok(isDeepStrictEqual(ledger.get(second.id), second));
+  assert.deepEqual(relay.sends, [hash]);
+  assert.deepEqual(ledger.journals(), []);
+  const snapshot = () => JSON.stringify({ payments: ledger.list(), audit: ledger.events(), journals: ledger.journals(),
+    changes: ledger.db.prepare('SELECT total_changes() AS count').get()!.count });
+  const held = snapshot();
+  for (const field of ['from', 'to'] as const) {
+    relay.corruptEndpoint(field, wrong);
+    await assertPresentedEndpoint(field);
+    const contradictions = relay.contradictedEndpoints();
+    await service.tick();
+    assert.equal(relay.contradictedEndpoints(), contradictions + 1);
+    assert.ok(snapshot() === held, 'Contradictory receipt endpoints must preserve the exact reservation and queue');
+    assert.deepEqual(relay.sends, [hash]);
+  }
+
+  relay.heal();
+  for (let retry = 0; retry < 4 && ledger.get(second.id)!.status !== 'settled'; retry++) await service.tick();
+  const settled = ledger.get(first.id)!, successor = ledger.get(second.id)!;
+  assert.equal(settled.status, 'settled');
+  assert.ok(settled.raw_tx === reserved.raw_tx && settled.tx_hash === hash);
+  assert.equal(successor.status, 'settled');
+  assert.equal(Transaction.from(successor.raw_tx!).nonce, Transaction.from(settled.raw_tx!).nonce + 1);
+  assert.deepEqual(relay.sends, [hash, successor.tx_hash]);
+  const journals = ledger.journals(), audit = ledger.events();
+  assert.deepEqual(journals.map(journal => journal.tx_hash), [successor.tx_hash, hash]);
+  assert.equal(audit.length, 6);
+  const healthy = await service.reconcile();
+  assert.equal(healthy.checked, 2);
+  assert.deepEqual(healthy.exceptions, []);
+
+  relay.corruptEndpoint('to', wrong);
+  const contradictions = relay.contradictedEndpoints();
+  const result = await service.reconcile();
+  assert.equal(relay.contradictedEndpoints(), contradictions + 1);
+  assert.equal(result.checked, 2);
+  assert.deepEqual(result.exceptions, [first.id]);
+  const reviewed = ledger.get(first.id)!;
+  assert.equal(reviewed.status, 'review');
+  assert.ok(isDeepStrictEqual(reviewed, { ...settled, status: 'review', error: reviewed.error, updated_at: reviewed.updated_at }));
+  assert.ok(isDeepStrictEqual(ledger.get(second.id), successor));
+  assert.deepEqual(ledger.journals(), journals);
+  const [review, ...earlier] = ledger.events();
+  assert.equal(review.payment_id, first.id);
+  assert.equal(review.action, 'review');
+  assert.deepEqual(earlier, audit);
+  assert.deepEqual(relay.sends, [hash, successor.tx_hash]);
+  t.diagnostic(JSON.stringify({ contradictoryEndpointReceipts: relay.contradictedEndpoints(),
+    settledAfterHealing: healthy.checked, reviewedSettlements: result.exceptions.length,
     retainedJournals: journals.length, nativeSends: relay.sends.length }));
 });

@@ -71,6 +71,8 @@ npm run build
 npm run source:count
 ```
 
+The worker now checks that each receipt names the configured relayer and router. The Ganache regression held a mined payment when either address conflicted, then confirmed it after the original receipt returned. Reconciliation preserved both journals when it flagged a later mismatch. [Verification evidence](STATUS.md#receipt-sender-and-recipient-checks).
+
 Before acting on a receipt, the worker now checks that the saved authorization matches the reserved signed transaction. A Ganache regression verified that conflicting saved bytes keep the payment and its successor pending. Restoring the original bytes confirms the mined payment without resending it. Linux CI passed all 1,070 tests, and four-validator Besu acceptance passed. [Verification evidence](STATUS.md#signed-transaction-check-before-receipt-confirmation) · [Linux CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42304943895) · [Besu acceptance](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42304943874).
 
 Reconciliation preserves a settled payment when the RPC omits its block and the successful receipt and journal agree. The Ganache HTTP test returned a retryable 503 and reconciled both payments once the block returned. Linux CI passed all 1,062 tests, and four-validator Besu acceptance passed. [Verification evidence](STATUS.md#unavailable-block-during-reconciliation) · [Linux CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42301113603) · [Besu acceptance](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42301113520).

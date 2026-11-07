@@ -63,6 +63,7 @@ function coherentReceipt(tx: string) {
   const log = settlementInterface.encodeEventLog(settlementInterface.getEvent('PaymentSettled')!,
     [payment.paymentId, payment.payer, payment.payee, payment.token, payment.amount, payment.nonce]);
   return { hash: tx, index: 0, blockNumber: row.block_number, status: 1, blockHash: row.block_hash,
+    from: fixtureRelayer.address, to: routerAddress,
     logs: [{ address: routerAddress, transactionHash: tx, transactionIndex: 0, blockHash: row.block_hash,
       blockNumber: row.block_number, ...log }] };
 }
