@@ -19,7 +19,7 @@ function matchesCanonicalPosition(receipt: TransactionReceipt, block: Block | nu
   return Array.isArray(transactions) && sameHash(transactions[receipt.index], receipt.hash);
 }
 
-interface ReconciliationResult { checked: number; exceptions: string[]; at: string }
+interface ReconciliationResult { checked: number; exceptions: string[]; outstandingReviews: number; at: string }
 export class ReconciliationEvidenceUnavailable extends Error {}
 export class ReconciliationReceiptUnavailable extends ReconciliationEvidenceUnavailable {}
 
@@ -285,7 +285,7 @@ export class PaymentService {
       }
       cursor = page.nextCursor ?? undefined;
     } while (cursor);
-    return { checked, exceptions, at: new Date().toISOString() };
+    return { checked, exceptions, outstandingReviews: this.store.reviewCount(), at: new Date().toISOString() };
   }
 
   publicRow(row: RecordRow) {

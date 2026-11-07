@@ -196,6 +196,7 @@ test('actual RPC block membership guards confirmation and reviews only the affec
   const healthy = await operation(service.reconcile());
   assert.equal(healthy.checked, 2);
   assert.deepEqual(healthy.exceptions, []);
+  assert.equal(healthy.outstandingReviews, 0);
   const journals = ledger.journals();
   const audit = ledger.events();
   const totals = ledger.assetTotals();
@@ -227,6 +228,7 @@ test('actual RPC block membership guards confirmation and reviews only the affec
     assert.equal(retried.status, 200);
     assert.equal(retried.body.checked, 2);
     assert.deepEqual(retried.body.exceptions, []);
+    assert.equal(retried.body.outstandingReviews, 0);
     assertSettlementsUnchanged();
   }
 
@@ -255,6 +257,7 @@ test('actual RPC block membership guards confirmation and reviews only the affec
   assert.equal(relay.altered(), confirmationContradictions + 1, 'Reconciliation must receive one altered block');
   assert.equal(contradictory.checked, 2);
   assert.deepEqual(contradictory.exceptions, [first.id]);
+  assert.equal(contradictory.outstandingReviews, 1);
   const reviewed = ledger.get(first.id)!;
   assert.equal(reviewed.status, 'review');
   assert.equal(reviewed.error, 'Recorded settlement no longer matches canonical receipt and journal');
@@ -267,9 +270,12 @@ test('actual RPC block membership guards confirmation and reviews only the affec
   assert.equal(reviewEvent.action, 'review');
   assert.deepEqual(earlierEvents, audit);
 
-  const repeated = await operation(service.reconcile());
-  assert.equal(repeated.checked, 1);
-  assert.deepEqual(repeated.exceptions, []);
+  relay.heal();
+  const repeated = await operation(requestReconciliation());
+  assert.equal(repeated.status, 200);
+  assert.equal(repeated.body.checked, 1);
+  assert.deepEqual(repeated.body.exceptions, []);
+  assert.equal(repeated.body.outstandingReviews, 1);
   assert.ok(isDeepStrictEqual(ledger.get(first.id), reviewed));
   assert.ok(isDeepStrictEqual(ledger.get(second.id), next));
   assert.deepEqual(ledger.journals(), journals);

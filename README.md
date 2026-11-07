@@ -71,6 +71,8 @@ npm run build
 npm run source:count
 ```
 
+Reconciliation reports now include every outstanding local review, including payments without journals and records beyond the overview preview. The dashboard distinguishes these from new exceptions found by the current scan. [Verification evidence](STATUS.md#outstanding-reviews-in-reconciliation-reports).
+
 The dedicated recovery workflow passed two five-minute receipt outage windows across abrupt CLI restart, recording 634 seconds of active observation and 360 authenticated HTTP 200 history responses. Recovery retained two settlements and two journals with reconciliation 2/0. The regular Linux suite passed all 1,100 tests. [Verification evidence](STATUS.md#five-minute-receipt-outage-windows) · [Extended outage CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42336374899) · [Regular CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42336374912).
 
 The actual RPC CLI now has a crash and chain rollback recovery test. It retains an unjournaled reservation across abrupt termination, then retransmits the same signed transaction on the replacement chain before processing its successor. Linux CI passed all 1,100 tests, including this controlled Ganache rollback. [Verification evidence](STATUS.md#cli-recovery-after-a-rolled-back-settlement) · [Linux CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42334367069).

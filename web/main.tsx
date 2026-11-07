@@ -247,13 +247,18 @@ function App() {
     const controller = new AbortController();
     posts.current.add(controller); setBusy(true);
     try {
-      const result = await request<{ checked: number; exceptions: string[] }>('reconcile', {
+      const result = await request<{ checked: number; exceptions: string[]; outstandingReviews?: number }>('reconcile', {
         method: 'POST', signal: controller.signal
       });
       if (session.current !== activeSession || controller.signal.aborted) return;
+      const checked = result.checked + (result.checked === 1 ? ' settled payment' : ' settled payments');
+      const count = result.outstandingReviews;
+      const outstanding = typeof count === 'number' && Number.isSafeInteger(count) && count >= 0
+        ? count + (count === 1 ? ' payment still awaits review.' : ' payments still await review.')
+        : 'Outstanding review count unavailable. Use the review filter to inspect review payments.';
       setNotice(currentNetwork.current !== activeNetwork
         ? 'The connection changed during reconciliation. The result belongs to the original network; reconcile the current connection again.'
-        : 'Reconciled ' + result.checked + ' settlements · ' + result.exceptions.length + ' exceptions.');
+        : 'Checked ' + checked + '. This scan flagged ' + result.exceptions.length + ' for review. ' + outstanding);
       refreshAfterMutation();
     } catch (e) {
       if (session.current === activeSession && !controller.signal.aborted)
@@ -300,7 +305,7 @@ function App() {
             <div className="stats">
               <div className="stat"><label>Journaled assets <span>↗</span></label><strong>{counts.assets ?? '—'}</strong><small>Amounts stay separate by token below</small></div>
               <div className="stat"><label>Completed payments <span>✓</span></label><strong>{counts.completed ?? '—'}<em> settlements</em></strong><small>Journaled records across all assets</small></div>
-              <div className="stat"><label>In review <span>◇</span></label><strong>{counts.review ?? '—'}<em> payments</em></strong><small>Excluded from settled asset volume</small></div>
+              <div className="stat"><label>Journaled in review <span>◇</span></label><strong>{counts.review ?? '—'}<em> payments</em></strong><small>Use the review filter for all review payments</small></div>
               <div className="stat"><label>Latest block <span>⬡</span></label><strong>{data.block?.number.toLocaleString() ?? '—'}</strong><small><span className="dot"></span> Chain {data.chainId} · live RPC data</small></div>
             </div>
             <AssetTotalsPanel state={totals} overview={data}/>

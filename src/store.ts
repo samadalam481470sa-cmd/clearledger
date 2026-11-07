@@ -254,6 +254,9 @@ export class Store {
     return [...assets.values()].sort((a, b) => a.token.localeCompare(b.token)).map(t => ({ ...t,
       settledBaseUnits: t.settledBaseUnits.toString(), reviewBaseUnits: t.reviewBaseUnits.toString() }));
   }
+  reviewCount(): number {
+    return this.db.prepare("SELECT COUNT(*) AS count FROM payments WHERE status='review'").get()!.count as number;
+  }
   pending(): RecordRow[] {
     // A durable signed transaction reserves the relayer nonce even before RPC sees it.
     // Recover broadcasts first; rowid preserves acceptance order without wall-clock ties.
