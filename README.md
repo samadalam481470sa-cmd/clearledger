@@ -141,7 +141,7 @@ Initial confirmation leaves inconsistent or malformed RPC receipt data in broadc
 
 The [dependency maintenance record](docs/DEPENDENCIES.md) documents patched validation/build dependencies and historical audit attribution. The new scoped redirect patch removes the additional follow-redirects finding: local audit reports 33 entries, including five critical findings, all at Ganache or its subtree. Both new CI installs also report 33. Successful correctness checks do not establish dependency security.
 
-A Besu acceptance extension now includes a caller-bound test contract wallet: settle 12.5 dUSD after EOA quorum recovery, then revoke a queued 1.25 dUSD authorization before signing and require no new journal/native reservation. The extended live Besu workflow passed: three journals, wallet balance 87.5 dUSD, recipient total 175 dUSD, and four-node state agreement at block 45. All 253 regular CI tests also passed. This tooling increment leaves the router/API unchanged and does not test wallet transactions during quorum loss.
+The Besu acceptance script also exercises a caller-bound contract wallet through quorum loss. Its 12.5 dUSD payment must stay pending on both reachable validators while its reservation, journals, balances and nonce remain stable. The same signed transaction must settle after quorum returns. A later queued 1.25 dUSD authorization is revoked before signing. [Wallet quorum verification](STATUS.md#contract-wallet-recovery-after-quorum-loss).
 
 ## More than 100,000 source lines
 

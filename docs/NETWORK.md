@@ -42,6 +42,7 @@ Node permissioning does not make transactions private. Token account eligibility
 - Fresh test contracts execute a signed 125 dUSD payment, yield one transfer journal, and reconcile without exceptions.
 - Stopping only `validator4` in the exact `clearledger-dev` Compose project leaves the other three progressing by at least two blocks and agreeing on the chain.
 - The extension then stops validator 3, observes healthy two-node no-finalization, restores three-node quorum to settle a pending payment once, and restarts validator 4 for all-four catch-up. Its verified bounds and results are below.
+- A later contract-wallet payment undergoes a second two-validator stop, pending-transaction observation and recovery of the same signed reservation. All four validators catch up before wallet authorization revocation and final state agreement.
 
 The script has a ten-minute budget, bounded RPC/Compose operations, tracks both test-stopped validators 3 and 4 for best-effort restart on failure, and avoids logging generated keys. It does not stop other Docker projects or services. Its journal is temporary memory state; `network:deploy` separately writes ignored reusable development-account credentials.
 
@@ -84,6 +85,16 @@ Source [`d2dd93c794645ca621516d597f60d2f59a60fc09`](https://github.com/samadalam
 The full scenario took 237,137 ms. This is total acceptance-scenario duration, not throughput or settlement latency. The same source passed [regular CI `40216704639`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40216704639) with 109 tests, typecheck, build, and source count. Run conclusions, all job steps, and logs were verified.
 
 A bounded 20-second window on one host does not test malicious validators, arbitrary partitions, independent-host failures, prolonged outages, or production safety/liveness.
+
+## Contract-wallet quorum recovery
+
+After the EOA recovery sequence, the script configures a caller-bound test wallet with 100 dUSD and router approval. It then stops validators 4 and 3, waits for eight seconds of stable agreement between the two reachable nodes, and reserves a 12.5 dUSD wallet payment.
+
+The strict 20-second observation requires both nodes to retain the pending transaction and return null receipts. Every sample also checks the exact saved payment, journal, audit and SQLite write-count projection, a wallet balance of 100 dUSD, recipient balance of 162.5 dUSD, wallet nonce 0 and EOA payer nonce 2. The mined native relayer nonce must stay at its pre-wallet value.
+
+Restoring validator 3 must produce progress and settle the original wallet hash and signed bytes. The script checks one native nonce consumed, three total journals, a wallet balance of 87.5 dUSD and recipient balance of 175 dUSD. Validator 4 then catches up through the settlement before the existing queued wallet-revocation check and final four-node state comparison.
+
+Both recovery polls share the script’s 600-second global deadline. The 300-second poll limits are clipped by the remaining budget. The scenario uses one Docker host and a test wallet. [Measured verification](../STATUS.md#contract-wallet-recovery-after-quorum-loss).
 
 Still beyond verified acceptance: other failure timings, malicious/unapproved peers, arbitrary partitions, independent-host failures, prolonged soak/load behavior, external port probing, and production fault tolerance. The bounded two-stop case establishes none of those broader guarantees.
 

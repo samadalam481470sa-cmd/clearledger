@@ -113,6 +113,19 @@ export async function verifyNetwork() {
     return { height, hash, heads };
   }
 
+  async function quietPair(label: string, validators: string[]): Promise<Agreement> {
+    let quiet: { height: number; hash: string; since: number } | undefined;
+    return poll(label, async () => {
+      try {
+        const sample = await agreement(providers.slice(0, 2), validators);
+        if (!sample || sample.heads.some(height => height !== sample.height)) { quiet = undefined; return; }
+        if (!quiet || quiet.height !== sample.height || quiet.hash !== sample.hash)
+          quiet = { height: sample.height, hash: sample.hash, since: Date.now() };
+        return Date.now() - quiet.since >= 8000 ? sample : undefined;
+      } catch (error) { quiet = undefined; throw error; }
+    }, 45000);
+  }
+
   try {
     const generated = JSON.parse(readFileSync('network/generated/addresses.json', 'utf8')) as GeneratedAddresses;
     assert.equal(generated.chainId, CHAIN_ID, 'Generated chain ID mismatch');
@@ -178,16 +191,7 @@ export async function verifyNetwork() {
     possiblyStopped.add('validator3');
     await bounded(phase, () => compose('stop', 'validator3'), 30000);
     const pair = providers.slice(0, 2);
-    let quiet: { height: number; hash: string; since: number } | undefined;
-    const baseline = await poll(phase, async () => {
-      try {
-        const sample = await agreement(pair, generated.validators);
-        if (!sample || sample.heads.some(height => height !== sample.height)) { quiet = undefined; return; }
-        if (!quiet || quiet.height !== sample.height || quiet.hash !== sample.hash)
-          quiet = { height: sample.height, hash: sample.hash, since: Date.now() };
-        return Date.now() - quiet.since >= 8000 ? sample : undefined;
-      } catch (error) { quiet = undefined; throw error; }
-    }, 45000);
+    const baseline = await quietPair(phase, generated.validators);
 
     phase = 'pending payment without quorum';
     const laterAmount = parseUnits('37.5', 6);
@@ -282,7 +286,14 @@ export async function verifyNetwork() {
       return wallet;
     }, 90000);
     const walletAddress = await contractWallet.getAddress();
-    phase = 'ERC-1271 wallet settlement';
+    phase = 'contract-wallet two-validator stop and block drain';
+    possiblyStopped.add('validator4');
+    await bounded(phase, () => compose('stop', 'validator4'), 30000);
+    possiblyStopped.add('validator3');
+    await bounded(phase, () => compose('stop', 'validator3'), 30000);
+    const walletBaseline = await quietPair(phase, generated.validators);
+
+    phase = 'pending ERC-1271 wallet settlement without quorum';
     const walletBlock = await bounded(phase, () => provider.getBlock('latest'), 10000);
     assert.ok(walletBlock, 'Wallet payment block is unavailable');
     const walletPayment = { ...payment, paymentId: id(randomBytes(24).toString('hex')),
@@ -293,6 +304,60 @@ export async function verifyNetwork() {
       '0xffffffff', 'Direct owner call must fail the router-caller requirement');
     const walletAccepted = await bounded(phase,
       () => service.accept({ payment: walletPayment, signature: walletSignature }), 10000);
+    const walletRelayerNonce = await bounded(phase, () => provider.getTransactionCount(relayer.address, 'latest'), 10000);
+    await bounded(phase, () => service.tick(), 20000);
+    const walletPending = store.get(walletAccepted.row.id)!;
+    assert.equal(walletPending.status, 'broadcast', 'No-quorum wallet payment must retain its reservation');
+    assert.ok(walletPending.raw_tx && walletPending.tx_hash, 'Wallet transaction provenance is required');
+    const walletPendingRaw = walletPending.raw_tx, walletPendingHash = walletPending.tx_hash;
+    await poll('both live nodes accepted the wallet transaction', async () => {
+      const transactions = await Promise.all(pair.map(node => node.getTransaction(walletPendingHash)));
+      if (transactions.some(transaction => !transaction)) return;
+      assert.ok(transactions.every(transaction => transaction!.hash === walletPendingHash && transaction!.blockNumber === null),
+        'Wallet transaction must be pending on both live nodes');
+      return true;
+    }, 20000);
+    const walletProjection = () => JSON.stringify({ payments: store.list(), journals: store.journals(), audit: store.events(),
+      changes: store.db.prepare('SELECT total_changes() AS count').get()!.count });
+    const heldWalletProjection = walletProjection();
+    phase = 'contract-wallet quorum observation';
+    const walletHalted = await bounded(phase, () => observeHalted(async () => {
+      await service.tick();
+      const sample = await agreement(pair, generated.validators);
+      if (!sample) throw new AcceptanceFailure('Surviving RPC nodes do not agree during wallet quorum loss');
+      const [receipts, transactions, payeeBalance, walletBalance, walletNonce, payerNonce, processed, relayerNonce] = await Promise.all([
+        Promise.all(pair.map(node => node.getTransactionReceipt(walletPendingHash))),
+        Promise.all(pair.map(node => node.getTransaction(walletPendingHash))),
+        token.balanceOf(payee.address), token.balanceOf(walletAddress), router.nonces(walletAddress),
+        router.nonces(payer.address), router.processed(walletAddress, walletPayment.paymentId),
+        provider.getTransactionCount(relayer.address, 'latest')
+      ]);
+      assert.ok(receipts.every(receipt => receipt === null), 'Wallet transaction gained a receipt without quorum');
+      assert.ok(transactions.every(transaction => transaction?.hash === walletPendingHash && transaction.blockNumber === null),
+        'Wallet transaction must remain pending on both live nodes');
+      assert.ok(walletProjection() === heldWalletProjection, 'Wallet quorum loss changed the reservation, journals or audit');
+      assert.equal(store.journals().length, 2);
+      assert.equal(payeeBalance, amount + laterAmount);
+      assert.equal(walletBalance, walletFunding);
+      assert.equal(walletNonce, 0n);
+      assert.equal(payerNonce, 2n);
+      assert.equal(processed, false);
+      assert.equal(relayerNonce, walletRelayerNonce);
+      return sample;
+    }, walletBaseline), 45000);
+    console.log(JSON.stringify({ check: 'erc1271-quorum-loss', stoppedServices: ['validator3', 'validator4'],
+      height: walletHalted.height, hash: walletHalted.hash, observedMs: walletHalted.elapsedMs,
+      observations: walletHalted.observations, pendingTransactionHash: walletPendingHash, journalEntries: 2,
+      walletBaseUnits: walletFunding.toString(), payeeBaseUnits: (amount + laterAmount).toString(), payerNonce: 0 }));
+
+    phase = 'restore three-validator quorum for contract wallet';
+    await bounded(phase, () => compose('start', 'validator3'), 30000);
+    possiblyStopped.delete('validator3');
+    const walletRestored = await poll(phase, async () => {
+      const sample = await agreement(providers.slice(0, 3), generated.validators);
+      return sample && sample.height >= walletBaseline.height + 2 ? sample : undefined;
+    }, 300000);
+    phase = 'settle original contract-wallet reservation after quorum restoration';
     const walletSettled = await poll(phase, async () => {
       await service.tick();
       const row = store.get(walletAccepted.row.id)!;
@@ -303,6 +368,10 @@ export async function verifyNetwork() {
     assert.equal((await bounded(phase,
       () => service.accept({ payment: walletPayment, signature: walletSignature }), 10000)).replay, true);
     await bounded(phase, () => service.tick(), 10000);
+    assert.equal(walletSettled.tx_hash, walletPendingHash, 'Wallet recovery must settle the original hash');
+    assert.equal(walletSettled.raw_tx, walletPendingRaw, 'Wallet recovery must retain the original signed bytes');
+    assert.equal(await provider.getTransactionCount(relayer.address, 'latest'), walletRelayerNonce + 1,
+      'Wallet recovery must consume one native nonce');
     const walletJournal = store.journal(walletAccepted.row.id)!;
     assert.equal(walletJournal.debit_account, walletAddress, 'Journal must debit the contract wallet');
     assert.equal(walletJournal.credit_account, payee.address);
@@ -317,6 +386,17 @@ export async function verifyNetwork() {
     console.log(JSON.stringify({ check: 'erc1271-settlement', wallet: walletAddress, settledBaseUnits: walletAmount.toString(),
       transactionHash: walletSettled.tx_hash, block: walletSettled.block_number, journalEntries: 3,
       payeeBaseUnits: expectedPayee.toString(), walletBaseUnits: expectedWallet.toString(), payerNonce: 1 }));
+
+    phase = 'all-validator contract-wallet catch-up';
+    await bounded(phase, () => compose('start', 'validator4'), 30000);
+    possiblyStopped.delete('validator4');
+    const walletRecovered = await poll(phase, async () => {
+      const sample = await agreement(providers, generated.validators);
+      return sample && sample.height >= walletSettled.block_number! ? sample : undefined;
+    });
+    console.log(JSON.stringify({ check: 'erc1271-quorum-recovery', transactionHash: walletPendingHash,
+      originalReservation: true, block: walletSettled.block_number, threeNodeRecoveryHeight: walletRestored.height,
+      journalEntries: 3, ...walletRecovered }));
 
     phase = 'queued contract-wallet authorization revocation';
     const revokedPayment = { ...walletPayment, paymentId: id(randomBytes(24).toString('hex')),
@@ -367,7 +447,7 @@ export async function verifyNetwork() {
     console.log(JSON.stringify({ result: 'passed', elapsedMs: Date.now() - started,
       checks: ['four-validator-agreement', 'signed-settlement', 'one-validator-failure',
         'two-validator-quorum-loss', 'quorum-restoration', 'post-quorum-settlement', 'validator-recovery',
-        'erc1271-settlement', 'erc1271-revocation'] }));
+        'erc1271-quorum-loss', 'erc1271-settlement', 'erc1271-quorum-recovery', 'erc1271-revocation'] }));
   } catch (error) {
     // Avoid dumping transaction arguments, generated keys, or wallet objects into CI logs.
     const reason = error instanceof AcceptanceFailure || error instanceof QuorumObservationError ? ' (' + error.message + ')' : '';
