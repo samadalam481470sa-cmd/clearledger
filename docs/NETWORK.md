@@ -96,6 +96,8 @@ Restoring validator 3 must produce progress and settle the original wallet hash 
 
 Both recovery polls share the script’s 600-second global deadline. The 300-second poll limits are clipped by the remaining budget. The scenario uses one Docker host and a test wallet. [Measured verification](../STATUS.md#contract-wallet-recovery-after-quorum-loss).
 
+The live run held the wallet phase at height 38 for 20,100.766263 ms across 20 healthy samples. The same transaction settled at block 39, all four validators caught up at height 42, and final revocation/state checks agreed at height 44 with three journals and reconciliation 3/0. All 11 acceptance checks passed in 364,542 ms. [Besu acceptance](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42355593856).
+
 Still beyond verified acceptance: other failure timings, malicious/unapproved peers, arbitrary partitions, independent-host failures, prolonged soak/load behavior, external port probing, and production fault tolerance. The bounded two-stop case establishes none of those broader guarantees.
 
 References: [Besu QBFT tutorial](https://docs.besu-eth.org/private-networks/tutorials/qbft), [permissioning](https://docs.besu-eth.org/private-networks/concepts/permissioning).

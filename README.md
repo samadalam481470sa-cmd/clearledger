@@ -141,7 +141,7 @@ Initial confirmation leaves inconsistent or malformed RPC receipt data in broadc
 
 The [dependency maintenance record](docs/DEPENDENCIES.md) documents patched validation/build dependencies and historical audit attribution. The new scoped redirect patch removes the additional follow-redirects finding: local audit reports 33 entries, including five critical findings, all at Ganache or its subtree. Both new CI installs also report 33. Successful correctness checks do not establish dependency security.
 
-The Besu acceptance script also exercises a caller-bound contract wallet through quorum loss. Its 12.5 dUSD payment must stay pending on both reachable validators while its reservation, journals, balances and nonce remain stable. The same signed transaction must settle after quorum returns. A later queued 1.25 dUSD authorization is revoked before signing. [Wallet quorum verification](STATUS.md#contract-wallet-recovery-after-quorum-loss).
+The Besu acceptance script also exercises a caller-bound contract wallet through quorum loss. Its 12.5 dUSD payment must stay pending on both reachable validators while its reservation, journals, balances and nonce remain stable. The same signed transaction must settle after quorum returns. A later queued 1.25 dUSD authorization is revoked before signing. Live Besu acceptance passed all 11 checks, and regular Linux CI passed all 1,100 tests. [Wallet quorum verification](STATUS.md#contract-wallet-recovery-after-quorum-loss) · [Besu acceptance](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42355593856) · [Regular CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42355593909).
 
 ## More than 100,000 source lines
 
