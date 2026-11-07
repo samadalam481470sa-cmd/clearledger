@@ -230,6 +230,8 @@ A stuck/replaced transaction can block the queue. Fee replacement and administra
 
 A controlled Ganache test also exercises an unjournaled transaction whose mined block is removed while the CLI is stopped. The restarted CLI recovers the original reservation on the replacement chain and then processes its queued successor. [Crash and rollback verification](../STATUS.md#cli-recovery-after-a-rolled-back-settlement).
 
+The receipt recovery test also supports two five-minute active observation windows across an abrupt CLI restart. The dedicated `Extended receipt outage checks` workflow sets `CLEARLEDGER_LONG_RECEIPT_OUTAGE=1` for that focused test. It runs when the workflow or outage test changes and supports manual dispatch for other source revisions. Active windows exclude restart downtime and require a completed authenticated history read and a fresh failed receipt lookup after each five-minute boundary. [Extended verification](../STATUS.md#five-minute-receipt-outage-windows).
+
 ### Invalid queued authorization
 
 Before preparing a queued transaction, the worker validates stored JSON/submission structure, payer/payment-ID identity, and the fingerprint under its current signing domain. Logical payment fields must already be canonical, as written by normal API acceptance; JSON whitespace/key order and hexadecimal fingerprint casing are immaterial. History may normalize a response copy, but dispatch never silently repairs stored fields.

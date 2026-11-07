@@ -12,7 +12,12 @@ import { type RecordRow } from '../src/store.ts';
 import { startCli, type CliHandle } from './fixtures/cli-server.ts';
 import { rpcProxy } from './fixtures/rpc-proxy.ts';
 
-const MIN_WINDOW_MS = 90000, PHASE_BUDGET_MS = 120000, HISTORY_INTERVAL_MS = 5000;
+const EXTENDED_OUTAGE = process.env.CLEARLEDGER_LONG_RECEIPT_OUTAGE === '1';
+const MIN_WINDOW_MS = EXTENDED_OUTAGE ? 300000 : 90000;
+const PHASE_BUDGET_MS = MIN_WINDOW_MS * 4 / 3, HISTORY_INTERVAL_MS = 5000;
+const MIN_ACTIVE_ATTEMPTS = EXTENDED_OUTAGE ? 290 : 80;
+const MIN_HISTORY_SETS = MIN_WINDOW_MS / HISTORY_INTERVAL_MS;
+const TEST_TIMEOUT_MS = PHASE_BUDGET_MS * 2 + 120000;
 
 // A real CLI child owns all writes; the parent observes its durable projection.
 class Projection {
@@ -45,7 +50,7 @@ async function within<T>(pending: Promise<T>, timeoutMs: number) {
   } finally { clearTimeout(timer); }
 }
 
-test('the actual RPC CLI autonomously recovers after two 90-second observation windows within one receipt outage', { timeout: 300000 }, async t => {
+test(`the actual RPC CLI autonomously recovers after two ${MIN_WINDOW_MS / 1000}-second observation windows within one receipt outage`, { timeout: TEST_TIMEOUT_MS }, async t => {
   compile();
   const children: CliHandle[] = [];
   const dataRoot = resolve('../../work');
@@ -163,7 +168,7 @@ test('the actual RPC CLI autonomously recovers after two 90-second observation w
       try {
         for (;;) {
           const remaining = deadline - performance.now();
-          assert.ok(remaining > 0, 'Active receipt outage did not meet its observations within 120 seconds');
+          assert.ok(remaining > 0, `Active receipt outage did not meet its observations within ${PHASE_BUDGET_MS / 1000} seconds`);
           assert.equal(cli.child.exitCode, null, 'The observed CLI process exited during the active outage');
           assert.equal(cli.child.signalCode, null);
           await within(uncertain(), remaining);
@@ -183,14 +188,15 @@ test('the actual RPC CLI autonomously recovers after two 90-second observation w
             nextHistoryAt = performance.now() + HISTORY_INTERVAL_MS;
           }
           const elapsed = performance.now() - started, current = receiptCount();
-          assert.ok(elapsed <= PHASE_BUDGET_MS, 'Active receipt outage exceeded its 120-second observation budget');
+          assert.ok(elapsed <= PHASE_BUDGET_MS, `Active receipt outage exceeded its ${PHASE_BUDGET_MS / 1000}-second observation budget`);
           if (elapsed >= MIN_WINDOW_MS && boundaryCount === undefined) {
             boundaryCount = current; boundaryElapsedMs = elapsed;
           }
-          // Require a fresh failed RPC after the 90-second endpoint, rather
+          // Require a fresh failed RPC after the configured window endpoint, rather
           // than allowing early retries followed by a stalled scheduler to pass.
           if (boundaryCount !== undefined && current > boundaryCount &&
-            current - baseline > 80 && observations > 80 && historySets >= 18 && historyBoundaryElapsedMs !== undefined) {
+            current - baseline > MIN_ACTIVE_ATTEMPTS && observations > MIN_ACTIVE_ATTEMPTS &&
+            historySets >= MIN_HISTORY_SETS && historyBoundaryElapsedMs !== undefined) {
             passed = true; ended = performance.now();
             return { durationMs: ended - started, observations, failedReceiptAttempts: current - baseline,
               boundaryElapsedMs: boundaryElapsedMs!, failedReceiptsAfterBoundary: current - boundaryCount,
@@ -200,7 +206,8 @@ test('the actual RPC CLI autonomously recovers after two 90-second observation w
         }
       } finally {
         ended ??= performance.now();
-        t.diagnostic(JSON.stringify({ phase, passed, durationMs: Math.floor(ended - started), observations,
+        t.diagnostic(JSON.stringify({ phase, passed, minimumWindowMs: MIN_WINDOW_MS, phaseBudgetMs: PHASE_BUDGET_MS,
+          durationMs: Math.floor(ended - started), observations,
           failedReceiptAttempts: receiptCount() - baseline, boundaryElapsedMs: boundaryElapsedMs === undefined ? null : Math.floor(boundaryElapsedMs),
           failedReceiptsAfterBoundary: boundaryCount === undefined ? 0 : receiptCount() - boundaryCount,
           historySets, historyResponses: historySets * 3, historyResponseStatuses: [...historyResponseStatuses],
@@ -227,9 +234,9 @@ test('the actual RPC CLI autonomously recovers after two 90-second observation w
     const observedWindowMs = firstWindow.durationMs + secondWindow.durationMs;
     const restartDowntimeMs = restartedReadyAt - previousClosedAt; // Closed-to-ready gap, excluded from both windows.
     assert.ok(firstWindow.durationMs >= MIN_WINDOW_MS && secondWindow.durationMs >= MIN_WINDOW_MS);
-    assert.ok(firstWindow.failedReceiptAttempts > 80 && secondWindow.failedReceiptAttempts > 80);
-    assert.ok(firstWindow.observations > 80 && secondWindow.observations > 80);
-    assert.ok(firstWindow.historySets >= 18 && secondWindow.historySets >= 18);
+    assert.ok(firstWindow.failedReceiptAttempts > MIN_ACTIVE_ATTEMPTS && secondWindow.failedReceiptAttempts > MIN_ACTIVE_ATTEMPTS);
+    assert.ok(firstWindow.observations > MIN_ACTIVE_ATTEMPTS && secondWindow.observations > MIN_ACTIVE_ATTEMPTS);
+    assert.ok(firstWindow.historySets >= MIN_HISTORY_SETS && secondWindow.historySets >= MIN_HISTORY_SETS);
     assert.ok(observedWindowMs >= MIN_WINDOW_MS * 2);
 
     proxy.heal();
@@ -261,7 +268,8 @@ test('the actual RPC CLI autonomously recovers after two 90-second observation w
     assert.equal(reader.journals().length, 2);
     assert.equal(reader.events().length, 6);
     assert.equal(await chain.token.balanceOf(chain.payee.address), 132000000n);
-    t.diagnostic(JSON.stringify({ outageDurationMs: Math.floor(outageDurationMs), observedWindowMs: Math.floor(observedWindowMs),
+    t.diagnostic(JSON.stringify({ minimumWindowMs: MIN_WINDOW_MS, phaseBudgetMs: PHASE_BUDGET_MS,
+      outageDurationMs: Math.floor(outageDurationMs), observedWindowMs: Math.floor(observedWindowMs),
       restartDowntimeMs: Math.floor(restartDowntimeMs), startupReceiptAttempts,
       receiptAttemptsBeforeRestart: firstWindow.failedReceiptAttempts, receiptAttemptsAfterRestart: secondWindow.failedReceiptAttempts,
       observationsBeforeRestart: firstWindow.observations, observationsAfterRestart: secondWindow.observations,

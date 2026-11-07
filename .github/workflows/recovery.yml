@@ -1,0 +1,34 @@
+name: Extended receipt outage checks
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/recovery.yml
+      - tests/cli-recovery.test.ts
+permissions:
+  contents: read
+jobs:
+  receipt-outage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # observed v4 commit
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # observed v4 commit
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Verify reference toolchain
+        shell: bash
+        run: |
+          node --version
+          npm --version
+          test "$(node --version)" = "v$(cat .node-version)"
+          test "$(npm --version)" = "$(cat .npm-version)"
+      - run: npm ci
+      - run: npm run typecheck
+      - name: Observe receipt recovery across two five-minute windows
+        env:
+          CLEARLEDGER_LONG_RECEIPT_OUTAGE: '1'
+        run: node --import tsx --test --test-concurrency=1 tests/cli-recovery.test.ts

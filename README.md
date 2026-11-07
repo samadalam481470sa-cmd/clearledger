@@ -71,6 +71,8 @@ npm run build
 npm run source:count
 ```
 
+A dedicated recovery workflow exercises two five-minute receipt outage windows across abrupt CLI restart, with authenticated history reads throughout. [Verification evidence](STATUS.md#five-minute-receipt-outage-windows).
+
 The actual RPC CLI now has a crash and chain rollback recovery test. It retains an unjournaled reservation across abrupt termination, then retransmits the same signed transaction on the replacement chain before processing its successor. Linux CI passed all 1,100 tests, including this controlled Ganache rollback. [Verification evidence](STATUS.md#cli-recovery-after-a-rolled-back-settlement) · [Linux CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42334367069).
 
 The worker now checks that each receipt names the configured relayer and router. The Ganache regression held a mined payment when either address conflicted, then confirmed it after the original receipt returned. Reconciliation preserved both journals when it flagged a later mismatch. Linux CI passed all 1,099 tests, and four-validator Besu acceptance passed. [Verification evidence](STATUS.md#receipt-sender-and-recipient-checks) · [Linux CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42331618545) · [Besu acceptance](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42331618514).
