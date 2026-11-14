@@ -4,7 +4,7 @@ Prioritize verified payment correctness and demonstrable engineering over source
 
 ## Verified baseline
 
-Application source `86460563ff259b85b101e7d632619914a308753f` passed all 1,109 regular Linux tests with zero failures or skips, plus strict typecheck, build and source count. [Regular CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42379319205).
+Source `708f90d6162fadc97d9283c996760c9e100f5e6a` passed all 1,110 regular Linux tests with zero failures or skips, plus strict typecheck, build and source count. The CLI tests cover identical and conflicting submissions that overlap before acceptance. [Regular CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/43561276671) · [Submission evidence](STATUS.md#concurrent-conflicting-payment-submissions).
 
 The latest recorded Besu acceptance used source `98f51556738621d266fa9bd8060975c007784068` and passed all 11 checks, including EOA and contract-wallet quorum recovery, revocation and reconciliation of three journals. [Besu CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42357920444).
 

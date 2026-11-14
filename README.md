@@ -75,7 +75,7 @@ The results below belong to the stated source revisions. Documentation-only comm
 
 | Verification | Reviewed source | Completed evidence |
 | --- | --- | --- |
-| Regular Linux suite | `86460563` | 1,109 tests passed with zero failures or skips. Fresh install, strict typecheck, Solidity compilation, dashboard build and source count passed. [CI run](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42379319205) |
+| Regular Linux suite | `708f90d6` | 1,110 tests passed with zero failures or skips. Fresh install, strict typecheck, Solidity compilation, dashboard build and source count passed. [CI run](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/43561276671) |
 | Four-validator Besu | `98f51556` | All 11 checks passed on one Docker host in 372,385 ms, including EOA and contract-wallet quorum recovery, revocation and reconciliation of three journals. [CI run](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42357920444) |
 | CLI crash and rollback recovery | `86460563` | The CLI recovered the original signed reservation after a controlled Ganache rollback, then settled two payments on the final chain with two journals and reconciliation 2/0. [Evidence](STATUS.md#cli-recovery-after-a-rolled-back-settlement) |
 | Longer receipt outage | `bd7137fd` | Two five-minute observation windows recorded 634,266 ms of active checks and 360 authenticated HTTP 200 history responses across abrupt restart. Two payments recovered with two journals and reconciliation 2/0. [Dedicated CI run](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42336374899) |
