@@ -41,7 +41,7 @@ On the original Windows workspace, `Start-ClearLedger.ps1` can use the Node runt
 - RPC startup binds each database to its chain, genesis, router and relayer identity. Incompatible deployments and nonempty unbound legacy databases are refused; review [database context guidance](docs/API.md#rpc-database-context) before changing deployments.
 - The durable RPC CLI awaits a bound loopback listener before worker dispatch. A refused port preserves existing payment, audit and journal records; cleanup closes Store before releasing ownership. Earlier schema/context initialization can still write. See [listener readiness](docs/API.md#rpc-listener-readiness).
 - RPC startup also acquires exclusive ownership of its canonical local database file before opening the ledger or starting HTTP/dispatch. A second cooperating CLI refuses startup; process exit permits restart without deleting the persistent SQLite lock sidecar. Separate databases sharing a relayer key still require operator coordination; see [ownership limits](docs/API.md#rpc-database-ownership).
-- A matching settlement event, configured confirmation count, and canonical block are required before the transfer journal is finalized. The event's transaction hash, block hash, and height must agree with its receipt; contradictory matching logs preserve the broadcast reservation for retry.
+- A matching settlement event, configured confirmation count, and unique transaction membership at the receipt index are required before the transfer journal is finalized. The event's transaction hash, block hash, and height must agree with its receipt; contradictory matching logs preserve the broadcast reservation for retry.
 - Reconciliation checks saved authorization, signed bytes, receipt identity, transaction position, settlement event and journal. It distinguishes newly flagged records from all outstanding reviews, including unjournaled payments. Inconclusive missing-RPC evidence can return a retryable HTTP 503. [Reconciliation scope](docs/API.md#reconciliation-integrity).
 - Payment and journal APIs support bounded cursor pages, and exact integer transfer-volume totals are grouped by asset. Required missing postings, orphan/out-of-status journals, or malformed included journal tokens/amounts make the whole totals report unavailable; the dashboard clears cached totals/counts rather than showing partial or zero values. See [totals integrity](docs/API.md#journal-totals-integrity). Reconciliation scans all settled pages rather than a recent-record cutoff.
 - Invalid stored authorization data remains visible in history with a fixed warning and retained record/transaction metadata. Dashboard rows and receipts show placeholders for unavailable amounts or routes; reads do not repair financial records. See [nullable payment records](docs/API.md#invalid-stored-payment-data).
@@ -88,11 +88,11 @@ Detailed regression results and earlier failures retain their original source re
 
 ## More than 100,000 source lines
 
-The [machine-readable count](docs/source-count.json) records **639,946 nonblank source lines**, including comments and tests.
+The [machine-readable count](docs/source-count.json) records **639,999 nonblank source lines**, including comments and tests.
 
 | Source area | Files | Nonblank lines |
 | --- | --- | --- |
-| ClearLedger application area | 115 | 17,034 |
+| ClearLedger application area | 115 | 17,087 |
 | Attributed Besu snapshot | 4,484 | 622,912 |
 | Combined | 4,599 | 639,915 |
 

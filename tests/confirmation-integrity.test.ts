@@ -89,6 +89,7 @@ async function remainsUncertain(overrides: Record<string, unknown> = {}) {
   assert.equal(store.journals().length, 0);
   assert.equal(preflights, 0);
   assert.equal(signing, 0);
+  return worker;
 }
 
 for (const field of ['transactionHash', 'blockHash'] as const) {
@@ -258,6 +259,27 @@ for (const status of [0, 1]) {
       assert.equal(blockReads, 2);
     });
   }
+}
+
+for (const status of [0, 1]) {
+  test('duplicate transaction hash keeps status ' + status + ' unresolved until the block list is restored', async () => {
+    setReceiptStatus(status);
+    canonical.transactions = [txHash, otherTxHash, '0x' + txHash.slice(2).toUpperCase()];
+    const worker = await remainsUncertain();
+    assert.equal(blockReads, 2);
+
+    canonical.transactions = [txHash, otherTxHash];
+    // The stub stops when the successor reaches preflight after the reservation resolves.
+    await assert.rejects(worker.tick(), /Queued nonce was allocated too early/);
+    const outcome = status === 1 ? 'settled' : 'failed';
+    const resolved = store.get(firstId)!;
+    assert.equal(resolved.status, outcome);
+    assert.ok(resolved.raw_tx === raw && resolved.tx_hash === txHash);
+    assert.equal(store.events().filter(event => event.action === outcome).length, 1);
+    assert.equal(store.journals().length, status);
+    assert.equal(preflights, 1);
+    assert.equal(signing, 0);
+  });
 }
 
 for (const [description, index] of [

@@ -169,6 +169,14 @@ test('the reserved hash at a different canonical transaction slot is reviewed', 
   await flagged();
 });
 
+for (const availability of ['matching', 'missing'] as const) {
+  test('duplicate transaction hash with a ' + availability + ' receipt triggers review', async () => {
+    if (availability === 'missing') receipt = null;
+    canonical.transactions = [txHash, '0x' + '99'.repeat(32), '0x' + txHash.slice(2).toUpperCase()];
+    await flagged();
+  });
+}
+
 for (const [description, change] of [
   ['missing receipt and log transaction indexes', () => {
     delete receipt.index; delete receipt.logs[0].transactionIndex;

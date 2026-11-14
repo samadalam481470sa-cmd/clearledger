@@ -16,12 +16,14 @@ import { paymentTypes, type Payment } from '../src/payment.ts';
 const replacementHash = id('conflicting block transaction membership');
 type RpcCall = { id: number | string; method: string; params: string[] };
 type ReceiptEndpoint = 'from' | 'to';
+type BlockFault = 'replacement' | 'duplicate';
+const caseVariant = (hash: string) => '0x' + hash.slice(2).toUpperCase();
 type RpcReply = { id: number | string; result?: {
   hash?: string; transactions?: string[]; transactionHash?: string; from?: string; to?: string
 } | null };
 
-async function blockProxy(upstream: string) {
-  let fault = true;
+async function blockProxy(upstream: string, initialFault?: BlockFault) {
+  let fault = initialFault;
   let altered = 0;
   let withheldReceiptHash: string | undefined;
   let withheldBlockHash: string | undefined;
@@ -69,7 +71,8 @@ async function blockProxy(upstream: string) {
           if (!fault || !sends.length || !Array.isArray(transactions) || call?.method !== 'eth_getBlockByNumber') continue;
           const index = transactions.indexOf(sends[0]);
           if (index < 0) continue;
-          transactions[index] = replacementHash;
+          if (fault === 'duplicate') transactions.push(caseVariant(sends[0]));
+          else transactions[index] = replacementHash;
           altered++;
         }
         if (!res.destroyed) { res.writeHead(response.status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(result)); }
@@ -92,8 +95,8 @@ async function blockProxy(upstream: string) {
     withholdReceipt(hash: string) { withheldReceiptHash = hash; },
     withholdBlock(hash: string) { withheldBlockHash = hash; },
     corruptEndpoint(field: ReceiptEndpoint, address: string) { endpointFault = { field, address }; },
-    heal() { fault = false; withheldReceiptHash = withheldBlockHash = endpointFault = undefined; },
-    corrupt() { fault = true; },
+    heal() { fault = undefined; withheldReceiptHash = withheldBlockHash = endpointFault = undefined; },
+    corrupt(mode: BlockFault) { fault = mode; },
     async close() {
       server.closeAllConnections();
       await new Promise<void>(resolve => server.close(() => resolve()));
@@ -102,7 +105,8 @@ async function blockProxy(upstream: string) {
   };
 }
 
-test('actual RPC block membership guards confirmation and reviews only the affected settlement', { timeout: 30000 }, async t => {
+for (const fault of ['replacement', 'duplicate'] as const) test(
+  'actual RPC ' + fault + ' block membership guards confirmation and reviews only the affected settlement', { timeout: 30000 }, async t => {
   let chain: Awaited<ReturnType<typeof localChain>> | undefined;
   let proxy: Awaited<ReturnType<typeof blockProxy>> | undefined;
   let provider: ReturnType<typeof createRpcProvider> | undefined;
@@ -133,7 +137,7 @@ test('actual RPC block membership guards confirmation and reviews only the affec
 
   compile();
   const local = chain = await localChain();
-  const relay = proxy = await blockProxy(local.provider._getConnection().url);
+  const relay = proxy = await blockProxy(local.provider._getConnection().url, fault);
   const rpc = provider = createRpcProvider(relay.url, 2000);
   const ledger = store = new Store();
   const routerAddress = String(local.router.target);
@@ -164,17 +168,29 @@ test('actual RPC block membership guards confirmation and reviews only the affec
   assert.ok(block && presentedBlock);
   assert.equal(block.transactions[receipt.index], hash);
   const restored = [...presentedBlock.transactions];
-  assert.equal(restored[receipt.index], replacementHash);
-  assert.notEqual(restored[receipt.index], hash);
-  restored[receipt.index] = hash;
+  if (fault === 'duplicate') {
+    assert.equal(restored[receipt.index], hash, 'The genuine receipt slot must still match');
+    assert.equal(restored.pop(), caseVariant(hash), 'The provider must preserve the case-variant duplicate');
+  } else {
+    assert.equal(restored[receipt.index], replacementHash);
+    assert.notEqual(restored[receipt.index], hash);
+    restored[receipt.index] = hash;
+  }
   assert.deepEqual({ ...presentedBlock.toJSON(), transactions: restored }, block.toJSON());
   assert.ok(relay.altered() >= 2, 'The worker and evidence check must both receive the contradiction');
 
+  t.diagnostic(JSON.stringify({ blockFault: fault, affectedPaymentStatus: reserved.status,
+    successorStatus: ledger.get(second.id)?.status, nativeSends: relay.sends.length, journalRows: ledger.journals().length }));
   assert.equal(reserved.status, 'broadcast');
+  const reservedAudit = ledger.events();
+  const changes = () => ledger.db.prepare('SELECT total_changes() AS count').get()!.count;
+  const heldChanges = changes();
   for (let retry = 0; retry < 3; retry++) {
     await operation(service.tick());
     assert.ok(isDeepStrictEqual(ledger.get(first.id), reserved), 'Fault changed the persisted broadcast');
     assert.ok(isDeepStrictEqual(ledger.get(second.id), second), 'Fault changed the queued successor');
+    assert.deepEqual(ledger.events(), reservedAudit);
+    assert.equal(changes(), heldChanges);
     assert.deepEqual(ledger.journals(), []);
     assert.deepEqual(relay.sends, [hash]);
   }
@@ -212,65 +228,67 @@ test('actual RPC block membership guards confirmation and reviews only the affec
     });
     return { status: response.status, body: await response.json() };
   }
-  const unavailableResponse = { status: 503, body: { error: 'Upstream RPC unavailable; check payment history before retrying' } };
-  function assertSettlementsUnchanged() {
-    assert.ok(isDeepStrictEqual(ledger.get(first.id), settled));
-    assert.ok(isDeepStrictEqual(ledger.get(second.id), next));
-    assert.deepEqual(ledger.journals(), journals);
-    assert.deepEqual(ledger.events(), audit);
-    assert.deepEqual(ledger.assetTotals(), totals);
-    assert.deepEqual(relay.sends, [hash, next.tx_hash]);
-  }
-  async function assertHealedReconciliation() {
+  if (fault === 'replacement') {
+    const unavailableResponse = { status: 503, body: { error: 'Upstream RPC unavailable; check payment history before retrying' } };
+    function assertSettlementsUnchanged() {
+      assert.ok(isDeepStrictEqual(ledger.get(first.id), settled));
+      assert.ok(isDeepStrictEqual(ledger.get(second.id), next));
+      assert.deepEqual(ledger.journals(), journals);
+      assert.deepEqual(ledger.events(), audit);
+      assert.deepEqual(ledger.assetTotals(), totals);
+      assert.deepEqual(relay.sends, [hash, next.tx_hash]);
+    }
+    async function assertHealedReconciliation() {
+      assertSettlementsUnchanged();
+      relay.heal();
+      const retried = await operation(requestReconciliation());
+      assert.equal(retried.status, 200);
+      assert.equal(retried.body.checked, 2);
+      assert.deepEqual(retried.body.exceptions, []);
+      assert.equal(retried.body.outstandingReviews, 0);
+      assertSettlementsUnchanged();
+    }
+
+    relay.withholdReceipt(hash);
+    assert.equal(await rpc.getTransactionReceipt(hash), null);
+    assert.deepEqual((await rpc.getBlock(receipt.blockNumber))?.toJSON(), block.toJSON());
+    const unavailable = await operation(requestReconciliation());
+    t.diagnostic(JSON.stringify({ missingReceiptHttpStatus: unavailable.status,
+      withheldCanonicalReceipts: relay.withheldReceipts(), affectedPaymentStatus: ledger.get(first.id)?.status }));
+    assert.deepEqual(unavailable, unavailableResponse);
+    assert.equal(relay.withheldReceipts(), 2);
+    await assertHealedReconciliation();
+
+    relay.withholdBlock(receipt.blockHash);
+    assert.equal(await rpc.getBlock(receipt.blockNumber), null);
+    assert.deepEqual((await rpc.getTransactionReceipt(hash))?.toJSON(), receipt.toJSON());
+    const unavailableBlock = await operation(requestReconciliation());
+    t.diagnostic(JSON.stringify({ missingBlockHttpStatus: unavailableBlock.status,
+      withheldCanonicalBlocks: relay.withheldBlocks(), affectedPaymentStatus: ledger.get(first.id)?.status }));
+    assert.deepEqual(unavailableBlock, unavailableResponse);
+    assert.equal(relay.withheldBlocks(), 2);
+    await assertHealedReconciliation();
+
+    const malformedReceiptMarker = 'PRIVATE_MALFORMED_RPC_RECEIPT_FROM';
+    relay.corruptEndpoint('from', malformedReceiptMarker);
+    let receiptFormattingCode: string | undefined;
+    try { await operation(rpc.getTransactionReceipt(hash)); }
+    catch (error) {
+      const code = (error as { code?: unknown }).code;
+      if (typeof code === 'string') receiptFormattingCode = code;
+    }
+    assert.equal(receiptFormattingCode, 'BAD_DATA', 'The genuine ethers receipt formatter must reject the altered address');
+    const malformedReceipt = await operation(requestReconciliation());
+    const privateMarkerLeaked = JSON.stringify(malformedReceipt.body).includes(malformedReceiptMarker);
+    t.diagnostic(JSON.stringify({ receiptFormattingCode, malformedReceiptHttpStatus: malformedReceipt.status, privateMarkerLeaked }));
     assertSettlementsUnchanged();
-    relay.heal();
-    const retried = await operation(requestReconciliation());
-    assert.equal(retried.status, 200);
-    assert.equal(retried.body.checked, 2);
-    assert.deepEqual(retried.body.exceptions, []);
-    assert.equal(retried.body.outstandingReviews, 0);
-    assertSettlementsUnchanged();
+    assert.equal(malformedReceipt.status, 503);
+    assert.ok(!privateMarkerLeaked, 'Reconciliation exposed the private malformed receipt value');
+    assert.ok(isDeepStrictEqual(malformedReceipt, unavailableResponse), 'Malformed receipt must return the fixed redacted upstream response');
+    await assertHealedReconciliation();
   }
 
-  relay.withholdReceipt(hash);
-  assert.equal(await rpc.getTransactionReceipt(hash), null);
-  assert.deepEqual((await rpc.getBlock(receipt.blockNumber))?.toJSON(), block.toJSON());
-  const unavailable = await operation(requestReconciliation());
-  t.diagnostic(JSON.stringify({ missingReceiptHttpStatus: unavailable.status,
-    withheldCanonicalReceipts: relay.withheldReceipts(), affectedPaymentStatus: ledger.get(first.id)?.status }));
-  assert.deepEqual(unavailable, unavailableResponse);
-  assert.equal(relay.withheldReceipts(), 2);
-  await assertHealedReconciliation();
-
-  relay.withholdBlock(receipt.blockHash);
-  assert.equal(await rpc.getBlock(receipt.blockNumber), null);
-  assert.deepEqual((await rpc.getTransactionReceipt(hash))?.toJSON(), receipt.toJSON());
-  const unavailableBlock = await operation(requestReconciliation());
-  t.diagnostic(JSON.stringify({ missingBlockHttpStatus: unavailableBlock.status,
-    withheldCanonicalBlocks: relay.withheldBlocks(), affectedPaymentStatus: ledger.get(first.id)?.status }));
-  assert.deepEqual(unavailableBlock, unavailableResponse);
-  assert.equal(relay.withheldBlocks(), 2);
-  await assertHealedReconciliation();
-
-  const malformedReceiptMarker = 'PRIVATE_MALFORMED_RPC_RECEIPT_FROM';
-  relay.corruptEndpoint('from', malformedReceiptMarker);
-  let receiptFormattingCode: string | undefined;
-  try { await operation(rpc.getTransactionReceipt(hash)); }
-  catch (error) {
-    const code = (error as { code?: unknown }).code;
-    if (typeof code === 'string') receiptFormattingCode = code;
-  }
-  assert.equal(receiptFormattingCode, 'BAD_DATA', 'The genuine ethers receipt formatter must reject the altered address');
-  const malformedReceipt = await operation(requestReconciliation());
-  const privateMarkerLeaked = JSON.stringify(malformedReceipt.body).includes(malformedReceiptMarker);
-  t.diagnostic(JSON.stringify({ receiptFormattingCode, malformedReceiptHttpStatus: malformedReceipt.status, privateMarkerLeaked }));
-  assertSettlementsUnchanged();
-  assert.equal(malformedReceipt.status, 503);
-  assert.ok(!privateMarkerLeaked, 'Reconciliation exposed the private malformed receipt value');
-  assert.ok(isDeepStrictEqual(malformedReceipt, unavailableResponse), 'Malformed receipt must return the fixed redacted upstream response');
-  await assertHealedReconciliation();
-
-  relay.corrupt();
+  relay.corrupt(fault);
   const contradictory = await operation(service.reconcile());
   assert.equal(relay.altered(), confirmationContradictions + 1, 'Reconciliation must receive one altered block');
   assert.equal(contradictory.checked, 2);
@@ -299,7 +317,7 @@ test('actual RPC block membership guards confirmation and reviews only the affec
   assert.deepEqual(ledger.journals(), journals);
   assert.deepEqual(ledger.events(), [reviewEvent, ...audit]);
   assert.deepEqual(relay.sends, [hash, next.tx_hash]);
-  t.diagnostic(JSON.stringify({ contradictoryBlocks: confirmationContradictions, recoveredSettlements: 2,
+  t.diagnostic(JSON.stringify({ blockFault: fault, contradictoryBlocks: confirmationContradictions, recoveredSettlements: 2,
     reconciliationContradictoryBlocks: relay.altered() - confirmationContradictions, reviewedSettlements: 1,
     retainedJournals: journals.length, nativeSends: relay.sends.length }));
 });

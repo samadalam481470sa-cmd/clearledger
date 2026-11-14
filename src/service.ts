@@ -12,11 +12,21 @@ function isHash(value: unknown): value is string {
 function sameHash(actual: unknown, expected: string): boolean {
   return isHash(actual) && actual.toLowerCase() === expected.toLowerCase();
 }
+function uniqueTransactionIndex(block: Block, hash: string): number | undefined {
+  const transactions = block.transactions;
+  if (!Array.isArray(transactions)) return;
+  let index: number | undefined;
+  for (const [position, transactionHash] of transactions.entries()) {
+    if (!sameHash(transactionHash, hash)) continue;
+    if (index !== undefined) return; // A repeated hash contradicts the block's claimed membership.
+    index = position;
+  }
+  return index;
+}
 function matchesCanonicalPosition(receipt: TransactionReceipt, block: Block | null): boolean {
   if (!block || block.number !== receipt.blockNumber || !sameHash(block.hash, receipt.blockHash) ||
     !Number.isSafeInteger(receipt.index) || receipt.index < 0) return false;
-  const transactions = block.transactions;
-  return Array.isArray(transactions) && sameHash(transactions[receipt.index], receipt.hash);
+  return uniqueTransactionIndex(block, receipt.hash) === receipt.index;
 }
 
 interface ReconciliationResult { checked: number; exceptions: string[]; outstandingReviews: number; at: string }
@@ -257,13 +267,11 @@ export class PaymentService {
             journal.debit_account === p.payer && journal.credit_account === p.payee &&
             journal.amount === p.amount && journal.tx_hash === txHash &&
             journal.block_number === row.block_number && journal.block_hash === row.block_hash;
-          // Positive block membership leaves a missing receipt inconclusive.
+          // Unique block membership leaves a missing receipt inconclusive.
           if (receipt === null && journalMatches && block &&
-            block.number === row.block_number && sameHash(block.hash, row.block_hash)) {
-            const transactions = block.transactions;
-            if (Array.isArray(transactions) && transactions.some(hash => sameHash(hash, txHash)))
-              throw new ReconciliationReceiptUnavailable('Receipt unavailable for transaction listed in the canonical block');
-          }
+            block.number === row.block_number && sameHash(block.hash, row.block_hash) &&
+            uniqueTransactionIndex(block, txHash) !== undefined)
+            throw new ReconciliationReceiptUnavailable('Receipt unavailable for transaction listed in the canonical block');
           matches = journalMatches && !!receipt && receipt.status === 1 && sameHash(receipt.hash, txHash) &&
             this.receiptMatchesSettlementCall(receipt) && receipt.blockNumber === row.block_number &&
             sameHash(receipt.blockHash, row.block_hash) &&

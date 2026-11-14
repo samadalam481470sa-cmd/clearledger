@@ -12,7 +12,7 @@ The CLI rollback case is included in that regular suite. The longer receipt-rout
 
 Reconciliation reports distinguish new flags from all outstanding reviews. Totals validate posting relationships, retained transfer fields and inclusion metadata. The dashboard supports cursor pages, exact payment lookup and separate journaled settled/review volume. Browser layout, mounted interaction and accessibility remain unverified under the existing origin denial.
 
-The count is 639,946 nonblank source lines, comprising 17,034 application-area lines and 622,912 attributed Besu lines, including comments and tests. The application area includes the attributed signature-check adaptation. Historical measurements and earlier failures remain tied to their recorded revisions in [STATUS.md](STATUS.md) and [VALIDATION.md](docs/VALIDATION.md).
+The count is 639,999 nonblank source lines, comprising 17,087 application-area lines and 622,912 attributed Besu lines, including comments and tests. The application area includes the attributed signature-check adaptation. Historical measurements and earlier failures remain tied to their recorded revisions in [STATUS.md](STATUS.md) and [VALIDATION.md](docs/VALIDATION.md).
 
 ## Next increments
 
