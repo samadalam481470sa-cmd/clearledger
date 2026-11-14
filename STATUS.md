@@ -1,6 +1,6 @@
 # ClearLedger status
 
-Updated: November 6, 2026.
+Updated: November 14, 2026 (UTC).
 
 ## Scope and constraints
 
@@ -465,6 +465,14 @@ Project writes are confined to the new `outputs/clearledger/` directory and task
 
 - Reviewed source [`c12406f612f0bf79091aa7d3ab4bf41d9f20b830`](https://github.com/samadalam481470sa-cmd/clearledger/commit/c12406f612f0bf79091aa7d3ab4bf41d9f20b830), tree `53fc4b2a400fc84da934bc1c3a7d7cce27a9ccc3`, passed [regular CI `41681230278`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/41681230278), job `126075100297`: **859 passes/zero failures/zero skips** in 377,834.58626 ms, plus fresh npm ci, strict typecheck, Solidity 0.8.30/Paris and Vite 7.3.7 build (34 transformed modules), and source count 636,312. All 22 new Store/HTTP cases passed, including canonical/query/URI errors, privacy/nullability, fixed unknown-record 404 and unchanged reads. The all-status direct/collection DTO case took 70.815814 ms, encoded-colon case 12.203394 ms and older-than-preview case 46.601489 ms. Node/npm were 24.21.0/11.19.0; installation reported 33 audit entries, including five critical findings. Source head, completed conclusion, every job step and logs were verified.
 - The new actual CLI/Ganache/proxy case passed in 5,760.234409 ms. Its diagnostics recorded one automatic settlement, two genuine RPC-dependent 503 responses, four exact reads with zero additional RPC calls, one native send/journal, three lifecycle events and reconciliation 1/0. Successful assertions also preserve exact private SQLite evidence and the signed transaction through failure/healing, public DTO privacy, original replay and token/native-nonce invariants. These controlled reads do not establish an in-flight-acceptance race result, arbitrary RPC/storage availability, browser behavior, a new Besu result, soak or an SLO.
+
+## Concurrent conflicting payment submissions
+
+- The real RPC CLI acceptance test now covers overlapping submissions with valid EOA signatures for the same payer and payment ID, using amounts of 125 and 7 dUSD. The proxy holds the first forwarded signature-view response. Both signature calls reach Ganache with their exact submitted arguments, and both native HTTP clients remain pending at release. Two exact lookups return the fixed 404 without RPC. The complete empty SQLite projection is preserved during the observation.
+- The conflicting pair produces one HTTP 202 with `replay: false` and one fixed HTTP 409. The test selects the accepted instruction by its response. Its original payload, signature and fingerprint remain in the only payment row. One send carries the exact saved signed bytes and settlement calldata. One journal and three lifecycle events record the accepted amount. The payer and payee balance changes match that amount, and both the payer authorization nonce and relayer transaction nonce advance once.
+- Concurrent retries of the accepted and rejected instructions return HTTP 200 replay and 409 respectively. Exact lookup, the retries and reconciliation preserve the full settled projection. Reconciliation checks one payment with zero exceptions. The identical-submission variant retains its 202 and 200 replay outcome.
+- On Windows with Node 24.22.1, both cases passed in 18,372.644 ms with zero failures or skips. The conflicting case passed in 7,180.3005 ms with a 70 ms gated observation. The first submission won and settled 125 dUSD in that run. Strict TypeScript checking passed. Source count reproduced 639,946 nonblank lines across 115 application files (17,034 lines) and 4,484 attributed Besu files (622,912 lines).
+- This test exercises one CLI, one file-backed SQLite database and one local Ganache instance with the pinned RPC transport. The ordering assertion permits either winner, and the run observed one winner order. Multiworker submission, sustained concurrent load and other transport scheduling remain outside this scenario.
 
 ## Unusable RPC data at the HTTP boundary
 

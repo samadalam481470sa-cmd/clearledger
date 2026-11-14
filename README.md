@@ -88,11 +88,11 @@ Detailed regression results and earlier failures retain their original source re
 
 ## More than 100,000 source lines
 
-The [machine-readable count](docs/source-count.json) records **639,915 nonblank source lines**, including comments and tests.
+The [machine-readable count](docs/source-count.json) records **639,946 nonblank source lines**, including comments and tests.
 
 | Source area | Files | Nonblank lines |
 | --- | --- | --- |
-| ClearLedger application area | 115 | 17,003 |
+| ClearLedger application area | 115 | 17,034 |
 | Attributed Besu snapshot | 4,484 | 622,912 |
 | Combined | 4,599 | 639,915 |
 

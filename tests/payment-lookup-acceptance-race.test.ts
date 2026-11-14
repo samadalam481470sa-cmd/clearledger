@@ -8,7 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { id, keccak256, Transaction } from 'ethers';
 import { compile } from '../scripts/compile.ts';
 import { localChain } from '../scripts/local-chain.ts';
-import { domain, paymentKey, paymentTypes, type Payment } from '../src/payment.ts';
+import { digest, domain, paymentKey, paymentTypes, type Payment } from '../src/payment.ts';
 import type { RecordRow } from '../src/store.ts';
 import { startCli, type CliHandle } from './fixtures/cli-server.ts';
 import { rpcProxy } from './fixtures/rpc-proxy.ts';
@@ -86,7 +86,8 @@ function publicRow(row: any, key: string, payment: Payment) {
 
 // The real RPC CLI owns writes and autonomous ticks. The parent only reads
 // SQLite and the development EVM; the gate holds genuine forwarded RPC bytes.
-test('exact lookup can return 404 before an overlapping identical acceptance commits once', { timeout: 45000 }, async t => {
+for (const mode of ['identical', 'conflicting'] as const) test(
+  'exact lookup can return 404 before overlapping ' + mode + ' submissions settle once', { timeout: 45000 }, async t => {
   const workRoot = resolve('../../work'), children: CliHandle[] = [];
   const requests: ReturnType<typeof pendingPost>[] = [], operations: Promise<unknown>[] = [];
   const gates: ReturnType<Awaited<ReturnType<typeof rpcProxy>>['pauseAfterForward']>[] = [];
@@ -102,14 +103,23 @@ test('exact lookup can return 404 before an overlapping identical acceptance com
       onSpawn: child => { children.push(child); } });
     reader = new Projection(db);
     const block = await live.provider.getBlock('latest'); assert.ok(block);
-    const [payerTokens, relayerNonce, payerNativeNonce] = await Promise.all([
-      live.token.balanceOf(live.payer.address), live.provider.getTransactionCount(live.relayer.address, 'pending'),
+    const [payerTokens, payeeTokens, relayerNonce, payerNativeNonce] = await Promise.all([
+      live.token.balanceOf(live.payer.address), live.token.balanceOf(live.payee.address),
+      live.provider.getTransactionCount(live.relayer.address, 'pending'),
       live.provider.getTransactionCount(live.payer.address, 'pending')
     ]);
     const payment: Payment = { paymentId: id(randomBytes(16).toString('hex')), payer: live.payer.address,
       payee: live.payee.address, token: await live.token.getAddress(), amount: '125000000', nonce: '0', deadline: String(block.timestamp + 3600) };
     const signingDomain = domain(31337, routerAddress);
-    const input = { payment, signature: await live.payer.signTypedData(signingDomain, paymentTypes, payment) }, key = paymentKey(payment);
+    const conflictingPayment = { ...payment, amount: '7000000' };
+    const sign = async (intent: Payment) => ({ payment: intent,
+      signature: await live.payer.signTypedData(signingDomain, paymentTypes, intent) });
+    const input = await sign(payment), conflictingInput = await sign(conflictingPayment);
+    const inputs = [input, mode === 'conflicting' ? conflictingInput : input];
+    const key = paymentKey(payment);
+    assert.equal(paymentKey(conflictingPayment), key);
+    const expectedViews = inputs.map(candidate => live.router.interface
+      .encodeFunctionData('isValidPaymentSignature', [candidate.payment, candidate.signature]).toLowerCase());
     const empty = reader.snapshot(); assert.equal(reader.row(key), undefined);
     assert.equal(reader.audit().length, 0); assert.equal(reader.journals().length, 0);
     let heldStarted: number | undefined, forwardedCalls = 0;
@@ -126,8 +136,8 @@ test('exact lookup can return 404 before an overlapping identical acceptance com
     const viewCalls = gateway.calls.slice(rpcBaseline).filter(call => call.method === 'eth_call');
     assert.equal(viewCalls.length, 1);
     const call = viewCalls[0].params?.[0] as { to?: string; data?: string };
-    const expectedCall = live.router.interface.encodeFunctionData('isValidPaymentSignature', [payment, input.signature]);
-    assert.equal(call.to?.toLowerCase(), routerAddress.toLowerCase()); assert.equal(call.data?.toLowerCase(), expectedCall.toLowerCase());
+    assert.equal(call.to?.toLowerCase(), routerAddress.toLowerCase());
+    assert.ok(call.data?.toLowerCase() === expectedViews[0], 'First signature view did not use the first submitted intent');
     assert.equal(first.responses(), 0); assert.equal(first.closed(), false);
     const beforeLookupRpc = gateway.calls.length;
     const missing = await within(track(api(cli, 'payments/' + encodeURIComponent(key))), 'Pending acceptance lookup', remaining());
@@ -136,14 +146,14 @@ test('exact lookup can return 404 before an overlapping identical acceptance com
     assert.ok(reader.snapshot() === empty, 'Pending acceptance or local lookup changed empty durable state');
     assert.equal(gateway.calls.filter(item => item.method === 'eth_sendRawTransaction').length, 0);
     assert.equal(first.responses(), 0); assert.equal(cli.child.exitCode, null); assert.equal(cli.child.signalCode, null);
-    const second = pendingPost(cli, input); requests.push(second);
+    const second = pendingPost(cli, inputs[1]); requests.push(second);
     await until(() => forwardedCalls === 2, 'Second genuine signature-view exchange', remaining());
     const concurrentCalls = gateway.calls.slice(rpcBaseline).filter(item => item.method === 'eth_call');
     assert.equal(concurrentCalls.length, 2);
-    for (const item of concurrentCalls) {
+    for (const [index, item] of concurrentCalls.entries()) {
       const view = item.params?.[0] as { to?: string; data?: string };
       assert.equal(view.to?.toLowerCase(), routerAddress.toLowerCase());
-      assert.equal(view.data?.toLowerCase(), expectedCall.toLowerCase());
+      assert.ok(view.data?.toLowerCase() === expectedViews[index], 'Signature view did not use its submitted intent');
     }
     assert.equal(first.responses(), 0); assert.equal(second.responses(), 0);
     assert.equal(first.closed(), false); assert.equal(second.closed(), false);
@@ -158,41 +168,62 @@ test('exact lookup can return 404 before an overlapping identical acceptance com
     const heldMs = performance.now() - heldStarted!; remaining(); gate.release(); gateway.heal();
     const acknowledgements = await within(Promise.all([first.result, second.result]), 'Overlapping acceptance acknowledgements');
     const acknowledgementPairs = acknowledgements.map(response => [response.status, response.body.replay] as [number, boolean]);
-    assert.deepEqual(acknowledgementPairs.sort((a, b) => a[0] - b[0]), [[200, true], [202, false]]);
-    for (const response of acknowledgements) publicRow(response.body.payment, key, payment);
+    assert.deepEqual(acknowledgementPairs.sort((a, b) => a[0] - b[0]),
+      mode === 'conflicting' ? [[202, false], [409, undefined]] : [[200, true], [202, false]]);
+    const winner = acknowledgements.findIndex(response => response.status === 202);
+    const acceptedInput = inputs[winner];
+    const acceptedPayment = acceptedInput.payment;
+    const conflictBody = { error: 'Payment ID already has different instructions' };
+    if (mode === 'conflicting') assert.deepEqual(acknowledgements[1 - winner].body, conflictBody);
+    for (const response of acknowledgements) {
+      if (response.status !== 409) publicRow(response.body.payment, key, acceptedPayment);
+    }
     const committed = await track(api(cli, 'payments/' + encodeURIComponent(key)));
-    assert.equal(committed.status, 200); publicRow(committed.body, key, payment);
+    assert.equal(committed.status, 200); publicRow(committed.body, key, acceptedPayment);
     await until(() => reader!.row(key)?.status === 'settled', 'Autonomous once-only settlement');
     const settled = reader.row(key)!; assert.ok(settled.raw_tx && settled.tx_hash);
     const raw = settled.raw_tx, hash = settled.tx_hash;
-    assert.equal(keccak256(raw), hash); assert.equal(Transaction.from(raw).nonce, relayerNonce);
-    assert.equal(reader.journals().length, 1); assert.equal(reader.journals()[0].tx_hash, hash);
-    assert.equal(reader.journals()[0].amount, payment.amount);
+    assert.deepEqual(JSON.parse(settled.payload), acceptedPayment);
+    assert.ok(settled.signature === acceptedInput.signature, 'Stored signature differs from the accepted instruction');
+    assert.equal(settled.fingerprint, digest(acceptedPayment, signingDomain));
+    assert.equal(reader.db.prepare('SELECT COUNT(*) AS count FROM payments').get()!.count, 1);
+    const transaction = Transaction.from(raw);
+    assert.equal(keccak256(raw), hash); assert.equal(transaction.nonce, relayerNonce);
+    assert.equal(transaction.to, routerAddress); assert.equal(transaction.value, 0n);
+    assert.ok(transaction.data === live.router.interface.encodeFunctionData('settle', [acceptedPayment, acceptedInput.signature]),
+      'Broadcast did not encode the accepted instruction');
+    assert.deepEqual(reader.journals().map(journal => ({ ...journal })), [{ payment_id: key, token: acceptedPayment.token,
+      debit_account: acceptedPayment.payer, credit_account: acceptedPayment.payee, amount: acceptedPayment.amount,
+      tx_hash: hash, block_number: settled.block_number, block_hash: settled.block_hash }]);
     assert.deepEqual(reader.audit().map(event => event.action), ['accepted', 'broadcast-prepared', 'settled']);
     const settledProjection = reader.snapshot();
     const found = await track(api(cli, 'payments/' + encodeURIComponent(key)));
-    assert.equal(found.status, 200); publicRow(found.body, key, payment);
+    assert.equal(found.status, 200); publicRow(found.body, key, acceptedPayment);
     assert.equal(found.body.status, 'settled'); assert.equal(found.body.tx_hash, hash);
-    const replay = await track(api(cli, 'payments', input));
+    const rejectedInput = mode === 'conflicting' ? inputs[1 - winner] : conflictingInput;
+    const [replay, conflict] = await Promise.all([
+      track(api(cli, 'payments', acceptedInput)), track(api(cli, 'payments', rejectedInput))
+    ]);
     assert.equal(replay.status, 200); assert.equal(replay.body.replay, true); assert.equal(replay.body.payment.tx_hash, hash);
-    assert.ok(reader.snapshot() === settledProjection, 'Identical replay changed settled evidence');
-    const conflictingPayment = { ...payment, amount: '7000000' };
-    const conflict = await track(api(cli, 'payments', { payment: conflictingPayment,
-      signature: await live.payer.signTypedData(signingDomain, paymentTypes, conflictingPayment) }));
-    assert.equal(conflict.status, 409); assert.deepEqual(conflict.body, { error: 'Payment ID already has different instructions' });
-    assert.ok(reader.snapshot() === settledProjection, 'Conflicting signed instructions changed the original projection');
+    publicRow(replay.body.payment, key, acceptedPayment);
+    assert.equal(conflict.status, 409); assert.deepEqual(conflict.body, conflictBody);
+    assert.ok(reader.snapshot() === settledProjection, 'Replay or conflict changed settled evidence');
     const reconciliation = await track(api(cli, 'reconcile', {}));
     assert.equal(reconciliation.status, 200); assert.equal(reconciliation.body.checked, 1); assert.deepEqual(reconciliation.body.exceptions, []);
     assert.ok(reader.snapshot() === settledProjection, 'Read/replay/conflict/reconciliation changed settled evidence');
     assert.ok(reader.row(key)!.raw_tx === raw && reader.row(key)!.tx_hash === hash);
-    assert.equal(gateway.calls.filter(item => item.method === 'eth_sendRawTransaction').length, 1);
+    const sends = gateway.calls.filter(item => item.method === 'eth_sendRawTransaction');
+    assert.equal(sends.length, 1);
+    assert.ok(sends[0].params?.[0] === raw, 'The only native send must use the saved transaction bytes');
     assert.equal((await live.provider.getTransactionReceipt(hash))!.status, 1);
-    assert.equal(await live.token.balanceOf(live.payee.address), 125000000n);
-    assert.equal(await live.token.balanceOf(live.payer.address), payerTokens - 125000000n);
+    const settledAmount = BigInt(acceptedPayment.amount);
+    assert.equal(await live.token.balanceOf(live.payee.address), payeeTokens + settledAmount);
+    assert.equal(await live.token.balanceOf(live.payer.address), payerTokens - settledAmount);
     assert.equal(await live.router.nonces(live.payer.address), 1n);
     assert.equal(await live.provider.getTransactionCount(live.relayer.address, 'pending'), relayerNonce + 1);
     assert.equal(await live.provider.getTransactionCount(live.payer.address, 'pending'), payerNativeNonce);
-    t.diagnostic(JSON.stringify({ heldAcceptanceMs: Math.floor(heldMs), forwardedSignatureViews: concurrentCalls.length,
+    t.diagnostic(JSON.stringify({ mode, acceptedInput: winner + 1, settledBaseUnits: acceptedPayment.amount,
+      heldAcceptanceMs: Math.floor(heldMs), forwardedSignatureViews: concurrentCalls.length,
       heldMethodBatches, local404ReadsWhilePending: 2, lookupRpcCalls: 0,
       acknowledgementStatuses: acknowledgements.map(response => response.status), conflictingAcceptanceStatus: conflict.status,
       settledPayments: 1, journalRows: 1, lifecycleEvents: 3, nativeSends: 1, reconciled: 1 }));
