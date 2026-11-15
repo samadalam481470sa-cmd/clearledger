@@ -4,11 +4,11 @@ Prioritize verified payment correctness and demonstrable engineering over source
 
 ## Verified baseline
 
-Source `3d8d0f3667e619572f847da8d9a98c7d5dc849bb` passed all 1,130 regular Linux tests with zero failures or skips, plus strict typecheck, build and source count. The gas budget tests cover refusal before signing and recovery across UTC rollover. [Regular CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/43696333612) · [Gas budget evidence](STATUS.md#full-gas-allowance-before-settlement-signing).
+Source `a0c13705da1434864e3f899eb15bf30dee398e64` passed all 1,130 regular Linux tests with zero failures or skips, plus strict typecheck, build and source count. [Regular CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/43698870256).
 
-The same source passed all 11 Besu checks, including EOA and contract-wallet quorum recovery, revocation and reconciliation of three journals. [Besu CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/43696333630).
+The latest recorded Besu acceptance used source `3d8d0f3667e619572f847da8d9a98c7d5dc849bb` and passed all 11 checks, including EOA and contract-wallet quorum recovery, revocation and reconciliation of three journals. [Besu CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/43696333630).
 
-The CLI rollback case is included in that regular suite. The longer receipt-route outage was verified separately on source `bd7137fd7f2d9898a12c001a28f016e1bbe6a0e0`, with 634,266 ms of active observation across restart and 360 authenticated HTTP 200 history responses. [Extended outage CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42336374899).
+The CLI rollback case is included in the regular suite. The extended receipt outage test on source `a0c13705da1434864e3f899eb15bf30dee398e64` observed 645,255 ms across abrupt restart with 1,440 successful authenticated history responses in bursts of 12. [Extended outage CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/43698870254) · [Concurrent history evidence](STATUS.md#concurrent-history-reads-during-receipt-outage).
 
 Reconciliation reports distinguish new flags from all outstanding reviews. Totals validate posting relationships, retained transfer fields and inclusion metadata. The dashboard supports cursor pages, exact payment lookup and separate journaled settled/review volume. Browser layout, mounted interaction and accessibility remain unverified under the existing origin denial.
 
@@ -16,7 +16,7 @@ The count is 640,236 nonblank source lines, comprising 17,324 application-area l
 
 ## Next increments
 
-1. Extend the verified two five-minute receipt-outage windows toward longer outages, concurrent load and soak validation, with explicit observation boundaries.
+1. Extend the verified receipt-outage bursts toward longer outages, sustained load and soak validation with a larger journal and explicit observation boundaries.
 2. Extend the bounded EOA and contract-wallet quorum scenarios to other failure timings, malicious peers, arbitrary partitions and independent-host failures.
 3. Consider reviewed token-metadata governance beyond the configured display registry. Unconfigured assets retain exact base units.
 4. Add a durable event indexer with checkpoints, canonical-block validation and controlled replay.
