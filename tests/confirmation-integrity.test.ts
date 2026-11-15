@@ -157,6 +157,25 @@ for (const contradictoryFirst of [false, true]) {
   });
 }
 
+test('duplicate matching PaymentSettled logs keep the original reservation until the receipt is restored', async () => {
+  const coherent = { ...receipt.logs[0], index: 1 };
+  receipt.logs = [coherent, { ...coherent, index: 2 }];
+  const worker = await remainsUncertain();
+  assert.equal(blockReads, 2);
+
+  receipt.logs = [coherent];
+  // The fixture stops at successor preflight once the original reservation resolves.
+  await assert.rejects(worker.tick(), /Queued nonce was allocated too early/);
+  const settled = store.get(firstId)!;
+  assert.equal(settled.status, 'settled');
+  assert.ok(settled.raw_tx === raw && settled.tx_hash === txHash);
+  assert.equal(store.journal(firstId)?.tx_hash, txHash);
+  assert.equal(store.journals().length, 1);
+  assert.equal(store.events().filter(event => event.action === 'settled').length, 1);
+  assert.equal(preflights, 1);
+  assert.equal(signing, 0);
+});
+
 test('a coherent matching event remains accepted alongside unrelated contracts and malformed nonmatching logs', async () => {
   const coherent = receipt.logs[0];
   receipt.logs = [{ address: routerAddress, topics: ['0x1234'], data: 'not-abi-data' },

@@ -14,11 +14,11 @@ import { PaymentService } from '../src/service.ts';
 import { paymentTypes, type Payment } from '../src/payment.ts';
 
 type Provenance = 'transactionHash' | 'blockHash' | 'blockNumber' | 'transactionIndex';
-type ReceiptFault = Provenance | 'status' | 'status-no-logs';
+type ReceiptFault = Provenance | 'duplicate' | 'status' | 'status-no-logs';
 const fields: Provenance[] = ['transactionHash', 'blockHash', 'blockNumber', 'transactionIndex'];
 const differentHash = (value: string) => '0x' + (value.toLowerCase() === '0x' + 'fa'.repeat(32) ? 'fb' : 'fa').repeat(32);
 
-/** Only the selected receipt or matching log fields change; all requests reach Ganache. */
+/** Changes only the selected receipt or router log. All requests reach Ganache. */
 async function receiptProxy(upstream: string, routerAddress: string, topic: string) {
   let fault: ReceiptFault | undefined, target: string | undefined, altered = 0;
   const sends: string[] = [];
@@ -48,6 +48,11 @@ async function receiptProxy(upstream: string, routerAddress: string, topic: stri
               if (receipt.status !== '0x1') continue;
               receipt.status = '0x0';
               if (fault === 'status-no-logs') receipt.logs = [];
+              altered++;
+              break;
+            }
+            if (fault === 'duplicate') {
+              receipt.logs.push({ ...log });
               altered++;
               break;
             }
@@ -129,7 +134,7 @@ function matchingLog(receipt: TransactionReceipt) {
 
 // Real HTTP JSON-RPC and ethers formatting are exercised. Service ticks are
 // explicitly driven; this does not claim autonomous CLI or Besu validation.
-for (const field of fields) test('actual RPC log ' + field + ' contradiction blocks confirmation and later flags reconciliation', {
+for (const field of [...fields, 'duplicate'] as const) test('actual RPC log ' + field + ' contradiction blocks confirmation and later flags reconciliation', {
   timeout: 30000
 }, async t => {
   const firstInput = await signed('125000000', '0'), secondInput = await signed('7000000', '1');
@@ -149,34 +154,46 @@ for (const field of fields) test('actual RPC log ' + field + ' contradiction blo
   assert.equal(genuine.status, 1);
   const { log, index } = matchingLog(presented);
   const genuineLog = genuine.logs[index];
-  const expected = field === 'blockNumber' || field === 'transactionIndex'
-    ? genuineLog[field] + 1
-    : differentHash(genuineLog[field]);
-  assert.equal(log[field], expected);
-  if (field === 'transactionIndex') {
-    assert.equal(genuineLog.transactionIndex, genuine.index);
-    assert.equal(presented.index, genuine.index);
-    assert.notEqual(log.transactionIndex, presented.index);
-  }
-  assert.notEqual(log[field], genuineLog[field], 'ethers must retain the contradictory RPC provenance');
   const repairedPresentation = JSON.parse(JSON.stringify(presented));
-  repairedPresentation.logs[index][field] = genuineLog[field];
-  assert.deepEqual(repairedPresentation, JSON.parse(JSON.stringify(genuine)), 'Only matching-log provenance may differ from the genuine receipt');
+  if (field === 'duplicate') {
+    assert.equal(presented.logs.length, genuine.logs.length + 1);
+    assert.deepEqual(repairedPresentation.logs.pop(), JSON.parse(JSON.stringify(genuineLog)),
+      'ethers must retain the duplicate router log');
+    t.diagnostic(JSON.stringify({ firstStatus: reserved.status, successorStatus: store.get(second.id)?.status,
+      journalRows: store.journals().length, nativeSends: proxy.sends.length, appendedRouterLogs: 1 }));
+  } else {
+    const expected = field === 'blockNumber' || field === 'transactionIndex'
+      ? genuineLog[field] + 1
+      : differentHash(genuineLog[field]);
+    assert.equal(log[field], expected);
+    if (field === 'transactionIndex') {
+      assert.equal(genuineLog.transactionIndex, genuine.index);
+      assert.equal(presented.index, genuine.index);
+      assert.notEqual(log.transactionIndex, presented.index);
+    }
+    assert.notEqual(log[field], genuineLog[field], 'ethers must retain the contradictory RPC provenance');
+    repairedPresentation.logs[index][field] = genuineLog[field];
+  }
+  assert.deepEqual(repairedPresentation, JSON.parse(JSON.stringify(genuine)), 'Only the injected log change may differ from the genuine receipt');
   assert.ok(proxy.altered() >= 2);
   assert.equal(reserved.status, 'broadcast');
 
+  const heldAudit = store.events();
+  assert.equal(heldAudit.filter(event => event.action === 'accepted').length, 2);
+  assert.equal(heldAudit.filter(event => event.action === 'broadcast-prepared').length, 1);
+  assert.equal(heldAudit.length, 3);
+  const totalChanges = () => store.db.prepare('SELECT total_changes() AS count').get()!.count;
+  const heldChanges = totalChanges(), initialAltered = proxy.altered();
   for (let retry = 0; retry < 3; retry++) {
     await operation(service.tick());
-    assert.equal(store.get(first.id)!.status, 'broadcast');
-    assert.ok(store.get(first.id)!.raw_tx === originalRaw, 'Uncertain provenance changed signed bytes');
-    assert.equal(store.get(first.id)!.tx_hash, originalHash);
-    assert.equal(store.get(second.id)!.status, 'queued');
-    assert.equal(store.get(second.id)!.raw_tx, null); assert.equal(store.get(second.id)!.tx_hash, null);
+    assert.ok(isDeepStrictEqual(store.get(first.id), reserved), 'Contradictory logs changed the original reservation');
+    assert.ok(isDeepStrictEqual(store.get(second.id), second), 'Contradictory logs changed the queued successor');
+    assert.deepEqual(store.events(), heldAudit);
+    assert.equal(totalChanges(), heldChanges);
+    assert.deepEqual(proxy.sends, [originalHash]);
     assert.equal(store.journals().length, 0);
-    assert.equal(store.events().filter(event => event.action === 'accepted').length, 2);
-    assert.equal(store.events().filter(event => event.action === 'broadcast-prepared').length, 1);
-    assert.equal(store.events().filter(event => event.action === 'settled' || event.action === 'failed' || event.action === 'review').length, 0);
   }
+  assert.equal(proxy.altered() - initialAltered, 3);
   assert.deepEqual(proxy.sends, [originalHash]);
   assert.equal(await chain.token.balanceOf(chain.payee.address), 125000000n);
   assert.equal(await chain.router.nonces(chain.payer.address), 1n);
@@ -199,6 +216,7 @@ for (const field of fields) test('actual RPC log ' + field + ' contradiction blo
   assert.equal(await chain.router.nonces(chain.payer.address), 2n);
 
   const journalEvidence = store.journals();
+  const unaffectedPayment = store.get(second.id);
   proxy.corrupt(field, originalHash);
   const secondReceipt = await provider.getTransactionReceipt(store.get(second.id)!.tx_hash!);
   assert.ok(secondReceipt);
@@ -206,9 +224,14 @@ for (const field of fields) test('actual RPC log ' + field + ' contradiction blo
   assert.equal(secondLog.transactionHash, secondReceipt.hash);
   assert.equal(secondLog.blockHash, secondReceipt.blockHash);
   assert.equal(secondLog.blockNumber, secondReceipt.blockNumber);
+  const beforeReconciliation = proxy.altered();
   const inconsistent = await operation(service.reconcile());
   assert.equal(inconsistent.checked, 2); assert.deepEqual(inconsistent.exceptions, [first.id]);
+  assert.equal(proxy.altered() - beforeReconciliation, 1);
   assert.equal(store.get(first.id)!.status, 'review'); assert.equal(store.get(second.id)!.status, 'settled');
+  assert.ok(store.get(first.id)!.raw_tx === originalRaw, 'Review changed the original signed bytes');
+  assert.equal(store.get(first.id)!.tx_hash, originalHash);
+  assert.ok(isDeepStrictEqual(store.get(second.id), unaffectedPayment), 'Review changed the unaffected payment');
   assert.deepEqual(store.journals(), journalEvidence);
   assert.equal(store.events().filter(event => event.payment_id === first.id && event.action === 'review').length, 1);
   const repeated = await operation(service.reconcile());
@@ -220,7 +243,8 @@ for (const field of fields) test('actual RPC log ' + field + ' contradiction blo
   assert.equal(await chain.provider.getTransactionCount(chain.relayer.address, 'pending'), nativeNonce + 2);
   assert.equal(proxy.sends.length, 2);
   t.diagnostic(JSON.stringify({ contradictoryField: field, formatterRetainedContradiction: true,
-    settledBeforeReconciliation: healthy.checked, reviewedPayments: 1, retainedJournalRows: store.journals().length, nativeSends: proxy.sends.length }));
+    alteredRepliesBeforeHealing: initialAltered + 3, settledBeforeReconciliation: healthy.checked,
+    reviewedPayments: 1, retainedJournalRows: store.journals().length, nativeSends: proxy.sends.length }));
 });
 
 test('actual RPC reverted receipts with nonzero log evidence cannot resolve a mined reservation', {

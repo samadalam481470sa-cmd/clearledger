@@ -216,10 +216,9 @@ export class PaymentService {
           event.args.nonce.toString() === p.nonce;
       } catch { continue; }
       if (!matches) continue;
-      // A matching event must agree with the enclosing receipt. One
-      // contradictory candidate makes the evidence inconsistent.
+      // The reserved call emits one matching event, with provenance from its receipt.
       const transactionIndex = receipt.index;
-      if (log.transactionIndex !== transactionIndex ||
+      if (found || log.transactionIndex !== transactionIndex ||
         (transactionIndex !== undefined && (!Number.isSafeInteger(transactionIndex) || transactionIndex < 0)) ||
         !sameHash(log.transactionHash, receipt.hash) ||
         !Number.isSafeInteger(log.blockNumber) || log.blockNumber < 0 ||

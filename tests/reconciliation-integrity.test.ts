@@ -230,6 +230,36 @@ for (const contradictoryFirst of [false, true]) {
   });
 }
 
+test('duplicate matching PaymentSettled logs flag only their settlement and retain both journals', async () => {
+  const coherent = { ...settlementLog(), index: 1 };
+  receipt.logs = [coherent, { ...coherent, index: 2 }];
+  const unaffected = { ...payment, paymentId: '0x' + '34'.repeat(32), amount: '7000000', nonce: '1' };
+  const { raw, hash } = signedSettlement(unaffected, '0x', routerAddress, 1);
+  const secondId = store.accept(unaffected, digest(unaffected, signingDomain), '0x').row.id;
+  store.broadcast(secondId, raw, hash);
+  store.finalize(secondId, 17, blockHash);
+  canonical.transactions = [txHash, hash];
+  const secondReceipt = { ...receipt, hash, index: 1, logs: [
+    { ...settlementLog(unaffected), transactionHash: hash, transactionIndex: 1, index: 3 }
+  ] };
+  const before = { first: store.get(paymentId), second: store.get(secondId), journals: store.journals(), audit: store.events() };
+  const result = await service({ getTransactionReceipt: async (requested: string) =>
+    requested === hash ? secondReceipt : receipt }).reconcile();
+
+  assert.equal(result.checked, 2);
+  assert.deepEqual(result.exceptions, [paymentId]);
+  assert.equal(result.outstandingReviews, 1);
+  const reviewed = store.get(paymentId)!;
+  assert.ok(reviewed.error);
+  assert.deepEqual(reviewed, { ...before.first, status: 'review', error: reviewed.error, updated_at: reviewed.updated_at });
+  assert.deepEqual(store.get(secondId), before.second);
+  assert.deepEqual(store.journals(), before.journals);
+  const [event, ...audit] = store.events();
+  assert.equal(event.payment_id, paymentId);
+  assert.equal(event.action, 'review');
+  assert.deepEqual(audit, before.audit);
+});
+
 for (const [field, value] of Object.entries({
   token: '0x' + '88'.repeat(20), debit_account: payee, credit_account: payer,
   amount: '1', tx_hash: '0x' + '99'.repeat(32), block_number: 18, block_hash: '0x' + 'aa'.repeat(32)
@@ -320,6 +350,9 @@ for (const [description, change] of [
   ['a different receipt block hash', () => { receipt.blockHash = '0x' + '99'.repeat(32); }],
   ['an unsafe receipt index', () => { receipt.index = Number.MAX_SAFE_INTEGER + 1; }],
   ['no expected event', () => { receipt.logs = []; }],
+  ['duplicate matching PaymentSettled logs', () => {
+    receipt.logs = [{ ...settlementLog(), index: 1 }, { ...settlementLog(), index: 2 }];
+  }],
   ['contradictory event provenance', () => { receipt.logs[0].transactionIndex = 1; }]
 ] as const) {
   test('a missing block with ' + description + ' still triggers review', async () => {
