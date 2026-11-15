@@ -52,12 +52,17 @@ export class PaymentService {
     if (await this.router.isValidPaymentSignature.staticCall(payment, signature) !== true)
       throw new Error('Signature does not authorize this payment');
     const hash = digest(payment, this.signingDomain);
-    const existing = this.store.get(paymentKey(payment));
-    if (!existing) {
-      const block = await this.provider.getBlock('latest');
-      if (!block) throw new Error('Chain unavailable');
-      if (BigInt(payment.deadline) < BigInt(block.timestamp)) throw new Error('Authorization expired');
-      if (BigInt(payment.deadline) > BigInt(block.timestamp + 7 * 86400)) throw new Error('Deadline exceeds seven days');
+    const id = paymentKey(payment);
+    if (!this.store.get(id)) {
+      try {
+        const block = await this.provider.getBlock('latest');
+        if (!block) throw new Error('Chain unavailable');
+        if (BigInt(payment.deadline) < BigInt(block.timestamp)) throw new Error('Authorization expired');
+        if (BigInt(payment.deadline) > BigInt(block.timestamp + 7 * 86400)) throw new Error('Deadline exceeds seven days');
+      } catch (error) {
+        // Another request can commit this key while the block lookup is pending.
+        if (!this.store.get(id)) throw error;
+      }
     }
     return this.store.accept(payment, hash, signature);
   }

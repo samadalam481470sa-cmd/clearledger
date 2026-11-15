@@ -143,7 +143,7 @@ console.log(response.status, await response.json());
 
 Read the current payer nonce before creating each authorization. The payer needs token eligibility, sufficient balance, and an approved router allowance. The API allows deadlines no more than seven days in the future. The router itself enforces expiry.
 
-Distinct payment IDs can enter the queue with the same payer nonce. A successful settlement advances the router nonce, so a queued instruction that uses the earlier nonce can fail preflight before the worker signs a transaction for it. Replaying the original signed instruction returns its stored outcome after signature revalidation.
+Distinct payment IDs can enter the queue with the same payer nonce. A successful settlement advances the router nonce, so a queued instruction that uses the earlier nonce can fail preflight before the worker signs a transaction for it. Replaying the original signed instruction returns its stored outcome after signature revalidation. If another accepted request commits the same key while the latest-block lookup is pending, an identical signed retry uses the committed record even if that lookup fails or its deadline check rejects. Different signed instructions for the same key return HTTP 409. A new key still requires a successful deadline check. [Overlap verification](../STATUS.md#acceptance-overlap-during-deadline-validation).
 
 ### Exact token transfer
 
