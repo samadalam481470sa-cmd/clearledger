@@ -13,6 +13,7 @@ This is unaudited portfolio software for test assets.
 | Excess debit or short credit | Router spending limits and exact balance changes on both accounts | Direct token transfers bypass router limits. Balance checks depend on token-reported values. |
 | Reentrancy | ReentrancyGuard and atomic effects | Arbitrary malicious assets unsupported |
 | Chain rollback | Confirmation policy and reconciliation | Detection, not automatic accounting repair |
+| Impossible gas usage in a settlement receipt | Positive formatted gas usage within the retained signed transaction limit | A value within range still depends on RPC honesty. [Receipt gas evidence](../STATUS.md#receipt-gas-bound) |
 | Settlement log attributed to another transaction/block | Expected router/payment fields plus receipt-matching log transaction/block identity | Trusted RPC data, not independent inclusion proof |
 | Hostile browser origin | Loopback bind, Host/Origin checks, CSP | Not a public multi-user API |
 | API-token theft | Payer signature still required | Resource abuse/replay of valid requests remains possible |

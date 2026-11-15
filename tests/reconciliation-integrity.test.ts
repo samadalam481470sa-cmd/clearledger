@@ -1,6 +1,6 @@
 import { beforeEach, afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Interface, keccak256, type JsonRpcProvider } from 'ethers';
+import { Interface, keccak256, Transaction, type JsonRpcProvider } from 'ethers';
 import { Store } from '../src/store.ts';
 import { PaymentService, ReconciliationEvidenceUnavailable, ReconciliationReceiptUnavailable } from '../src/service.ts';
 import { digest, domain, type Payment } from '../src/payment.ts';
@@ -34,7 +34,7 @@ beforeEach(() => {
   store.broadcast(paymentId, rawTx, txHash);
   store.finalize(paymentId, 17, blockHash);
   receipt = { hash: txHash, from: fixtureRelayer.address, to: routerAddress,
-    index: 0, blockNumber: 17, status: 1, blockHash, logs: [settlementLog()] };
+    index: 0, blockNumber: 17, status: 1, gasUsed: 125000n, blockHash, logs: [settlementLog()] };
   canonical = { number: 17, hash: blockHash, transactions: [txHash] };
 });
 afterEach(() => { store.close(); });
@@ -234,6 +234,15 @@ for (const missingBlock of [false, true]) {
   test('a negative settlement log index triggers review ' +
     (missingBlock ? 'without' : 'with') + ' a canonical block', async () => {
     receipt.logs[0].index = -1;
+    if (missingBlock) canonical = null;
+    await flagged();
+  });
+}
+
+for (const missingBlock of [false, true]) {
+  test('gasUsed above the signed limit triggers review ' +
+    (missingBlock ? 'without' : 'with') + ' a canonical block', async () => {
+    receipt.gasUsed = Transaction.from(rawTx).gasLimit + 1n;
     if (missingBlock) canonical = null;
     await flagged();
   });

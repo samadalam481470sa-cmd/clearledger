@@ -63,7 +63,7 @@ function seed(n: number, asset = tokenA, amount = '125000000', reconcile = false
   transactionsByBlock.set(n, [hash]);
   const log = iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
     [payment.paymentId, payment.payer, payment.payee, payment.token, payment.amount, payment.nonce]);
-  receipts.set(hash, { hash, index: 0, blockNumber: n, blockHash, status: 1,
+  receipts.set(hash, { hash, index: 0, blockNumber: n, blockHash, status: 1, gasUsed: 125_000n,
     from: fixtureRelayer.address, to: routerAddress,
     logs: [{ address: routerAddress, transactionHash: hash, transactionIndex: 0, index: 0, blockNumber: n, blockHash, ...log }] });
   return store.get(row.id)!;

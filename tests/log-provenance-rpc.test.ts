@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { isDeepStrictEqual } from 'node:util';
-import { AbiCoder, Wallet, id, keccak256, Transaction, type TransactionReceipt } from 'ethers';
+import { AbiCoder, Wallet, id, keccak256, toQuantity, Transaction, type TransactionReceipt } from 'ethers';
 import { compile } from '../scripts/compile.ts';
 import { localChain } from '../scripts/local-chain.ts';
 import { connectRouter } from '../src/chain.ts';
@@ -14,7 +14,7 @@ import { PaymentService } from '../src/service.ts';
 import { paymentTypes, type Payment } from '../src/payment.ts';
 
 type Provenance = 'transactionHash' | 'blockHash' | 'blockNumber' | 'transactionIndex' | 'logIndex';
-type ReceiptFault = Provenance | 'duplicate' | 'conflictingAmount' | 'malformedData' | 'status' | 'status-no-logs';
+type ReceiptFault = Provenance | 'gasUsed' | 'duplicate' | 'conflictingAmount' | 'malformedData' | 'status' | 'status-no-logs';
 const fields: Provenance[] = ['transactionHash', 'blockHash', 'blockNumber', 'transactionIndex', 'logIndex'];
 const settlementDataTypes = ['address', 'uint256', 'uint256']; // Token, amount and nonce.
 const coder = AbiCoder.defaultAbiCoder();
@@ -24,6 +24,7 @@ const differentHash = (value: string) => '0x' + (value.toLowerCase() === '0x' + 
 async function receiptProxy(upstream: string, routerAddress: string, topic: string) {
   let fault: ReceiptFault | undefined, target: string | undefined, altered = 0;
   const sends: string[] = [];
+  const signedGasLimits = new Map<string, bigint>();
   const active = new Set<Promise<void>>();
   const server = createServer((req, res) => {
     const operation = (async () => {
@@ -33,7 +34,12 @@ async function receiptProxy(upstream: string, routerAddress: string, topic: stri
         const body = Buffer.concat(chunks).toString('utf8');
         const payload = JSON.parse(body);
         const calls = Array.isArray(payload) ? payload : [payload];
-        for (const call of calls) if (call.method === 'eth_sendRawTransaction') sends.push(keccak256(call.params[0]));
+        for (const call of calls) {
+          if (call.method !== 'eth_sendRawTransaction') continue;
+          const hash = keccak256(call.params[0]);
+          sends.push(hash);
+          if (fault === 'gasUsed') signedGasLimits.set(hash.toLowerCase(), Transaction.from(call.params[0]).gasLimit);
+        }
         const response = await fetch(upstream, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
           signal: AbortSignal.timeout(3000) });
         const result = await response.json() as any;
@@ -46,6 +52,13 @@ async function receiptProxy(upstream: string, routerAddress: string, topic: stri
           for (const log of receipt.logs) {
             if (log.address.toLowerCase() !== routerAddress.toLowerCase() || log.topics[0]?.toLowerCase() !== topic.toLowerCase()) continue;
             target ??= receipt.transactionHash.toLowerCase();
+            if (fault === 'gasUsed') {
+              const limit = signedGasLimits.get(target!);
+              assert.ok(limit !== undefined);
+              receipt.gasUsed = toQuantity(limit + 1n);
+              altered++;
+              break;
+            }
             if (fault === 'status' || fault === 'status-no-logs') {
               if (receipt.status !== '0x1') continue;
               receipt.status = '0x0';
@@ -144,7 +157,8 @@ function matchingLog(receipt: TransactionReceipt) {
 
 // Real HTTP JSON-RPC and ethers formatting are exercised. Service ticks are
 // explicitly driven; this does not claim autonomous CLI or Besu validation.
-for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData'] as const) test('actual RPC log ' + field + ' contradiction blocks confirmation and later flags reconciliation', {
+for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData', 'gasUsed'] as const) test(
+  'actual RPC ' + (field === 'gasUsed' ? 'receipt ' : 'log ') + field + ' contradiction blocks confirmation and later flags reconciliation', {
   timeout: 30000
 }, async t => {
   const firstInput = await signed('125000000', '0'), secondInput = await signed('7000000', '1');
@@ -155,7 +169,8 @@ for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData
   const reserved = store.get(first.id)!;
   assert.ok(reserved.raw_tx && reserved.tx_hash);
   const originalRaw = reserved.raw_tx, originalHash = reserved.tx_hash;
-  const nativeNonce = Transaction.from(originalRaw).nonce;
+  const envelope = Transaction.from(originalRaw);
+  const nativeNonce = envelope.nonce;
   assert.equal(keccak256(originalRaw), originalHash);
 
   const genuine = await chain.provider.getTransactionReceipt(originalHash);
@@ -165,7 +180,15 @@ for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData
   const { log, index } = matchingLog(presented);
   const genuineLog = genuine.logs[index];
   const repairedPresentation = JSON.parse(JSON.stringify(presented));
-  if (field === 'duplicate' || field === 'conflictingAmount' || field === 'malformedData') {
+  if (field === 'gasUsed') {
+    assert.ok(genuine.gasUsed > 0n && genuine.gasUsed <= envelope.gasLimit);
+    assert.equal(presented.gasUsed, envelope.gasLimit + 1n, 'ethers must retain the over-limit gas usage');
+    repairedPresentation.gasUsed = genuine.toJSON().gasUsed;
+    t.diagnostic(JSON.stringify({ genuineGasUsed: genuine.gasUsed.toString(),
+      reportedGasUsed: presented.gasUsed.toString(), signedGasLimit: envelope.gasLimit.toString(),
+      firstStatus: reserved.status, successorStatus: store.get(second.id)?.status,
+      journalRows: store.journals().length, nativeSends: proxy.sends.length }));
+  } else if (field === 'duplicate' || field === 'conflictingAmount' || field === 'malformedData') {
     assert.equal(presented.logs.length, genuine.logs.length + 1);
     const appended = repairedPresentation.logs.pop();
     const expectedLog = JSON.parse(JSON.stringify(genuineLog));
@@ -202,7 +225,7 @@ for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData
     assert.notEqual(log[field], genuineLog[field], 'ethers must retain the contradictory RPC provenance');
     repairedPresentation.logs[index][field] = genuineLog[field];
   }
-  assert.deepEqual(repairedPresentation, JSON.parse(JSON.stringify(genuine)), 'Only the injected log change may differ from the genuine receipt');
+  assert.deepEqual(repairedPresentation, JSON.parse(JSON.stringify(genuine)), 'Only the injected field may differ from the genuine receipt');
   assert.ok(proxy.altered() >= 2);
   assert.equal(reserved.status, 'broadcast');
 
@@ -214,8 +237,8 @@ for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData
   const heldChanges = totalChanges(), initialAltered = proxy.altered();
   for (let retry = 0; retry < 3; retry++) {
     await operation(service.tick());
-    assert.ok(isDeepStrictEqual(store.get(first.id), reserved), 'Contradictory logs changed the original reservation');
-    assert.ok(isDeepStrictEqual(store.get(second.id), second), 'Contradictory logs changed the queued successor');
+    assert.ok(isDeepStrictEqual(store.get(first.id), reserved), 'Contradictory receipt evidence changed the original reservation');
+    assert.ok(isDeepStrictEqual(store.get(second.id), second), 'Contradictory receipt evidence changed the queued successor');
     assert.deepEqual(store.events(), heldAudit);
     assert.equal(totalChanges(), heldChanges);
     assert.deepEqual(proxy.sends, [originalHash]);

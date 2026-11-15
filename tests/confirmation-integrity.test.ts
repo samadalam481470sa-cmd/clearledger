@@ -1,6 +1,6 @@
 import { beforeEach, afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { getAddress, Interface, type JsonRpcProvider, type Wallet } from 'ethers';
+import { getAddress, Interface, Transaction, type JsonRpcProvider, type Wallet } from 'ethers';
 import { Store } from '../src/store.ts';
 import { PaymentService } from '../src/service.ts';
 import { digest, domain, type Payment } from '../src/payment.ts';
@@ -25,6 +25,7 @@ const payment: Payment = { paymentId: '0x' + '12'.repeat(32), payer, payee, toke
 const signingDomain = domain(31337, routerAddress);
 const signature = '0x1234';
 const { raw, hash: txHash } = signedSettlement(payment, signature, routerAddress, 7);
+const signedGasLimit = Transaction.from(raw).gasLimit;
 let store: Store;
 let firstId: string;
 let secondId: string | undefined;
@@ -47,7 +48,7 @@ beforeEach(() => {
   firstId = store.accept(payment, digest(payment, signingDomain), signature).row.id;
   store.broadcast(firstId, raw, txHash);
   secondId = undefined;
-  receipt = { hash: txHash, index: 0, blockNumber: 17, blockHash, status: 1,
+  receipt = { hash: txHash, index: 0, blockNumber: 17, blockHash, status: 1, gasUsed: 125000n,
     from: fixtureRelayer.address, to: routerAddress,
     logs: [settlementLog()] };
   canonical = { number: 17, hash: blockHash, transactions: [txHash] };
@@ -382,6 +383,30 @@ for (const [description, logs] of [['missing', undefined], ['null', null], ['non
   test(description + ' success logs remain uncertain provider evidence', async () => {
     receipt.logs = logs;
     await remainsUncertain();
+  });
+}
+
+for (const status of [0, 1]) {
+  for (const [label, gasUsed] of [
+    ['missing', undefined], ['zero', 0n], ['negative', -1n],
+    ['number instead of bigint', 125000], ['above the signed limit', signedGasLimit + 1n]
+  ] as const) {
+    test(label + ' gasUsed leaves status-' + status + ' receipt unresolved', async () => {
+      setReceiptStatus(status);
+      if (gasUsed === undefined) delete receipt.gasUsed;
+      else receipt.gasUsed = gasUsed;
+      await remainsUncertain();
+      assert.equal(blockReads, 0);
+    });
+  }
+
+  test('gasUsed equal to the signed limit permits status-' + status + ' confirmation', async () => {
+    setReceiptStatus(status);
+    receipt.gasUsed = signedGasLimit;
+    await service().tick();
+    assert.equal(store.get(firstId)!.status, status === 1 ? 'settled' : 'failed');
+    assert.equal(store.journals().length, status);
+    assert.equal(blockReads, 1);
   });
 }
 

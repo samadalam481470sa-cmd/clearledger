@@ -83,7 +83,8 @@ beforeEach(() => {
       sends++; const hash = keccak256(raw);
       const log = iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
         [first.paymentId, first.payer, first.payee, first.token, first.amount, first.nonce]);
-      receipt = { hash, index: 0, blockNumber: 17, blockHash, status: 1, from: nativeSigner.address, to: routerAddress,
+      receipt = { hash, index: 0, blockNumber: 17, blockHash, status: 1, gasUsed: 125_000n,
+        from: nativeSigner.address, to: routerAddress,
         logs: [{ address: routerAddress, ...log, transactionHash: hash, transactionIndex: 0, index: 0, blockNumber: 17, blockHash }] };
       return { hash };
     },
