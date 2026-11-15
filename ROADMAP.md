@@ -4,9 +4,9 @@ Prioritize verified payment correctness and demonstrable engineering over source
 
 ## Verified baseline
 
-Source `0088a0d9480d50e460f852b986f87487bd6e691b` passed all 1,130 regular Linux tests with zero failures or skips, plus strict typecheck, build and source count. The new tests cover unreadable settlement logs whose indexed identity still matches the payment. [Regular CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/43693858779) · [Malformed event evidence](STATUS.md#malformed-settlement-logs-with-a-known-payment-identity).
+Source `3d8d0f3667e619572f847da8d9a98c7d5dc849bb` passed all 1,130 regular Linux tests with zero failures or skips, plus strict typecheck, build and source count. The gas budget tests cover refusal before signing and recovery across UTC rollover. [Regular CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/43696333612) · [Gas budget evidence](STATUS.md#full-gas-allowance-before-settlement-signing).
 
-The same source passed all 11 Besu checks, including EOA and contract-wallet quorum recovery, revocation and reconciliation of three journals. [Besu CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/43693858833).
+The same source passed all 11 Besu checks, including EOA and contract-wallet quorum recovery, revocation and reconciliation of three journals. [Besu CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/43696333630).
 
 The CLI rollback case is included in that regular suite. The longer receipt-route outage was verified separately on source `bd7137fd7f2d9898a12c001a28f016e1bbe6a0e0`, with 634,266 ms of active observation across restart and 360 authenticated HTTP 200 history responses. [Extended outage CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42336374899).
 
