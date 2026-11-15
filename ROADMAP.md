@@ -4,9 +4,9 @@ Prioritize verified payment correctness and demonstrable engineering over source
 
 ## Verified baseline
 
-Source `1518e358fd04e489b06f6ba1ba52199e441a0ee9` passed all 1,115 regular Linux tests with zero failures or skips, plus strict typecheck, build and source count. The membership regressions cover duplicate transaction hashes during confirmation and reconciliation. [Regular CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/43563516879) · [Duplicate reply evidence](STATUS.md#duplicate-transactions-in-rpc-block-replies).
+Source `5a471ef382b403dfd97b06f04fc22dad2c66d179` passed all 1,119 regular Linux tests with zero failures or skips, plus strict typecheck, build and source count. The receipt regressions cover duplicate matching settlement events during confirmation and reconciliation. [Regular CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/43671906000) · [Duplicate event evidence](STATUS.md#duplicate-settlement-events-in-rpc-receipt-replies).
 
-The same source passed all 11 Besu checks, including EOA and contract-wallet quorum recovery, revocation and reconciliation of three journals. [Besu CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/43563516882).
+The same source passed all 11 Besu checks, including EOA and contract-wallet quorum recovery, revocation and reconciliation of three journals. [Besu CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/43671905923).
 
 The CLI rollback case is included in that regular suite. The longer receipt-route outage was verified separately on source `bd7137fd7f2d9898a12c001a28f016e1bbe6a0e0`, with 634,266 ms of active observation across restart and 360 authenticated HTTP 200 history responses. [Extended outage CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/42336374899).
 
