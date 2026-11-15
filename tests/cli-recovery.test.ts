@@ -16,7 +16,9 @@ const EXTENDED_OUTAGE = process.env.CLEARLEDGER_LONG_RECEIPT_OUTAGE === '1';
 const MIN_WINDOW_MS = EXTENDED_OUTAGE ? 300000 : 90000;
 const PHASE_BUDGET_MS = MIN_WINDOW_MS * 4 / 3, HISTORY_INTERVAL_MS = 5000;
 const MIN_ACTIVE_ATTEMPTS = EXTENDED_OUTAGE ? 290 : 80;
-const MIN_HISTORY_SETS = MIN_WINDOW_MS / HISTORY_INTERVAL_MS;
+const MIN_HISTORY_BURSTS = MIN_WINDOW_MS / HISTORY_INTERVAL_MS;
+const HISTORY_READERS_PER_BURST = 4;
+const HISTORY_REQUESTS_PER_BURST = HISTORY_READERS_PER_BURST * 3; // Two exact lookups and one filtered page per reader.
 const TEST_TIMEOUT_MS = PHASE_BUDGET_MS * 2 + 120000;
 
 // A real CLI child owns all writes; the parent observes its durable projection.
@@ -146,24 +148,41 @@ test(`the actual RPC CLI autonomously recovers after two ${MIN_WINDOW_MS / 1000}
     async function observeOutage(phase: 'before-restart' | 'after-restart') {
       const started = performance.now(), deadline = started + PHASE_BUDGET_MS, baseline = receiptCount();
       let observations = 0, boundaryCount: number | undefined, boundaryElapsedMs: number | undefined, passed = false;
-      let historySets = 0, nextHistoryAt = started, historyBoundaryElapsedMs: number | undefined;
+      let historyBursts = 0, historyResponses = 0;
+      let nextHistoryAt = started, historyBoundaryElapsedMs: number | undefined;
       let firstHistoryElapsedMs: number | undefined, lastHistoryElapsedMs: number | undefined;
       const historyResponseStatuses = new Set<number>();
       let ended: number | undefined;
       async function history() {
-        // These are authenticated local reads while the worker independently
-        // retries real RPC. Do not infer an RPC delta from overlapping traffic.
-        const responses = await Promise.all([
-          api(cli, 'payments/' + encodeURIComponent(firstId)),
-          api(cli, 'payments/' + encodeURIComponent(secondId)),
-          api(cli, 'payments?limit=25&status=broadcast')
-        ]);
-        for (const response of responses) { historyResponseStatuses.add(response.status); assert.equal(response.status, 200); }
-        const [first, second, filtered] = await Promise.all(responses.map(response => response.json())) as any[];
-        assertPublic(first, firstInput, 'broadcast'); assertPublic(second, secondInput, 'queued');
-        assert.deepEqual(Object.keys(filtered).sort(), ['items', 'nextCursor']);
-        assert.equal(filtered.nextCursor, null); assert.equal(filtered.items.length, 1);
-        assert.deepEqual(filtered.items[0], first);
+        const paths = [
+          'payments/' + encodeURIComponent(firstId),
+          'payments/' + encodeURIComponent(secondId),
+          'payments?limit=25&status=broadcast'
+        ];
+        // Twelve GETs per five-second interval stay below the 240/minute API
+        // limit, including an extra burst at the observation boundary.
+        const requests = Array.from({ length: HISTORY_READERS_PER_BURST }, () => paths).flat().map(async path => {
+          const response = await api(cli, path);
+          historyResponseStatuses.add(response.status);
+          if (response.status === 200) historyResponses++;
+          const body = await response.text();
+          assert.equal(response.status, 200);
+          return JSON.parse(body);
+        });
+        // Keep every fetch and body read tracked until it finishes, even when a
+        // sibling request fails. The worker can still retry RPC during these reads.
+        const responses = await Promise.allSettled(requests);
+        const bodies = responses.map(response => {
+          if (response.status === 'rejected') throw response.reason;
+          return response.value;
+        });
+        for (let offset = 0; offset < bodies.length; offset += paths.length) {
+          const [first, second, filtered] = bodies.slice(offset, offset + paths.length) as any[];
+          assertPublic(first, firstInput, 'broadcast'); assertPublic(second, secondInput, 'queued');
+          assert.deepEqual(Object.keys(filtered).sort(), ['items', 'nextCursor']);
+          assert.equal(filtered.nextCursor, null); assert.equal(filtered.items.length, 1);
+          assert.deepEqual(filtered.items[0], first);
+        }
       }
       try {
         for (;;) {
@@ -175,13 +194,15 @@ test(`the actual RPC CLI autonomously recovers after two ${MIN_WINDOW_MS / 1000}
           observations++;
           const beforeHistory = performance.now();
           if (beforeHistory >= nextHistoryAt || (beforeHistory - started >= MIN_WINDOW_MS && historyBoundaryElapsedMs === undefined)) {
-            const before = projection(), pending = history();
+            const before = projection(), beforeResponses = historyResponses;
+            const pending = history();
             historyRequests.add(pending);
             void pending.finally(() => historyRequests.delete(pending)).catch(() => {});
             await within(pending, Math.max(1, deadline - performance.now()));
             assert.ok(projection() === before && before === originalProjection,
               'Authenticated outage history reads changed the private payment/audit/journal projection');
-            historySets++;
+            assert.equal(historyResponses - beforeResponses, HISTORY_REQUESTS_PER_BURST);
+            historyBursts++;
             const historyElapsedMs = performance.now() - started;
             firstHistoryElapsedMs ??= historyElapsedMs; lastHistoryElapsedMs = historyElapsedMs;
             if (historyElapsedMs >= MIN_WINDOW_MS) historyBoundaryElapsedMs ??= historyElapsedMs;
@@ -196,11 +217,11 @@ test(`the actual RPC CLI autonomously recovers after two ${MIN_WINDOW_MS / 1000}
           // than allowing early retries followed by a stalled scheduler to pass.
           if (boundaryCount !== undefined && current > boundaryCount &&
             current - baseline > MIN_ACTIVE_ATTEMPTS && observations > MIN_ACTIVE_ATTEMPTS &&
-            historySets >= MIN_HISTORY_SETS && historyBoundaryElapsedMs !== undefined) {
+            historyBursts >= MIN_HISTORY_BURSTS && historyBoundaryElapsedMs !== undefined) {
             passed = true; ended = performance.now();
             return { durationMs: ended - started, observations, failedReceiptAttempts: current - baseline,
               boundaryElapsedMs: boundaryElapsedMs!, failedReceiptsAfterBoundary: current - boundaryCount,
-              historySets, historyResponses: historySets * 3, historyBoundaryElapsedMs };
+              historyBursts, historyResponses, historyBoundaryElapsedMs };
           }
           await new Promise(resolvePause => setTimeout(resolvePause, Math.min(1000, Math.max(1, deadline - performance.now()))));
         }
@@ -210,7 +231,8 @@ test(`the actual RPC CLI autonomously recovers after two ${MIN_WINDOW_MS / 1000}
           durationMs: Math.floor(ended - started), observations,
           failedReceiptAttempts: receiptCount() - baseline, boundaryElapsedMs: boundaryElapsedMs === undefined ? null : Math.floor(boundaryElapsedMs),
           failedReceiptsAfterBoundary: boundaryCount === undefined ? 0 : receiptCount() - boundaryCount,
-          historySets, historyResponses: historySets * 3, historyResponseStatuses: [...historyResponseStatuses],
+          readersPerBurst: HISTORY_READERS_PER_BURST, requestsPerBurst: HISTORY_REQUESTS_PER_BURST,
+          historyBursts, historyResponses, historyResponseStatuses: [...historyResponseStatuses],
           firstHistoryElapsedMs: firstHistoryElapsedMs === undefined ? null : Math.floor(firstHistoryElapsedMs),
           lastHistoryElapsedMs: lastHistoryElapsedMs === undefined ? null : Math.floor(lastHistoryElapsedMs),
           historyBoundaryElapsedMs: historyBoundaryElapsedMs === undefined ? null : Math.floor(historyBoundaryElapsedMs) }));
@@ -236,7 +258,10 @@ test(`the actual RPC CLI autonomously recovers after two ${MIN_WINDOW_MS / 1000}
     assert.ok(firstWindow.durationMs >= MIN_WINDOW_MS && secondWindow.durationMs >= MIN_WINDOW_MS);
     assert.ok(firstWindow.failedReceiptAttempts > MIN_ACTIVE_ATTEMPTS && secondWindow.failedReceiptAttempts > MIN_ACTIVE_ATTEMPTS);
     assert.ok(firstWindow.observations > MIN_ACTIVE_ATTEMPTS && secondWindow.observations > MIN_ACTIVE_ATTEMPTS);
-    assert.ok(firstWindow.historySets >= MIN_HISTORY_SETS && secondWindow.historySets >= MIN_HISTORY_SETS);
+    for (const window of [firstWindow, secondWindow]) {
+      assert.ok(window.historyBursts >= MIN_HISTORY_BURSTS);
+      assert.equal(window.historyResponses, window.historyBursts * HISTORY_REQUESTS_PER_BURST);
+    }
     assert.ok(observedWindowMs >= MIN_WINDOW_MS * 2);
 
     proxy.heal();
@@ -273,7 +298,8 @@ test(`the actual RPC CLI autonomously recovers after two ${MIN_WINDOW_MS / 1000}
       restartDowntimeMs: Math.floor(restartDowntimeMs), startupReceiptAttempts,
       receiptAttemptsBeforeRestart: firstWindow.failedReceiptAttempts, receiptAttemptsAfterRestart: secondWindow.failedReceiptAttempts,
       observationsBeforeRestart: firstWindow.observations, observationsAfterRestart: secondWindow.observations,
-      historySetsBeforeRestart: firstWindow.historySets, historySetsAfterRestart: secondWindow.historySets,
+      readersPerBurst: HISTORY_READERS_PER_BURST, requestsPerBurst: HISTORY_REQUESTS_PER_BURST,
+      historyBurstsBeforeRestart: firstWindow.historyBursts, historyBurstsAfterRestart: secondWindow.historyBursts,
       historyResponsesBeforeRestart: firstWindow.historyResponses, historyResponsesAfterRestart: secondWindow.historyResponses,
       settledPayments: 2, journalRows: 2, reconciled: result.checked }));
     completed = true;
