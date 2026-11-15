@@ -26,7 +26,7 @@ On the original Windows workspace, `Start-ClearLedger.ps1` can use the Node runt
 ## Implemented behavior
 
 - EIP-712 signatures bind payer, recipient, asset, amount, nonce, deadline, chain, and router.
-- The demo dashboard opens the returned receipt after checking that the acknowledgement matches the submitted route, asset and exact amount.
+- The demo dashboard opens the returned receipt after checking that the acknowledgement matches the submitted route, asset and exact amount. API clients can supply a payment ID to retry the same demo instruction within a running demo. [Demo replay](docs/API.md#retry-a-demo-payment-by-id).
 - EOA and deployed ERC-1271 wallet authorization share one router view, checked at API acceptance and again at dispatch/execution. Wallet authorization can be revoked. Router upgrades require the matching ABI and deployed address. [Authorization behavior](docs/API.md#contract-wallet-authorization-and-retries).
 - The payer approves a token allowance; a role-authorized relayer pays native gas and executes settlement.
 - Payer-scoped payment IDs and nonces prevent replay on chain. Unique intent records and fingerprints make API retries idempotent.
@@ -89,13 +89,13 @@ Detailed regression results and earlier failures retain their original source re
 
 ## More than 100,000 source lines
 
-The [machine-readable count](docs/source-count.json) records **640,805 nonblank source lines**, including comments and tests.
+The [machine-readable count](docs/source-count.json) records **640,988 nonblank source lines**, including comments and tests.
 
 | Source area | Files | Nonblank lines |
 | --- | --- | --- |
-| ClearLedger application area | 119 | 17,893 |
+| ClearLedger application area | 121 | 18,076 |
 | Attributed Besu snapshot | 4,484 | 622,912 |
-| Combined | 4,603 | 640,805 |
+| Combined | 4,605 | 640,988 |
 
 Package installs, lockfiles, JSON, documentation, generated output and databases are excluded. Application-area counting includes the clearly attributed OpenZeppelin-derived signature-check adaptation. Application code is MIT-licensed. Besu and dependencies retain their own licenses, and the consensus implementation belongs to Besu. [Provenance and licenses](docs/PROVENANCE.md).
 

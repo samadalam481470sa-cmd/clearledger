@@ -27,7 +27,7 @@ function serviceFixture(throwFailure: Thrower) {
 }
 
 async function withHttp(service: PaymentService,
-  run: (url: string) => Promise<void>, demoPayment?: (amount: string) => Promise<unknown>) {
+  run: (url: string) => Promise<void>, demoPayment?: Parameters<typeof makeServer>[0]['demoPayment']) {
   const server = makeServer({ service, apiKey, port: 0, mode: demoPayment ? 'demo' : 'rpc', demoPayment });
   server.listen(0, '127.0.0.1');
   try {

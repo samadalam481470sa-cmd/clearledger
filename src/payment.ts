@@ -26,6 +26,6 @@ export const paymentTypes = { Payment: [
 export const domain = (chainId: number, verifyingContract: string): TypedDataDomain =>
   ({ name: 'ClearLedger', version: '1', chainId, verifyingContract });
 export const digest = (p: Payment, d: TypedDataDomain) => TypedDataEncoder.hash(d, paymentTypes, p);
-export const paymentKey = (p: Payment) => p.payer.toLowerCase() + ':' + p.paymentId.toLowerCase();
+export const paymentKey = (p: Pick<Payment, 'payer' | 'paymentId'>) => p.payer.toLowerCase() + ':' + p.paymentId.toLowerCase();
 
 

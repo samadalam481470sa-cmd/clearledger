@@ -6,14 +6,16 @@ import { z, ZodError } from 'zod';
 import { Conflict, JournalIntegrityError, PaginationError } from './store.ts';
 import { ReconciliationEvidenceUnavailable, type PaymentService } from './service.ts';
 import { activeAssetMetadata } from './assets.ts';
+import { paymentSchema } from './payment.ts';
 import { type AssetMetadata } from '../shared/asset-metadata.ts';
 
 interface HttpOptions {
   service: PaymentService; apiKey: string; port: number; mode: 'demo' | 'rpc';
-  demoPayment?: (amount: string) => Promise<unknown>;
+  demoPayment?: (amount: string, paymentId?: string) => Promise<{ payment: unknown; replay?: boolean }>;
   demoInfo?: Record<string, unknown>;
   assetMetadata?: AssetMetadata[];
 }
+const demoPaymentId = paymentSchema.shape.paymentId.optional();
 const paginationQuery = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),
   cursor: z.string().min(1).max(512).optional(),
@@ -130,7 +132,8 @@ export function makeServer(options: HttpOptions) {
           const input = await body(req);
           if (typeof input?.amount !== 'string' || !/^[0-9]{1,7}(\.[0-9]{1,6})?$/.test(input.amount))
             throw new Error('Enter a decimal amount with at most six decimal places');
-          json(res, 202, await options.demoPayment(input.amount)); return;
+          const result = await options.demoPayment(input.amount, demoPaymentId.parse(input.paymentId));
+          json(res, result.replay ? 200 : 202, result); return;
         }
         json(res, 404, { error: 'Route not found' }); return;
       }

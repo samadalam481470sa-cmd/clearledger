@@ -47,7 +47,15 @@ The RPC response omits upstream error messages/short messages, which can contain
 
 For uncertain `POST /api/payments` outcomes, inspect history first. Once RPC/current authorization is available, retry the same signed instructions with the same payer/payment ID rather than authorizing a new ID for the same transfer. Identical replay retains the original stored signature. The HTTP handler adds no automatic retry; existing durable worker retries are separate. Local classification/redaction and controlled real-transport checks pass. [RPC error verification](VALIDATION.md#rpc-error-classification-and-redaction).
 
-The demo dashboard checks the acknowledgement’s stored record ID, status, route, asset and exact base-unit amount before showing its receipt. Malformed or mismatched acknowledgements leave the outcome unknown and prompt a history check. The demo signing endpoint does not provide durable client replay keys. [Demo acknowledgement evidence](../STATUS.md#demo-payment-acknowledgement).
+The demo dashboard checks the acknowledgement’s stored record ID, status, route, asset and exact base-unit amount before showing its receipt. Malformed or mismatched acknowledgements leave the outcome unknown and prompt a history check. [Demo acknowledgement evidence](../STATUS.md#demo-payment-acknowledgement).
+
+### Retry a demo payment by ID
+
+Authenticated clients can send a nonzero 32-byte `paymentId` alongside the decimal `amount` to `POST /api/demo/payment`. Use a lowercase `0x` prefix. Hex digits are normalized to lowercase. The response identifies the record as `payer-address:payment-ID`. A new instruction returns HTTP 202 and `replay: false`. Omitting the ID preserves the server-generated ID workflow.
+
+Repeat the same ID and amount to read the result after a lost response. Equivalent decimal spellings compare by exact base-unit value. A stored match returns HTTP 200 and `replay: true` without a new signature or RPC request. Reusing the ID for a different amount returns HTTP 409. If the first request is still in progress before it commits, the demo may report that it is busy. Once the payment exists, the replay returns its stored lifecycle state.
+
+This lookup is limited to the current in-memory demo ledger. A restart starts a new ledger. The dashboard currently uses server-generated IDs. [Demo replay evidence](../STATUS.md#demo-payment-replay-by-id).
 
 ## Exact payment lookup
 
