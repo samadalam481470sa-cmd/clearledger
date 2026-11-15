@@ -10,7 +10,7 @@ This is unaudited portfolio software for test assets.
 | Replay under another payment ID | Payer nonce | Clients must coordinate concurrent signing |
 | Unauthorized mint/policy update | AccessControl roles | Administrator compromise remains powerful |
 | Blocked recipient | Token account eligibility | No actual identity or sanctions service |
-| Excess transfer | Router per-payment/daily limits | Direct token transfers bypass router limits |
+| Excess debit or short credit | Router spending limits and exact balance changes on both accounts | Direct token transfers bypass router limits. Balance checks depend on token-reported values. |
 | Reentrancy | ReentrancyGuard and atomic effects | Arbitrary malicious assets unsupported |
 | Chain rollback | Confirmation policy and reconciliation | Detection, not automatic accounting repair |
 | Settlement log attributed to another transaction/block | Expected router/payment fields plus receipt-matching log transaction/block identity | Trusted RPC data, not independent inclusion proof |

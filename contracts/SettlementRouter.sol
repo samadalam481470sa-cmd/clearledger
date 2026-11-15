@@ -117,9 +117,12 @@ contract SettlementRouter is AccessControl, Pausable, ReentrancyGuard, EIP712 {
         processed[p.payer][p.paymentId] = true;
         nonces[p.payer] = p.nonce + 1;
         dailySpent[p.payer][p.token][day] = spent;
-        uint256 beforeBalance = IERC20(p.token).balanceOf(p.payee);
-        IERC20(p.token).safeTransferFrom(p.payer, p.payee, p.amount);
-        if (IERC20(p.token).balanceOf(p.payee) != beforeBalance + p.amount)
+        IERC20 token = IERC20(p.token);
+        uint256 payerBefore = token.balanceOf(p.payer);
+        uint256 payeeBefore = token.balanceOf(p.payee);
+        token.safeTransferFrom(p.payer, p.payee, p.amount);
+        if (token.balanceOf(p.payee) != payeeBefore + p.amount || payerBefore < p.amount ||
+            token.balanceOf(p.payer) != payerBefore - p.amount)
             revert UnexpectedTransferAmount();
         emit PaymentSettled(p.paymentId, p.payer, p.payee, p.token, p.amount, p.nonce);
     }

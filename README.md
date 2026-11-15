@@ -31,7 +31,7 @@ On the original Windows workspace, `Start-ClearLedger.ps1` can use the Node runt
 - Payer-scoped payment IDs and nonces prevent replay on chain. Unique intent records and fingerprints make API retries idempotent.
 - Token roles control issuance, account eligibility, maximum supply, and emergency pause.
 - Router policy enforces allowed assets, per-payment caps, UTC-day payer limits, nonce cancellation, and pause.
-- Effects and token movement revert atomically; recipient balance checks reject incompatible transfer amounts.
+- The router requires the payer’s token balance to decrease and the payee’s to increase by the signed amount. A mismatch reverts the token transfer and router state together. [Exact transfer behavior](docs/API.md#exact-token-transfer).
 - Signed transaction bytes are stored before broadcast. Both retransmission and receipt processing require byte/hash coherence and a signed type 0/1/2 envelope matching the configured chain, relayer, router, zero native value and exact saved settlement calldata. Inconsistent evidence retains the reservation and nonce priority. [Recovery envelope limits](docs/API.md#recovered-transaction-envelope).
 - File-backed recovery tests kill a real worker process at dispatch/finalization boundaries and verify that restart does not duplicate a transfer or journal row. Persisted broadcasts retain nonce priority even if the wall clock moves backward.
 - Atomic Store transition guards reject conflicting lifecycle/journal updates, while exact repetitions preserve the existing audit history without duplicate entries.
@@ -88,13 +88,13 @@ Detailed regression results and earlier failures retain their original source re
 
 ## More than 100,000 source lines
 
-The [machine-readable count](docs/source-count.json) records **640,340 nonblank source lines**, including comments and tests.
+The [machine-readable count](docs/source-count.json) records **640,465 nonblank source lines**, including comments and tests.
 
 | Source area | Files | Nonblank lines |
 | --- | --- | --- |
-| ClearLedger application area | 115 | 17,428 |
+| ClearLedger application area | 117 | 17,553 |
 | Attributed Besu snapshot | 4,484 | 622,912 |
-| Combined | 4,599 | 640,340 |
+| Combined | 4,601 | 640,465 |
 
 Package installs, lockfiles, JSON, documentation, generated output and databases are excluded. Application-area counting includes the clearly attributed OpenZeppelin-derived signature-check adaptation. Application code is MIT-licensed. Besu and dependencies retain their own licenses, and the consensus implementation belongs to Besu. [Provenance and licenses](docs/PROVENANCE.md).
 

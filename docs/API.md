@@ -145,6 +145,12 @@ Read the current payer nonce before creating each authorization. The payer needs
 
 Distinct payment IDs can enter the queue with the same payer nonce. A successful settlement advances the router nonce, so a queued instruction that uses the earlier nonce can fail preflight before the worker signs a transaction for it. Replaying the original signed instruction returns its stored outcome after signature revalidation.
 
+### Exact token transfer
+
+The router requires the payer’s reported token balance to fall by the signed amount and the payee’s to rise by the same amount. A mismatch reverts the transfer and router state before the settlement event. The worker can reject an incompatible token outcome during preflight. The checks depend on token-reported balances. Allowlisted assets must be reviewed standard ERC-20 contracts.
+
+This contract change applies to newly deployed routers. Each new address binds new EIP-712 signatures and the corresponding RPC database context. [Verification and limits](../STATUS.md#exact-payer-debit).
+
 ### Contract-wallet authorization and retries
 
 For a deployed ERC-1271 wallet, set `payment.payer` to the wallet address and supply the opaque signature bytes its policy accepts for the EIP-712 payment digest. The API structurally allows 0–4096 bytes (`0x` is empty); empty bytes can be valid for a contract policy but do not authorize an EOA. Wallet-controlled token eligibility, balance, allowance, and nonce remain necessary.

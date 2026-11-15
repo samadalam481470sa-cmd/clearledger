@@ -120,7 +120,7 @@ An identical API retry returns its existing record. Different instructions with 
 
 Roles separate issuance, policy, administration, and relaying. The demo assigns administrative roles to one temporary wallet. Router limits are per payer and asset, with UTC days derived from block timestamps. Direct ERC-20 transfers between eligible accounts bypass router spending limits; the limits are not a system-wide compliance guarantee.
 
-Supported assets must be reviewed standard tokens without rebasing or transfer fees. A recipient balance-delta check detects incompatible outcomes but does not make arbitrary malicious tokens safe.
+Supported assets must be reviewed standard tokens without rebasing or transfer fees. The router reads the payer and payee balances around `safeTransferFrom` and requires an exact debit and credit before emitting `PaymentSettled`. This depends on the token reporting its balances honestly. [Exact transfer evidence](../STATUS.md#exact-payer-debit).
 
 ## Finality and projection boundaries
 
