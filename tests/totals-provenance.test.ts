@@ -181,6 +181,33 @@ test('matching retained fields do not revalidate unrelated authorization fields 
   const before = snapshot(); assert.deepEqual(store.assetTotals(), expected('settled')); assert.equal(snapshot(), before);
 });
 
+for (const [status, uppercase] of [['settled', false], ['review', true]] as const)
+  test('duplicate posted transaction hash in settled and ' + status + ' rows invalidates every asset', () => {
+    const first = posted(1);
+    const second = posted(2, status, token, '5');
+    posted(3, 'settled', otherToken, '7');
+    const validTotals = store.assetTotals();
+    const repeated = uppercase ? '0x' + first.tx_hash!.slice(2).toUpperCase() : first.tx_hash!;
+    replaceInclusion('tx_hash', repeated, second.id);
+
+    refuse();
+
+    replaceInclusion('tx_hash', second.tx_hash!, second.id);
+    const repaired = snapshot();
+    assert.deepEqual(store.assetTotals(), validTotals);
+    assert.equal(snapshot(), repaired);
+  });
+
+test('a reservation without a journal sharing a posted hash contributes no volume', () => {
+  const postedRow = posted(1);
+  const payment = { ...JSON.parse(postedRow.payload) as Payment, paymentId: '0x' + '77'.repeat(32) };
+  const row = store.accept(payment, 'synthetic-fingerprint', 'synthetic-signature').row;
+  store.broadcast(row.id, 'synthetic-raw', postedRow.tx_hash!);
+  const before = snapshot();
+  assert.deepEqual(store.assetTotals(), [expected('settled')[0]]);
+  assert.equal(snapshot(), before);
+});
+
 test('an unposted review without recorded inclusion still contributes no journal volume', () => {
   const payment: Payment = { paymentId: '0x' + '77'.repeat(32), payer: '0x' + '11'.repeat(20),
     payee: '0x' + '22'.repeat(20), token, amount: '7', nonce: '0', deadline: '2000000000' };

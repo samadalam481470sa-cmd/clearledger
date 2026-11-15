@@ -10,9 +10,9 @@ The same source passed all 11 Besu checks, including EOA and contract-wallet quo
 
 The CLI rollback case is included in the regular suite. The extended receipt outage test on source `a0c13705da1434864e3f899eb15bf30dee398e64` observed 645,255 ms across abrupt restart with 1,440 successful authenticated history responses in bursts of 12. [Extended outage CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/43698870254) · [Concurrent history evidence](STATUS.md#concurrent-history-reads-during-receipt-outage).
 
-Reconciliation reports distinguish new flags from all outstanding reviews. Totals validate posting relationships, retained transfer fields and inclusion metadata. The dashboard supports cursor pages, exact payment lookup and separate journaled settled/review volume. Browser layout, mounted interaction and accessibility remain unverified under the existing origin denial.
+Reconciliation reports distinguish new flags from all outstanding reviews. Totals validate posting relationships, retained transfer fields, inclusion metadata and transaction hash uniqueness across posted journals. The dashboard supports cursor pages, exact payment lookup and separate journaled settled/review volume. Browser layout, mounted interaction and accessibility remain unverified under the existing origin denial.
 
-The count is 640,252 nonblank source lines, comprising 17,340 application-area lines and 622,912 attributed Besu lines, including comments and tests. The application area includes the attributed signature-check adaptation. Historical measurements and earlier failures remain tied to their recorded revisions in [STATUS.md](STATUS.md) and [VALIDATION.md](docs/VALIDATION.md).
+The count is 640,313 nonblank source lines, comprising 17,401 application-area lines and 622,912 attributed Besu lines, including comments and tests. The application area includes the attributed signature-check adaptation. Historical measurements and earlier failures remain tied to their recorded revisions in [STATUS.md](STATUS.md) and [VALIDATION.md](docs/VALIDATION.md).
 
 ## Next increments
 

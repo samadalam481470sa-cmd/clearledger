@@ -132,6 +132,43 @@ test('coherent case-preserving retained hashes remain readable with unrelated au
 });
 
 
+test('one transaction hash across posted assets clears the HTTP/client totals report', async t => {
+  const { first, report } = baseline('review');
+  const unaffectedToken = '0x' + 'ef'.repeat(20);
+  posted(3, 'settled', unaffectedToken, '11');
+  report.assets.push({ token: unaffectedToken, settledPayments: 1, settledBaseUnits: '11',
+    reviewPayments: 0, reviewBaseUnits: '0' });
+  const good = await read();
+  assert.deepEqual(good, { status: 200, body: report });
+  let model = reduceTotals(emptyTotals(), { type: 'report', report: good.body });
+  assert.deepEqual(totalsCounts(model), { assets: 3, completed: 2, review: 1 });
+
+  const otherPosting = store.journals().find(journal => journal.token === otherToken)!;
+  const duplicate = '0x' + otherPosting.tx_hash.slice(2).toUpperCase();
+  const updatePayment = store.db.prepare('UPDATE payments SET tx_hash=? WHERE id=?');
+  const updateJournal = store.db.prepare('UPDATE journals SET tx_hash=? WHERE payment_id=?');
+  updatePayment.run(duplicate, first.id);
+  updateJournal.run(duplicate, first.id);
+  assert.deepEqual(await read(false), { status: 401, body: { error: 'Bearer token required' } });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const invalid = await read();
+    assert.deepEqual(invalid, { status: 200, body: unavailable });
+    model = reduceTotals(model, { type: 'report', report: invalid.body });
+    assert.deepEqual(totalsCounts(model), { assets: null, completed: null, review: null });
+    assert.equal(model.integrityError, unavailable.integrityError);
+  }
+
+  updatePayment.run(first.tx_hash, first.id);
+  updateJournal.run(first.tx_hash, first.id);
+  const restored = await read();
+  assert.deepEqual(restored, { status: 200, body: report });
+  model = reduceTotals(model, { type: 'report', report: restored.body });
+  assert.deepEqual(totalsCounts(model), { assets: 3, completed: 2, review: 1 });
+  assert.equal(model.integrityError, '');
+  assert.equal(rpcCalls, 0);
+  t.diagnostic(JSON.stringify({ unavailableReads: 2, restoredAssets: 3, rpcCalls, readWrites: 0 }));
+});
+
 const malformedInclusion = [
   ['short transaction hash', 'settled', 'tx_hash', '0x1234'],
   ['nonhex block hash', 'review', 'block_hash', '0x' + privateMarker.padEnd(64, '0')],

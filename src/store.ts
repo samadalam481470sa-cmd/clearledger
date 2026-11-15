@@ -225,6 +225,10 @@ export class Store {
           OR typeof(p.tx_hash) <> 'text' OR typeof(p.block_hash) <> 'text'
           OR typeof(j.block_number) <> 'integer' OR typeof(p.block_number) <> 'integer'
           OR j.block_number NOT BETWEEN 0 AND ${Number.MAX_SAFE_INTEGER}
+      ) OR EXISTS (
+        SELECT 1 FROM journals
+        GROUP BY tx_hash COLLATE NOCASE
+        HAVING COUNT(*) > 1
       )
       UNION ALL
       SELECT 'asset',j.token,j.amount,p.status,j.tx_hash,j.block_hash,j.debit_account,j.credit_account,p.payload
