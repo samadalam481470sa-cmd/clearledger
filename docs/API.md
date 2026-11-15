@@ -45,7 +45,9 @@ Shutdown-drain 503 responses retain their distinct `Service is shutting down` bo
 
 The RPC response omits upstream error messages/short messages, which can contain endpoint details. It does not establish whether a submitted payment was accepted or mined. Check authenticated `GET /api/payments`, `/api/journals`, and `/api/totals` for stored state; those collection reads can remain available during an RPC fault, while overview/health and signature acceptance/replay require upstream access.
 
-For uncertain `POST /api/payments` outcomes, inspect history first. Once RPC/current authorization is available, retry the same signed instructions with the same payer/payment ID rather than authorizing a new ID for the same transfer. Identical replay retains the original stored signature. The demo signing endpoint does not provide durable client replay keys. The HTTP handler adds no automatic retry; existing durable worker retries are separate. Local classification/redaction and controlled real-transport checks pass; evidence and limitations are recorded in [validation](VALIDATION.md#rpc-error-classification-and-redaction).
+For uncertain `POST /api/payments` outcomes, inspect history first. Once RPC/current authorization is available, retry the same signed instructions with the same payer/payment ID rather than authorizing a new ID for the same transfer. Identical replay retains the original stored signature. The HTTP handler adds no automatic retry; existing durable worker retries are separate. Local classification/redaction and controlled real-transport checks pass. [RPC error verification](VALIDATION.md#rpc-error-classification-and-redaction).
+
+The demo dashboard checks the acknowledgement’s stored record ID, status, route, asset and exact base-unit amount before showing its receipt. Malformed or mismatched acknowledgements leave the outcome unknown and prompt a history check. The demo signing endpoint does not provide durable client replay keys. [Demo acknowledgement evidence](../STATUS.md#demo-payment-acknowledgement).
 
 ## Exact payment lookup
 

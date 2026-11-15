@@ -1,4 +1,4 @@
-import type { PaymentRow } from './dashboard.ts';
+import type { Overview, PaymentRow } from './dashboard.ts';
 
 export interface PaymentLookupSnapshot { row: PaymentRow; capturedAt: string }
 export interface PaymentLookupState {
@@ -59,6 +59,23 @@ function publicRecord(value: unknown, requestedId: string): PaymentRow {
     Object.assign(result, { block_hash: value.block_hash });
   if (typeof value.updated_at === 'string') Object.assign(result, { updated_at: value.updated_at });
   return result;
+}
+
+/** Acknowledge the returned record only when it agrees with the submitted demo transfer. */
+export function demoPaymentSnapshot(response: unknown, amount: string,
+  context: Pick<Overview, 'payer' | 'payee' | 'token'>, now = new Date()): PaymentLookupSnapshot {
+  if (!record(response) || !record(response.payment) || !isPaymentLookupId(response.payment.id))
+    throw new Error(invalidResponse);
+  const row = publicRecord(response.payment, response.payment.id);
+  const decimal = /^([0-9]{1,7})(?:\.([0-9]{1,6}))?(?![\s\S])/.exec(amount);
+  const payment = row.payment;
+  if (!decimal || !payment ||
+    payment.amount !== BigInt(decimal[1] + (decimal[2] ?? '').padEnd(6, '0')).toString() ||
+    payment.payer.toLowerCase() !== context.payer?.toLowerCase() ||
+    payment.payee.toLowerCase() !== context.payee?.toLowerCase() ||
+    payment.token.toLowerCase() !== context.token?.toLowerCase())
+    throw new Error(invalidResponse);
+  return { row, capturedAt: now.toISOString() };
 }
 
 const copySnapshot = (snapshot: PaymentLookupSnapshot): PaymentLookupSnapshot => ({

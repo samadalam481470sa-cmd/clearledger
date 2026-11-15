@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AssetMetadataRegistry, AssetTotalsPanel, PageNavigation } from './views.tsx';
 import { PaymentHistoryRow, PaymentLookupPanel, PaymentReceiptSnapshot, type ReceiptSnapshot } from './payment-history.tsx';
-import { PaymentLookup, type PaymentLookupState } from './payment-lookup.ts';
+import { demoPaymentSnapshot, PaymentLookup, type PaymentLookupState } from './payment-lookup.ts';
 import { startPolling } from './polling.ts';
 import { emptyTotals, reduceTotals, totalsCounts, type TotalsReport } from './totals.ts';
 import {
@@ -207,28 +207,29 @@ function App() {
   }
   async function pay(event: React.FormEvent) {
     event.preventDefault();
-    if (busy || uncertainPayment) return;
+    if (busy || uncertainPayment || !data) return;
     const activeSession = session.current, activeNetwork = currentNetwork.current;
+    const changedNetwork = 'The connection changed during submission. Check the original network payment history before retrying.';
     const controller = new AbortController();
     posts.current.add(controller);
     setBusy(true); setNotice('');
     try {
-      const result = await request<{ payment: PaymentRow }>('demo/payment', {
+      const result = await request<unknown>('demo/payment', {
         method: 'POST', body: { amount }, signal: controller.signal
       });
       if (session.current !== activeSession || controller.signal.aborted) return;
-      // Acknowledgement is reported before any independent read refresh can fail.
+      if (currentNetwork.current !== activeNetwork) { setNotice(changedNetwork); return; }
+      const snapshot = demoPaymentSnapshot(result, amount, data);
+      // Acknowledge the validated record before any independent read refresh.
       setForm(false);
-      if (currentNetwork.current !== activeNetwork) {
-        setNotice('The connection changed during submission. Check the original network payment history before retrying.');
-      } else {
-        setNotice(result.payment.status === 'failed'
-          ? 'Payment rejected: ' + (result.payment.error ?? 'Contract rejected the instruction')
-          : 'Payment ' + result.payment.status + '. Open its receipt in payment history for details.');
-      }
+      setSelected(snapshot);
+      setNotice(snapshot.row.status === 'failed'
+        ? 'Payment rejected: ' + (snapshot.row.error ?? 'Contract rejected the instruction')
+        : 'Payment ' + snapshot.row.status + '.');
       refreshAfterMutation();
     } catch (e) {
       if (session.current !== activeSession || controller.signal.aborted) return;
+      if (currentNetwork.current !== activeNetwork) { setNotice(changedNetwork); return; }
       if (e instanceof ApiError && [400, 401, 403, 429].includes(e.status)) {
         setNotice(e.message);
       } else {
