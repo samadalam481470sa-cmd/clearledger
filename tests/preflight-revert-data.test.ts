@@ -183,28 +183,51 @@ test('a healthy retry after malformed evidence settles the original row once bef
   assert.equal(signing, 1); assert.equal(sends, 1); assert.equal(store.journals().length, 1);
 });
 
+const unavailableBudget = { message: 'Settlement gas budget is unavailable' };
 const headroomCaps = [
-  ['the observed block limit', 205_000n, 10_000_000n, 205_000n],
-  ['the affordable gas at the populated maximum fee', 30_000_000n, 406_001n, 203_000n],
-  ['the affordable gas at the legacy gas price', 30_000_000n, 406_001n, 203_000n, true]
+  ['the observed block limit', 219_999n, 10_000_000n, false],
+  ['the affordable gas at the populated maximum fee', 30_000_000n, 439_999n, false],
+  ['the affordable gas at the legacy gas price', 30_000_000n, 439_999n, true]
 ] as const;
-for (const [label, limit, funds, expectedGas, useLegacy = false] of headroomCaps) test('settlement gas headroom is capped by ' + label, async () => {
-  firstFailure = undefined;
-  latestBlock = () => ({ gasLimit: limit });
-  balance = funds;
-  legacy = useLegacy;
-  assert.equal(await caughtTick(), independentError);
-  assert.deepEqual(preflights, [firstId, secondId]);
-  const settled = store.get(firstId)!;
-  assert.equal(settled.status, 'settled');
-  const transaction = Transaction.from(settled.raw_tx!);
-  assert.equal(transaction.type, useLegacy ? 0 : 2);
-  assert.equal(transaction.gasLimit, expectedGas);
-  assert.equal(latestBlockReads, 1);
-  assert.equal(balanceReads, 1);
-  assert.equal(signing, 1);
-  assert.equal(sends, 1);
-});
+for (const [label, limit, funds, useLegacy] of headroomCaps) {
+  test(label + ' must cover the full settlement gas allowance before signing', async () => {
+    firstFailure = undefined;
+    latestBlock = () => ({ gasLimit: limit });
+    balance = funds;
+    legacy = useLegacy;
+    const before = snapshot();
+    const successor = store.get(secondId);
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      await assert.rejects(service.tick(), unavailableBudget);
+      assert.deepEqual(snapshot(), before);
+      assert.deepEqual(preflights, Array(attempt).fill(firstId));
+      assert.equal(latestBlockReads, attempt);
+      assert.equal(balanceReads, attempt);
+      assert.equal(signing, 0);
+      assert.equal(sends, 0);
+      assert.equal(receiptReads, 0);
+    }
+
+    latestBlock = () => ({ gasLimit: 220_000n });
+    balance = 440_000n;
+    assert.equal(await caughtTick(), independentError);
+    assert.deepEqual(preflights, [firstId, firstId, firstId, secondId]);
+    const settled = store.get(firstId)!;
+    assert.equal(settled.status, 'settled');
+    assert.deepEqual(store.get(secondId), successor);
+    assert.deepEqual(store.events().filter(event => event.payment_id === firstId).map(event => event.action),
+      ['settled', 'broadcast-prepared', 'accepted']);
+    assert.equal(store.journals().length, 1);
+    assert.equal(store.journal(firstId)?.tx_hash, settled.tx_hash);
+    const transaction = Transaction.from(settled.raw_tx!);
+    assert.equal(transaction.type, useLegacy ? 0 : 2);
+    assert.equal(transaction.gasLimit, 220_000n);
+    assert.equal(latestBlockReads, 3);
+    assert.equal(balanceReads, 3);
+    assert.equal(signing, 1);
+    assert.equal(sends, 1);
+  });
+}
 
 test('zero-fee settlement gets gas headroom without a balance lookup', async () => {
   firstFailure = undefined;
@@ -220,7 +243,6 @@ test('zero-fee settlement gets gas headroom without a balance lookup', async () 
   assert.equal(balanceReads, 0);
 });
 
-const unavailableBudget = { message: 'Settlement gas budget is unavailable' };
 const isIndependentError = (error: unknown) => error === independentError;
 const blockedBudgets = [
   ['an estimate above the block limit', () => { latestBlock = () => ({ gasLimit: 199_999n }); }, unavailableBudget],

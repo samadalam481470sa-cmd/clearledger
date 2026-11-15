@@ -67,6 +67,47 @@ test('a reserved settlement survives a UTC day rollover before its first success
   const next = (await service.accept(input)).row;
   const request = await router.settle.populateTransaction(input.payment, input.signature);
   const sameDayEstimate = await relayer.estimateGas(request);
+
+  const populated = await relayer.populateTransaction(request);
+  const feeCap = populated.maxFeePerGas ?? populated.gasPrice;
+  assert.ok(feeCap != null && BigInt(feeCap) > 0n);
+  assert.equal(populated.gasLimit, sameDayEstimate);
+  const constrainedBalance = sameDayEstimate * BigInt(feeCap);
+  const auditBefore = ledger.events(), journalsBefore = ledger.journals();
+  const writesBefore = ledger.db.prepare('SELECT total_changes() AS count').get();
+  const callsBefore = proxy.calls.length;
+  const getBalance = provider.getBalance;
+  let constrainedReads = 0;
+  provider.getBalance = async (address, tag) => {
+    if (address === relayer.address && tag === 'pending') {
+      constrainedReads++;
+      return constrainedBalance;
+    }
+    return getBalance.call(provider, address, tag);
+  };
+  // If an under-padded transaction is signed on the baseline, observe the send
+  // attempt without mining it or disturbing the head used to compute the fee cap.
+  proxy.fail('eth_sendRawTransaction', 'http-503', 1);
+  let budgetError: unknown;
+  try { await service.tick(); } catch (error) { budgetError = error; }
+  finally { provider.getBalance = getBalance; proxy.heal(); }
+
+  const constrained = ledger.get(next.id)!;
+  const attemptedSends = proxy.calls.slice(callsBefore).filter(call => call.method === 'eth_sendRawTransaction');
+  const presentOnChain = constrained.tx_hash ? (await local.provider.getTransaction(constrained.tx_hash)) !== null : null;
+  t.diagnostic(JSON.stringify({ phase: 'constrained budget', sameDayEstimate: String(sameDayEstimate),
+    pendingBalanceReads: constrainedReads, status: constrained.status, sendAttempts: attemptedSends.length,
+    signedGasLimit: constrained.raw_tx ? String(Transaction.from(constrained.raw_tx).gasLimit) : null, presentOnChain }));
+  assert.equal(constrainedReads, 1);
+  assert.notEqual(presentOnChain, true, 'The constrained transaction must be absent from the development chain');
+  assert.ok(isDeepStrictEqual(constrained, next), 'An estimate-only budget must leave the payment queued');
+  assert.deepEqual(ledger.events(), auditBefore);
+  assert.deepEqual(ledger.journals(), journalsBefore);
+  assert.deepEqual(ledger.db.prepare('SELECT total_changes() AS count').get(), writesBefore);
+  assert.equal(attemptedSends.length, 0);
+  assert.equal((await local.provider.getBlock('latest'))?.hash, oldHead.hash);
+  assert.ok(budgetError instanceof Error && budgetError.message === 'Settlement gas budget is unavailable');
+
   proxy.fail('eth_sendRawTransaction', 'http-503');
   await service.tick();
   const reserved = ledger.get(next.id)!;

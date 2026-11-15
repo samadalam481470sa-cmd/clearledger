@@ -134,9 +134,8 @@ export class PaymentService {
     if (!head || typeof head.gasLimit !== 'bigint') throw new Error('Settlement gas budget is unavailable');
     const affordable = balance === null ? head.gasLimit : balance / maxGasPrice;
     const ceiling = affordable < head.gasLimit ? affordable : head.gasLimit;
-    if (ceiling < estimate) throw new Error('Settlement gas budget is unavailable');
-    const padded = estimate + DAILY_SPEND_GAS_ALLOWANCE;
-    const gasLimit = padded < ceiling ? padded : ceiling;
+    const gasLimit = estimate + DAILY_SPEND_GAS_ALLOWANCE;
+    if (ceiling < gasLimit) throw new Error('Settlement gas budget is unavailable');
     const raw = await this.relayer.signTransaction({ ...complete, gasLimit });
     // Persist BEFORE sending. Restart can retransmit exactly the same signed transaction.
     this.store.broadcast(row.id, raw, keccak256(raw));
