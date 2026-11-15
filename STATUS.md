@@ -1,6 +1,6 @@
 # ClearLedger status
 
-Updated: November 14, 2026 (UTC).
+Updated: November 15, 2026.
 
 ## Scope and constraints
 
@@ -465,6 +465,14 @@ Project writes are confined to the new `outputs/clearledger/` directory and task
 
 - Reviewed source [`c12406f612f0bf79091aa7d3ab4bf41d9f20b830`](https://github.com/samadalam481470sa-cmd/clearledger/commit/c12406f612f0bf79091aa7d3ab4bf41d9f20b830), tree `53fc4b2a400fc84da934bc1c3a7d7cce27a9ccc3`, passed [regular CI `41681230278`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/41681230278), job `126075100297`: **859 passes/zero failures/zero skips** in 377,834.58626 ms, plus fresh npm ci, strict typecheck, Solidity 0.8.30/Paris and Vite 7.3.7 build (34 transformed modules), and source count 636,312. All 22 new Store/HTTP cases passed, including canonical/query/URI errors, privacy/nullability, fixed unknown-record 404 and unchanged reads. The all-status direct/collection DTO case took 70.815814 ms, encoded-colon case 12.203394 ms and older-than-preview case 46.601489 ms. Node/npm were 24.21.0/11.19.0; installation reported 33 audit entries, including five critical findings. Source head, completed conclusion, every job step and logs were verified.
 - The new actual CLI/Ganache/proxy case passed in 5,760.234409 ms. Its diagnostics recorded one automatic settlement, two genuine RPC-dependent 503 responses, four exact reads with zero additional RPC calls, one native send/journal, three lifecycle events and reconciliation 1/0. Successful assertions also preserve exact private SQLite evidence and the signed transaction through failure/healing, public DTO privacy, original replay and token/native-nonce invariants. These controlled reads do not establish an in-flight-acceptance race result, arbitrary RPC/storage availability, browser behavior, a new Besu result, soak or an SLO.
+
+## Malformed settlement logs with a known payment identity
+
+- If event decoding or argument access throws, ClearLedger checks the log’s router address and its event signature, payment ID and payer topics. An unreadable event identified this way makes the receipt inconsistent. Confirmation retains the signed reservation and queue priority. Reconciliation flags the affected settled payment for review and retains its journal, even with a missing block.
+- A Ganache proxy appended a copy of the genuine event without its final 32-byte ABI word. Ethers preserved its indexed identity but threw `BUFFER_OVERRUN` on decoding. Before the fix, both payments settled with two sends and two journals. The new test failed its broadcast assertion in 5,573.2131 ms. Four synthetic cases also failed on the old behavior.
+- The corrected real case passed in 3,836.9723 ms. Five altered replies held the original broadcast and queued successor with one send, no journals and no additional ledger changes. Clean evidence recovered both settlements. Reintroducing the malformed event during reconciliation flagged one payment and retained both journals, the original signed bytes and the unaffected row.
+- All 265 focused confirmation, reconciliation and RPC provenance tests passed on Windows in 38,034.9535 ms with zero failures or skips. The synthetic cases cover a sole truncated event, a deferred token decoding error alongside a genuine event and review with or without the block. Controls preserve normal settlement alongside malformed logs for a different payer or ID. Strict TypeScript checking passed on Node 24.22.1. The source count is 640,152 nonblank lines, with 17,240 across 115 application files and 622,912 across 4,484 attributed Besu files.
+- This check applies when the configured provider returns a receipt and the router and three topics identify the event. Provider formatting failures still follow the existing RPC error paths. The fault uses a local Ganache HTTP proxy and manually driven service ticks. Independent authentication of receipts remains outside this check.
 
 ## Conflicting settlement events for one payment
 

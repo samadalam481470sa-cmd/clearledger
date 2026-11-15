@@ -14,7 +14,7 @@ import { PaymentService } from '../src/service.ts';
 import { paymentTypes, type Payment } from '../src/payment.ts';
 
 type Provenance = 'transactionHash' | 'blockHash' | 'blockNumber' | 'transactionIndex';
-type ReceiptFault = Provenance | 'duplicate' | 'conflictingAmount' | 'status' | 'status-no-logs';
+type ReceiptFault = Provenance | 'duplicate' | 'conflictingAmount' | 'malformedData' | 'status' | 'status-no-logs';
 const fields: Provenance[] = ['transactionHash', 'blockHash', 'blockNumber', 'transactionIndex'];
 const settlementDataTypes = ['address', 'uint256', 'uint256']; // Token, amount and nonce.
 const coder = AbiCoder.defaultAbiCoder();
@@ -53,11 +53,13 @@ async function receiptProxy(upstream: string, routerAddress: string, topic: stri
               altered++;
               break;
             }
-            if (fault === 'duplicate' || fault === 'conflictingAmount') {
+            if (fault === 'duplicate' || fault === 'conflictingAmount' || fault === 'malformedData') {
               const copy = { ...log };
               if (fault === 'conflictingAmount') {
                 const [token, amount, nonce] = coder.decode(settlementDataTypes, copy.data);
                 copy.data = coder.encode(settlementDataTypes, [token, amount + 1n, nonce]);
+              } else if (fault === 'malformedData') {
+                copy.data = copy.data.slice(0, -64); // Drop the ABI word for the nonce.
               }
               receipt.logs.push(copy);
               altered++;
@@ -141,7 +143,7 @@ function matchingLog(receipt: TransactionReceipt) {
 
 // Real HTTP JSON-RPC and ethers formatting are exercised. Service ticks are
 // explicitly driven; this does not claim autonomous CLI or Besu validation.
-for (const field of [...fields, 'duplicate', 'conflictingAmount'] as const) test('actual RPC log ' + field + ' contradiction blocks confirmation and later flags reconciliation', {
+for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData'] as const) test('actual RPC log ' + field + ' contradiction blocks confirmation and later flags reconciliation', {
   timeout: 30000
 }, async t => {
   const firstInput = await signed('125000000', '0'), secondInput = await signed('7000000', '1');
@@ -162,7 +164,7 @@ for (const field of [...fields, 'duplicate', 'conflictingAmount'] as const) test
   const { log, index } = matchingLog(presented);
   const genuineLog = genuine.logs[index];
   const repairedPresentation = JSON.parse(JSON.stringify(presented));
-  if (field === 'duplicate' || field === 'conflictingAmount') {
+  if (field === 'duplicate' || field === 'conflictingAmount' || field === 'malformedData') {
     assert.equal(presented.logs.length, genuine.logs.length + 1);
     const appended = repairedPresentation.logs.pop();
     const expectedLog = JSON.parse(JSON.stringify(genuineLog));
@@ -172,6 +174,9 @@ for (const field of [...fields, 'duplicate', 'conflictingAmount'] as const) test
       assert.equal(event?.args.amount, BigInt(firstInput.payment.amount) + 1n);
       const [token, , nonce] = coder.decode(settlementDataTypes, genuineLog.data);
       expectedLog.data = coder.encode(settlementDataTypes, [token, event!.args.amount, nonce]);
+    } else if (field === 'malformedData') {
+      expectedLog.data = genuineLog.data.slice(0, -64);
+      assert.throws(() => chain.router.interface.parseLog(appended), { code: 'BUFFER_OVERRUN' });
     }
     assert.deepEqual(appended, expectedLog, 'ethers must retain the appended router log');
     t.diagnostic(JSON.stringify({ firstStatus: reserved.status, successorStatus: store.get(second.id)?.status,

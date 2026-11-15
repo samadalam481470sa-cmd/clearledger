@@ -1,4 +1,4 @@
-import { getBigInt, keccak256, Transaction, type JsonRpcProvider, type Wallet, type TypedDataDomain, type TransactionReceipt, type Block } from 'ethers';
+import { getBigInt, keccak256, Transaction, zeroPadValue, type JsonRpcProvider, type Wallet, type TypedDataDomain, type TransactionReceipt, type Block } from 'ethers';
 import { digest, domain, paymentKey, paymentSchema, submissionSchema, type Payment } from './payment.ts';
 import { Store, type RecordRow } from './store.ts';
 
@@ -206,15 +206,23 @@ export class PaymentService {
     if (!Array.isArray(receipt.logs)) return 'missing';
     let found = false;
     for (const log of receipt.logs) {
+      if (typeof log?.address !== 'string' || log.address.toLowerCase() !== this.routerAddress.toLowerCase()) continue;
       try {
-        if (log.address.toLowerCase() !== this.routerAddress.toLowerCase()) continue;
         const event = this.router.interface.parseLog(log);
         if (event?.name !== 'PaymentSettled' || event.args.paymentId !== p.paymentId ||
           event.args.payer !== p.payer) continue;
         if (event.args.payee !== p.payee || event.args.token !== p.token ||
           event.args.amount.toString() !== p.amount || event.args.nonce.toString() !== p.nonce)
           return 'inconsistent';
-      } catch { continue; }
+      } catch {
+        // Indexed identity survives a damaged payee topic or event payload.
+        if (Array.isArray(log.topics) && sameHash(log.topics[1], p.paymentId) &&
+          sameHash(log.topics[2], zeroPadValue(p.payer, 32))) {
+          const eventTopic = this.router.interface?.getEvent?.('PaymentSettled')?.topicHash;
+          if (eventTopic && sameHash(log.topics[0], eventTopic)) return 'inconsistent';
+        }
+        continue;
+      }
       // The reserved call emits one matching event, with provenance from its receipt.
       const transactionIndex = receipt.index;
       if (found || log.transactionIndex !== transactionIndex ||

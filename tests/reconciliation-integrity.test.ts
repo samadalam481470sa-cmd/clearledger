@@ -269,6 +269,17 @@ for (const missingBlock of [false, true]) {
   });
 }
 
+for (const missingBlock of [false, true]) {
+  test('a malformed settlement event with the recorded indexed identity triggers review ' +
+    (missingBlock ? 'without' : 'with') + ' a canonical block', async () => {
+    if (missingBlock) canonical = null;
+    const malformed = { ...settlementLog(), data: '0x12' };
+    assert.throws(() => iface.parseLog(malformed));
+    receipt.logs = [malformed, settlementLog()];
+    await flagged();
+  });
+}
+
 for (const [field, value] of Object.entries({
   token: '0x' + '88'.repeat(20), debit_account: payee, credit_account: payer,
   amount: '1', tx_hash: '0x' + '99'.repeat(32), block_number: 18, block_hash: '0x' + 'aa'.repeat(32)
@@ -428,7 +439,7 @@ for (const [description, logs] of [
 test('a genuine matching settlement remains valid alongside unrelated or malformed logs', async () => {
   receipt.logs = [{ address: routerAddress, topics: ['0x1234'], data: 'not-abi-data' },
     { address: payee, ...iface.encodeEventLog(iface.getEvent('Unrelated')!, [1]) },
-    settlementLog({ payer: payee }), settlementLog()];
+    { ...settlementLog({ payer: payee }), data: '0x12' }, settlementLog()];
   const result = await service().reconcile();
   assert.deepEqual(result.exceptions, []);
   assert.equal(store.get(paymentId)!.status, 'settled');

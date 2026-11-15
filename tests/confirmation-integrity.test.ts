@@ -194,11 +194,33 @@ for (const [description, getLogs] of [
   });
 }
 
+test('a sole malformed settlement event with the reserved indexed identity keeps the reservation', async () => {
+  const malformed = { ...settlementLog(), data: '0x12' };
+  assert.throws(() => iface.parseLog(malformed));
+  receipt.logs = [malformed];
+  await remainsUncertain();
+  assert.equal(blockReads, 2);
+});
+
+test('a deferred token decoding error for the reserved indexed identity overrides a genuine event', async () => {
+  const coherent = settlementLog();
+  // An address word with nonzero padding defers the error until token is accessed.
+  const malformed = { ...coherent, data: '0x' + 'ff'.repeat(12) + coherent.data.slice(26) };
+  const decoded = iface.parseLog(malformed);
+  assert.ok(decoded);
+  assert.equal(decoded.args.paymentId, payment.paymentId);
+  assert.equal(decoded.args.payer, payment.payer);
+  assert.throws(() => decoded.args.token, /deferred error/i);
+  receipt.logs = [coherent, malformed];
+  await remainsUncertain();
+  assert.equal(blockReads, 2);
+});
+
 test('a coherent matching event remains accepted alongside unrelated contracts and malformed nonmatching logs', async () => {
   const coherent = receipt.logs[0];
   receipt.logs = [{ address: routerAddress, topics: ['0x1234'], data: 'not-abi-data' },
     { ...coherent, address: payee, transactionHash: '0x' + 'ef'.repeat(32) },
-    settlementLog({ paymentId: '0x' + '78'.repeat(32) }), coherent];
+    { ...settlementLog({ paymentId: '0x' + '78'.repeat(32) }), data: '0x12' }, coherent];
   await service().tick();
   assert.equal(store.get(firstId)!.status, 'settled');
   assert.equal(store.journals().length, 1);
