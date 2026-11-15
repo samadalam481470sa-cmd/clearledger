@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { isDeepStrictEqual } from 'node:util';
-import { Wallet, id, keccak256, Transaction, type TransactionReceipt } from 'ethers';
+import { AbiCoder, Wallet, id, keccak256, Transaction, type TransactionReceipt } from 'ethers';
 import { compile } from '../scripts/compile.ts';
 import { localChain } from '../scripts/local-chain.ts';
 import { connectRouter } from '../src/chain.ts';
@@ -14,8 +14,10 @@ import { PaymentService } from '../src/service.ts';
 import { paymentTypes, type Payment } from '../src/payment.ts';
 
 type Provenance = 'transactionHash' | 'blockHash' | 'blockNumber' | 'transactionIndex';
-type ReceiptFault = Provenance | 'duplicate' | 'status' | 'status-no-logs';
+type ReceiptFault = Provenance | 'duplicate' | 'conflictingAmount' | 'status' | 'status-no-logs';
 const fields: Provenance[] = ['transactionHash', 'blockHash', 'blockNumber', 'transactionIndex'];
+const settlementDataTypes = ['address', 'uint256', 'uint256']; // Token, amount and nonce.
+const coder = AbiCoder.defaultAbiCoder();
 const differentHash = (value: string) => '0x' + (value.toLowerCase() === '0x' + 'fa'.repeat(32) ? 'fb' : 'fa').repeat(32);
 
 /** Changes only the selected receipt or router log. All requests reach Ganache. */
@@ -51,8 +53,13 @@ async function receiptProxy(upstream: string, routerAddress: string, topic: stri
               altered++;
               break;
             }
-            if (fault === 'duplicate') {
-              receipt.logs.push({ ...log });
+            if (fault === 'duplicate' || fault === 'conflictingAmount') {
+              const copy = { ...log };
+              if (fault === 'conflictingAmount') {
+                const [token, amount, nonce] = coder.decode(settlementDataTypes, copy.data);
+                copy.data = coder.encode(settlementDataTypes, [token, amount + 1n, nonce]);
+              }
+              receipt.logs.push(copy);
               altered++;
               break;
             }
@@ -134,7 +141,7 @@ function matchingLog(receipt: TransactionReceipt) {
 
 // Real HTTP JSON-RPC and ethers formatting are exercised. Service ticks are
 // explicitly driven; this does not claim autonomous CLI or Besu validation.
-for (const field of [...fields, 'duplicate'] as const) test('actual RPC log ' + field + ' contradiction blocks confirmation and later flags reconciliation', {
+for (const field of [...fields, 'duplicate', 'conflictingAmount'] as const) test('actual RPC log ' + field + ' contradiction blocks confirmation and later flags reconciliation', {
   timeout: 30000
 }, async t => {
   const firstInput = await signed('125000000', '0'), secondInput = await signed('7000000', '1');
@@ -155,10 +162,18 @@ for (const field of [...fields, 'duplicate'] as const) test('actual RPC log ' + 
   const { log, index } = matchingLog(presented);
   const genuineLog = genuine.logs[index];
   const repairedPresentation = JSON.parse(JSON.stringify(presented));
-  if (field === 'duplicate') {
+  if (field === 'duplicate' || field === 'conflictingAmount') {
     assert.equal(presented.logs.length, genuine.logs.length + 1);
-    assert.deepEqual(repairedPresentation.logs.pop(), JSON.parse(JSON.stringify(genuineLog)),
-      'ethers must retain the duplicate router log');
+    const appended = repairedPresentation.logs.pop();
+    const expectedLog = JSON.parse(JSON.stringify(genuineLog));
+    if (field === 'conflictingAmount') {
+      const event = chain.router.interface.parseLog(appended);
+      assert.equal(event?.name, 'PaymentSettled');
+      assert.equal(event?.args.amount, BigInt(firstInput.payment.amount) + 1n);
+      const [token, , nonce] = coder.decode(settlementDataTypes, genuineLog.data);
+      expectedLog.data = coder.encode(settlementDataTypes, [token, event!.args.amount, nonce]);
+    }
+    assert.deepEqual(appended, expectedLog, 'ethers must retain the appended router log');
     t.diagnostic(JSON.stringify({ firstStatus: reserved.status, successorStatus: store.get(second.id)?.status,
       journalRows: store.journals().length, nativeSends: proxy.sends.length, appendedRouterLogs: 1 }));
   } else {

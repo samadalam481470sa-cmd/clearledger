@@ -34,16 +34,22 @@ let latest: any;
 let preflights: number;
 let signing: number;
 let blockReads: number;
+
+function settlementLog(overrides: Partial<Payment> = {}) {
+  const p = { ...payment, ...overrides };
+  return { address: routerAddress, transactionHash: txHash, transactionIndex: 0, blockNumber: 17, blockHash,
+    ...iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
+      [p.paymentId, p.payer, p.payee, p.token, p.amount, p.nonce]) };
+}
+
 beforeEach(() => {
   store = new Store();
   firstId = store.accept(payment, digest(payment, signingDomain), signature).row.id;
   store.broadcast(firstId, raw, txHash);
   secondId = undefined;
-  const log = iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
-    [payment.paymentId, payment.payer, payment.payee, payment.token, payment.amount, payment.nonce]);
   receipt = { hash: txHash, index: 0, blockNumber: 17, blockHash, status: 1,
     from: fixtureRelayer.address, to: routerAddress,
-    logs: [{ address: routerAddress, transactionHash: txHash, transactionIndex: 0, blockNumber: 17, blockHash, ...log }] };
+    logs: [settlementLog()] };
   canonical = { number: 17, hash: blockHash, transactions: [txHash] };
   latest = 18;
   preflights = 0; signing = 0; blockReads = 0;
@@ -176,10 +182,23 @@ test('duplicate matching PaymentSettled logs keep the original reservation until
   assert.equal(signing, 0);
 });
 
+for (const [description, getLogs] of [
+  ['a conflicting amount before the genuine event', () => [settlementLog({ amount: '125000001' }), settlementLog()]],
+  ['a conflicting payee after the genuine event', () => [settlementLog(), settlementLog({ payee: token })]],
+  ['a sole event with a conflicting nonce', () => [settlementLog({ nonce: '1' })]]
+] as const) {
+  test(description + ' for the same payer and payment ID keeps the original reservation', async () => {
+    receipt.logs = getLogs().map((log, index) => ({ ...log, index }));
+    await remainsUncertain();
+    assert.equal(blockReads, 2);
+  });
+}
+
 test('a coherent matching event remains accepted alongside unrelated contracts and malformed nonmatching logs', async () => {
   const coherent = receipt.logs[0];
   receipt.logs = [{ address: routerAddress, topics: ['0x1234'], data: 'not-abi-data' },
-    { ...coherent, address: payee, transactionHash: '0x' + 'ef'.repeat(32) }, coherent];
+    { ...coherent, address: payee, transactionHash: '0x' + 'ef'.repeat(32) },
+    settlementLog({ paymentId: '0x' + '78'.repeat(32) }), coherent];
   await service().tick();
   assert.equal(store.get(firstId)!.status, 'settled');
   assert.equal(store.journals().length, 1);

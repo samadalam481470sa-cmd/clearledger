@@ -206,16 +206,15 @@ export class PaymentService {
     if (!Array.isArray(receipt.logs)) return 'missing';
     let found = false;
     for (const log of receipt.logs) {
-      let matches = false;
       try {
         if (log.address.toLowerCase() !== this.routerAddress.toLowerCase()) continue;
         const event = this.router.interface.parseLog(log);
-        matches = event?.name === 'PaymentSettled' && event.args.paymentId === p.paymentId &&
-          event.args.payer === p.payer && event.args.payee === p.payee &&
-          event.args.token === p.token && event.args.amount.toString() === p.amount &&
-          event.args.nonce.toString() === p.nonce;
+        if (event?.name !== 'PaymentSettled' || event.args.paymentId !== p.paymentId ||
+          event.args.payer !== p.payer) continue;
+        if (event.args.payee !== p.payee || event.args.token !== p.token ||
+          event.args.amount.toString() !== p.amount || event.args.nonce.toString() !== p.nonce)
+          return 'inconsistent';
       } catch { continue; }
-      if (!matches) continue;
       // The reserved call emits one matching event, with provenance from its receipt.
       const transactionIndex = receipt.index;
       if (found || log.transactionIndex !== transactionIndex ||
