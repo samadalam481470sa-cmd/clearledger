@@ -55,7 +55,7 @@ function coherentReceipt() {
     paymentId: payment.paymentId, payer: payment.payer, payee: payment.payee,
     token: payment.token, amount: payment.amount, nonce: payment.nonce }));
   return { hash: txHash, index: 0, blockNumber: 17, blockHash, status: 1, from: offlineRelayer.address, to: routerAddress,
-    logs: [{ address: routerAddress, ...log, transactionHash: txHash, transactionIndex: 0, blockNumber: 17, blockHash }] };
+    logs: [{ address: routerAddress, ...log, transactionHash: txHash, transactionIndex: 0, index: 0, blockNumber: 17, blockHash }] };
 }
 function snapshot() {
   return { rows: store.db.prepare('SELECT * FROM payments ORDER BY rowid').all(),

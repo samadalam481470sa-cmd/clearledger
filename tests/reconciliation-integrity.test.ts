@@ -41,7 +41,7 @@ afterEach(() => { store.close(); });
 
 function settlementLog(overrides: Partial<Payment> = {}, address = routerAddress) {
   const p = { ...payment, ...overrides };
-  return { address, transactionHash: txHash, transactionIndex: 0, blockNumber: 17, blockHash,
+  return { address, transactionHash: txHash, transactionIndex: 0, index: 0, blockNumber: 17, blockHash,
     ...iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
     [p.paymentId, p.payer, p.payee, p.token, p.amount, p.nonce]) };
 }
@@ -226,6 +226,15 @@ for (const contradictoryFirst of [false, true]) {
     const coherent = { ...receipt.logs[0] };
     const contradictory = { ...coherent, blockHash: '0x' + '99'.repeat(32) };
     receipt.logs = contradictoryFirst ? [contradictory, coherent] : [coherent, contradictory];
+    await flagged();
+  });
+}
+
+for (const missingBlock of [false, true]) {
+  test('a negative settlement log index triggers review ' +
+    (missingBlock ? 'without' : 'with') + ' a canonical block', async () => {
+    receipt.logs[0].index = -1;
+    if (missingBlock) canonical = null;
     await flagged();
   });
 }

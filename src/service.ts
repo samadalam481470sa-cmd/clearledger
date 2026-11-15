@@ -224,7 +224,8 @@ export class PaymentService {
       }
       // The reserved call emits one matching event, with provenance from its receipt.
       const transactionIndex = receipt.index;
-      if (found || log.transactionIndex !== transactionIndex ||
+      if (found || !Number.isSafeInteger(log.index) || log.index < 0 ||
+        log.transactionIndex !== transactionIndex ||
         (transactionIndex !== undefined && (!Number.isSafeInteger(transactionIndex) || transactionIndex < 0)) ||
         !sameHash(log.transactionHash, receipt.hash) ||
         !Number.isSafeInteger(log.blockNumber) || log.blockNumber < 0 ||

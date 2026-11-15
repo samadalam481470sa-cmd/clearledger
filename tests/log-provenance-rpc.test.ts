@@ -13,9 +13,9 @@ import { Store } from '../src/store.ts';
 import { PaymentService } from '../src/service.ts';
 import { paymentTypes, type Payment } from '../src/payment.ts';
 
-type Provenance = 'transactionHash' | 'blockHash' | 'blockNumber' | 'transactionIndex';
+type Provenance = 'transactionHash' | 'blockHash' | 'blockNumber' | 'transactionIndex' | 'logIndex';
 type ReceiptFault = Provenance | 'duplicate' | 'conflictingAmount' | 'malformedData' | 'status' | 'status-no-logs';
-const fields: Provenance[] = ['transactionHash', 'blockHash', 'blockNumber', 'transactionIndex'];
+const fields: Provenance[] = ['transactionHash', 'blockHash', 'blockNumber', 'transactionIndex', 'logIndex'];
 const settlementDataTypes = ['address', 'uint256', 'uint256']; // Token, amount and nonce.
 const coder = AbiCoder.defaultAbiCoder();
 const differentHash = (value: string) => '0x' + (value.toLowerCase() === '0x' + 'fa'.repeat(32) ? 'fb' : 'fa').repeat(32);
@@ -65,7 +65,8 @@ async function receiptProxy(upstream: string, routerAddress: string, topic: stri
               altered++;
               break;
             }
-            log[fault] = fault === 'blockNumber' || fault === 'transactionIndex'
+            if (fault === 'logIndex') log.logIndex = -1;
+            else log[fault] = fault === 'blockNumber' || fault === 'transactionIndex'
               ? '0x' + (BigInt(log[fault]) + 1n).toString(16)
               : differentHash(log[fault]);
             altered++;
@@ -181,6 +182,13 @@ for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData
     assert.deepEqual(appended, expectedLog, 'ethers must retain the appended router log');
     t.diagnostic(JSON.stringify({ firstStatus: reserved.status, successorStatus: store.get(second.id)?.status,
       journalRows: store.journals().length, nativeSends: proxy.sends.length, appendedRouterLogs: 1 }));
+  } else if (field === 'logIndex') {
+    assert.ok(genuineLog.index >= 0);
+    assert.equal(log.index, -1, 'ethers must retain the negative log index from the RPC reply');
+    repairedPresentation.logs[index].index = genuineLog.index;
+    t.diagnostic(JSON.stringify({ reportedLogIndex: log.index, genuineLogIndex: genuineLog.index,
+      firstStatus: reserved.status, successorStatus: store.get(second.id)?.status,
+      journalRows: store.journals().length, nativeSends: proxy.sends.length }));
   } else {
     const expected = field === 'blockNumber' || field === 'transactionIndex'
       ? genuineLog[field] + 1

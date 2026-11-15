@@ -84,7 +84,7 @@ beforeEach(() => {
       const log = iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
         [first.paymentId, first.payer, first.payee, first.token, first.amount, first.nonce]);
       receipt = { hash, index: 0, blockNumber: 17, blockHash, status: 1, from: nativeSigner.address, to: routerAddress,
-        logs: [{ address: routerAddress, ...log, transactionHash: hash, transactionIndex: 0, blockNumber: 17, blockHash }] };
+        logs: [{ address: routerAddress, ...log, transactionHash: hash, transactionIndex: 0, index: 0, blockNumber: 17, blockHash }] };
       return { hash };
     },
     getBlockNumber: async () => { blockReads++; return 17; },

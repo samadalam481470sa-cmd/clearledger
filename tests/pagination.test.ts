@@ -64,7 +64,7 @@ function coherentReceipt(tx: string) {
     [payment.paymentId, payment.payer, payment.payee, payment.token, payment.amount, payment.nonce]);
   return { hash: tx, index: 0, blockNumber: row.block_number, status: 1, blockHash: row.block_hash,
     from: fixtureRelayer.address, to: routerAddress,
-    logs: [{ address: routerAddress, transactionHash: tx, transactionIndex: 0, blockHash: row.block_hash,
+    logs: [{ address: routerAddress, transactionHash: tx, transactionIndex: 0, index: 0, blockHash: row.block_hash,
       blockNumber: row.block_number, ...log }] };
 }
 function readService(overrides: Record<string, unknown> = {}) {

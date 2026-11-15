@@ -37,7 +37,7 @@ let blockReads: number;
 
 function settlementLog(overrides: Partial<Payment> = {}) {
   const p = { ...payment, ...overrides };
-  return { address: routerAddress, transactionHash: txHash, transactionIndex: 0, blockNumber: 17, blockHash,
+  return { address: routerAddress, transactionHash: txHash, transactionIndex: 0, index: 0, blockNumber: 17, blockHash,
     ...iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
       [p.paymentId, p.payer, p.payee, p.token, p.amount, p.nonce]) };
 }
@@ -163,6 +163,17 @@ for (const contradictoryFirst of [false, true]) {
   });
 }
 
+for (const [description, index] of [
+  ['missing', undefined], ['negative', -1], ['fractional', 0.5], ['unsafe', Number.MAX_SAFE_INTEGER + 1]
+] as const) {
+  test(description + ' settlement log index preserves the original reservation and queue order', async () => {
+    if (index === undefined) delete receipt.logs[0].index;
+    else receipt.logs[0].index = index;
+    await remainsUncertain();
+    assert.equal(blockReads, 2);
+  });
+}
+
 test('duplicate matching PaymentSettled logs keep the original reservation until the receipt is restored', async () => {
   const coherent = { ...receipt.logs[0], index: 1 };
   receipt.logs = [coherent, { ...coherent, index: 2 }];
@@ -219,7 +230,7 @@ test('a deferred token decoding error for the reserved indexed identity override
 test('a coherent matching event remains accepted alongside unrelated contracts and malformed nonmatching logs', async () => {
   const coherent = receipt.logs[0];
   receipt.logs = [{ address: routerAddress, topics: ['0x1234'], data: 'not-abi-data' },
-    { ...coherent, address: payee, transactionHash: '0x' + 'ef'.repeat(32) },
+    { ...coherent, address: payee, index: -1, transactionHash: '0x' + 'ef'.repeat(32) },
     { ...settlementLog({ paymentId: '0x' + '78'.repeat(32) }), data: '0x12' }, coherent];
   await service().tick();
   assert.equal(store.get(firstId)!.status, 'settled');
