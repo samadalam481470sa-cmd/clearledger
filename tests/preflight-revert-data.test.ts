@@ -111,9 +111,13 @@ afterEach(() => { store.close(); });
 
 const uncertainData: [string, unknown][] = [
   ['malformed missing prefix', '1234'], ['malformed nonhex', '0xgg'], ['malformed odd length', '0x123'],
-  ['malformed uppercase prefix', '0X1234'], ['malformed trailing newline', '0x00\n'],
-  ['malformed trailing CRLF', '0x00\r\n'], ['malformed trailing space', '0x00 '],
-  ['malformed leading space', ' 0x00'], ['malformed NUL suffix', '0x00\0'],
+  ['malformed uppercase prefix', '0X1234abcd'], ['malformed trailing newline', '0x1234abcd\n'],
+  ['malformed trailing CRLF', '0x1234abcd\r\n'], ['malformed trailing space', '0x1234abcd '],
+  ['malformed leading space', ' 0x1234abcd'], ['malformed NUL suffix', '0x1234abcd\0'],
+  ['nonhex selector at the expected length', '0x1234abzz'],
+  ['one zero byte', '0x00'], ['three bytes', '0xaB12fE'], ['selector plus one byte', '0x1234abcdff'],
+  ['selector with a truncated word', '0x1234abcd' + '00'.repeat(31)],
+  ['selector and word with a trailing byte', '0x1234abcd' + '00'.repeat(33)],
   ['undefined', undefined], ['null', null], ['empty string', ''], ['empty hex', '0x'],
   ['number', 1234], ['byte buffer', Buffer.from([0x12, 0x34])], ['array', ['0x00']], ['boxed string', new String('0x00')]
 ];
@@ -134,7 +138,8 @@ for (const [label, data] of uncertainData)
   });
 
 for (const [label, data] of [
-  ['one zero byte', '0x00'], ['mixed hex complete bytes', '0xaB12fE'],
+  ['mixed-case unknown selector', '0xaB12fE34'],
+  ['unknown selector with two words', '0xaB12fE34' + 'Ef'.repeat(64)],
   ['encoded custom error', iface.encodeErrorResult('PolicyLimit', [125000000])]
 ] as const) test('valid ' + label + ' retains terminal rejection and permits independent work', async () => {
   firstFailure = failure(data); const evidence = store.get(firstId)!, queued = store.get(secondId)!;
@@ -154,14 +159,14 @@ for (const [label, data] of [
 });
 
 for (const code of ['NETWORK_ERROR', 'TIMEOUT', 'SERVER_ERROR', 'UNKNOWN_ERROR'])
-  test('other-code ' + code + ' stays retryable even with valid complete-byte data', async () => {
-    const error = failure('0x1234', code); firstFailure = error; const before = snapshot();
+  test('other-code ' + code + ' stays retryable even with ABI-shaped data', async () => {
+    const error = failure('0x1234abcd', code); firstFailure = error; const before = snapshot();
     assert.equal(await caughtTick(), error); assert.equal(await caughtTick(), error);
     assert.deepEqual(snapshot(), before); assert.deepEqual(preflights, [firstId, firstId]); noPreparation();
   });
 
-test('a healthy retry after malformed evidence settles the original row once before independent preflight', async () => {
-  const error = failure('0xgg'); firstFailure = error; const before = snapshot();
+test('a healthy retry after selector-short evidence settles the original row once before independent preflight', async () => {
+  const error = failure('0x00'); firstFailure = error; const before = snapshot();
   assert.equal(await caughtTick(), error); assert.equal(await caughtTick(), error);
   assert.deepEqual(snapshot(), before); noPreparation();
   const evidence = store.get(firstId)!; firstFailure = undefined;

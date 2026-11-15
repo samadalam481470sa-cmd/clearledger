@@ -32,7 +32,8 @@ async function failure(operation: () => Promise<unknown>) {
   return undefined;
 }
 async function preflightProxy(upstream: string, router: string, selector: string) {
-  let malformed = false, injected = 0, forwardedPreflights = 0;
+  let malformedData: string | undefined;
+  let injected = 0, forwardedPreflights = 0;
   const nativeSends: string[] = [], active = new Set<Promise<void>>();
   const server = createServer((request, response) => {
     const operation = (async () => {
@@ -45,10 +46,10 @@ async function preflightProxy(upstream: string, router: string, selector: string
           const transaction = call.params?.[0];
           const preflight = call.method === 'eth_call' && transaction?.to?.toLowerCase() === router.toLowerCase() &&
             typeof transaction.data === 'string' && transaction.data.startsWith(selector);
-          if (preflight && malformed) {
+          if (preflight && malformedData !== undefined) {
             injected++;
             return { id: call.id, jsonrpc: '2.0', error: {
-              code: 3, message: 'execution reverted: controlled malformed data', data: '0xzz'
+              code: 3, message: 'execution reverted: controlled malformed data', data: malformedData
             } };
           }
           if (preflight) forwardedPreflights++;
@@ -71,7 +72,7 @@ async function preflightProxy(upstream: string, router: string, selector: string
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   return {
     url: 'http://127.0.0.1:' + (server.address() as { port: number }).port,
-    nativeSends, malform() { malformed = true; }, heal() { malformed = false; },
+    nativeSends, malform(data: string) { malformedData = data; }, heal() { malformedData = undefined; },
     counts: () => ({ injected, forwardedPreflights }),
     async close() {
       server.closeAllConnections();
@@ -85,7 +86,7 @@ async function preflightProxy(upstream: string, router: string, selector: string
 // Uses existing contract artifacts without compiling/writing shared artifacts.
 // This is real loopback JSON-RPC/API and Ganache execution with manual service
 // ticks, not autonomous CLI, Besu, malformed-data exploit or production proof.
-test('ethers normalizes malformed HTTP revert data for retry before genuine custom-error rejection and healthy settlement', {
+test('ethers normalizes nonhex and selector-short HTTP revert data for retry before genuine rejection and healthy settlement', {
   timeout: 30000
 }, async t => {
   assert.ok(existsSync('artifacts/SettlementRouter.json') && existsSync('artifacts/DemoUSD.json'),
@@ -133,20 +134,30 @@ test('ethers normalizes malformed HTTP revert data for retry before genuine cust
     }
     const snapshot = () => JSON.stringify({ rows: store!.list(), audit: store!.events(), journals: store!.journals() });
     const original = snapshot();
-    proxy.malform();
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const normalized = await failure(() => service.tick());
-      assert.ok(normalized, 'Malformed preflight evidence must leave the tick retryable');
-      assert.equal(normalized.code, 'CALL_EXCEPTION'); assert.equal(normalized.data, null);
-      assert.equal(normalized.action, 'call'); assert.equal(normalized.shortMessage, 'missing revert data');
-      if (attempt === 0) t.diagnostic(JSON.stringify({ malformedResponse: 'nonhex-data', normalized }));
-      assert.ok(snapshot() === original, 'Malformed RPC evidence changed private queued authorization or audit state');
-      for (const paymentId of [rejectedId, healthyId]) {
-        assert.equal(store.get(paymentId)!.status, 'queued');
-        assert.equal(store.get(paymentId)!.raw_tx, null); assert.equal(store.get(paymentId)!.tx_hash, null);
+    for (const fault of [
+      { data: '0xzz', normalizedData: null, shortMessage: 'missing revert data' },
+      { data: '0x00', normalizedData: '0x00', shortMessage: 'execution reverted (could not decode reason; invalid data length)' }
+    ]) {
+      proxy.malform(fault.data);
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const normalized = await failure(() => service.tick());
+        if (attempt === 0) t.diagnostic(JSON.stringify({ injectedData: fault.data, normalized,
+          firstStatus: store.get(rejectedId)!.status, successorStatus: store.get(healthyId)!.status,
+          nativeSends: proxy.nativeSends.length }));
+        assert.ok(snapshot() === original, 'Malformed RPC evidence changed private queued authorization or audit state');
+        assert.ok(normalized, 'Malformed preflight evidence must leave the tick retryable');
+        assert.equal(normalized.code, 'CALL_EXCEPTION');
+        assert.equal(normalized.data, fault.normalizedData);
+        assert.equal(normalized.action, 'call');
+        assert.equal(normalized.shortMessage, fault.shortMessage);
+        for (const paymentId of [rejectedId, healthyId]) {
+          assert.equal(store.get(paymentId)!.status, 'queued');
+          assert.equal(store.get(paymentId)!.raw_tx, null); assert.equal(store.get(paymentId)!.tx_hash, null);
+        }
       }
     }
-    assert.equal(proxy.counts().injected, 3); assert.equal(proxy.nativeSends.length, 0);
+    assert.deepEqual(proxy.counts(), { injected: 6, forwardedPreflights: 0 });
+    assert.equal(proxy.nativeSends.length, 0);
     assert.equal(store.journals().length, 0); assert.equal(store.events().length, 2);
     assert.equal(await live.token.balanceOf(live.payer.address), initialTokens);
     assert.equal(await live.token.balanceOf(live.payee.address), 0n);
@@ -186,7 +197,7 @@ test('ethers normalizes malformed HTTP revert data for retry before genuine cust
     assert.deepEqual(reconciliation.body.exceptions, []);
     assert.equal(store.events().length, 5); assert.equal(store.journals().length, 1);
     assert.equal(proxy.nativeSends.length, 1);
-    t.diagnostic(JSON.stringify({ malformedRetries: 3, genuinePreflightFailures: 1,
+    t.diagnostic(JSON.stringify({ malformedRetries: 6, genuinePreflightFailures: 1,
       healthySettlements: 1, nativeSends: 1, journalRows: 1, reconciled: 1 }));
   } finally {
     const failures: unknown[] = [];
