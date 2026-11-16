@@ -214,6 +214,19 @@ test('a sole malformed settlement event with the reserved indexed identity keeps
   assert.equal(blockReads, 2);
 });
 
+for (const excess of ['trailing data', 'a fifth topic'] as const) {
+  test('matching settlement event with ' + excess + ' keeps the original reservation', async () => {
+    const coherent = settlementLog();
+    const malformed = excess === 'trailing data'
+      ? { ...coherent, data: coherent.data + '00' }
+      : { ...coherent, topics: [...coherent.topics, '0x' + '00'.repeat(32)] };
+    assert.deepEqual(iface.parseLog(malformed)?.args.toArray(), iface.parseLog(coherent)?.args.toArray());
+    receipt.logs = [malformed];
+    await remainsUncertain();
+    assert.equal(blockReads, 2);
+  });
+}
+
 test('a deferred token decoding error for the reserved indexed identity overrides a genuine event', async () => {
   const coherent = settlementLog();
   // An address word with nonzero padding defers the error until token is accessed.
@@ -508,7 +521,7 @@ test('successful receipt waits for confirmation depth and then journals once', a
   assert.equal(store.events().filter(event => event.action === 'settled').length, 1);
 });
 
-test('matching receipt addresses and hashes remain valid across hexadecimal case', async () => {
+test('matching receipt addresses, hashes and event bytes remain valid across hexadecimal case', async () => {
   receipt.from = fixtureRelayer.address.toLowerCase();
   receipt.to = routerAddress.toLowerCase();
   const uppercaseHash = '0x' + txHash.slice(2).toUpperCase();
@@ -520,6 +533,9 @@ test('matching receipt addresses and hashes remain valid across hexadecimal case
   canonical.transactions = [otherTxHash, uppercaseHash];
   receipt.logs[0].transactionHash = uppercaseHash;
   receipt.logs[0].blockHash = '0x' + 'cD'.repeat(32);
+  const uppercaseHex = (hex: string) => '0x' + hex.slice(2).toUpperCase();
+  receipt.logs[0].topics = receipt.logs[0].topics.map(uppercaseHex);
+  receipt.logs[0].data = uppercaseHex(receipt.logs[0].data);
   await service().tick();
   assert.equal(store.get(firstId)!.status, 'settled');
   assert.equal(store.get(firstId)!.tx_hash, txHash);

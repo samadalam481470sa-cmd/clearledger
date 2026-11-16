@@ -14,10 +14,12 @@ import { PaymentService } from '../src/service.ts';
 import { paymentTypes, type Payment } from '../src/payment.ts';
 
 type Provenance = 'transactionHash' | 'blockHash' | 'blockNumber' | 'transactionIndex' | 'logIndex';
-type ReceiptFault = Provenance | 'gasUsed' | 'duplicate' | 'conflictingAmount' | 'malformedData' | 'status' | 'status-no-logs';
+type ReceiptFault = Provenance | 'gasUsed' | 'duplicate' | 'conflictingAmount' | 'malformedData' |
+  'extraDataWord' | 'extraTopic' | 'status' | 'status-no-logs';
 const fields: Provenance[] = ['transactionHash', 'blockHash', 'blockNumber', 'transactionIndex', 'logIndex'];
 const settlementDataTypes = ['address', 'uint256', 'uint256']; // Token, amount and nonce.
 const coder = AbiCoder.defaultAbiCoder();
+const extraWord = 'ab'.repeat(32);
 const differentHash = (value: string) => '0x' + (value.toLowerCase() === '0x' + 'fa'.repeat(32) ? 'fb' : 'fa').repeat(32);
 
 /** Changes only the selected receipt or router log. All requests reach Ganache. */
@@ -75,6 +77,12 @@ async function receiptProxy(upstream: string, routerAddress: string, topic: stri
                 copy.data = copy.data.slice(0, -64); // Drop the ABI word for the nonce.
               }
               receipt.logs.push(copy);
+              altered++;
+              break;
+            }
+            if (fault === 'extraDataWord' || fault === 'extraTopic') {
+              if (fault === 'extraDataWord') log.data += extraWord;
+              else log.topics.push('0x' + extraWord);
               altered++;
               break;
             }
@@ -157,7 +165,7 @@ function matchingLog(receipt: TransactionReceipt) {
 
 // Real HTTP JSON-RPC and ethers formatting are exercised. Service ticks are
 // explicitly driven; this does not claim autonomous CLI or Besu validation.
-for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData', 'gasUsed'] as const) test(
+for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData', 'extraDataWord', 'extraTopic', 'gasUsed'] as const) test(
   'actual RPC ' + (field === 'gasUsed' ? 'receipt ' : 'log ') + field + ' contradiction blocks confirmation and later flags reconciliation', {
   timeout: 30000
 }, async t => {
@@ -205,6 +213,21 @@ for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData
     assert.deepEqual(appended, expectedLog, 'ethers must retain the appended router log');
     t.diagnostic(JSON.stringify({ firstStatus: reserved.status, successorStatus: store.get(second.id)?.status,
       journalRows: store.journals().length, nativeSends: proxy.sends.length, appendedRouterLogs: 1 }));
+  } else if (field === 'extraDataWord' || field === 'extraTopic') {
+    assert.equal(presented.logs.length, genuine.logs.length);
+    if (field === 'extraDataWord') {
+      assert.equal(log.data, genuineLog.data + extraWord, 'ethers must retain the trailing data word');
+      repairedPresentation.logs[index].data = genuineLog.data;
+    } else {
+      assert.deepEqual(log.topics, [...genuineLog.topics, '0x' + extraWord], 'ethers must retain the fifth topic');
+      repairedPresentation.logs[index].topics = genuineLog.topics;
+    }
+    const event = chain.router.interface.parseLog(log);
+    const genuineEvent = chain.router.interface.parseLog(genuineLog);
+    assert.ok(event?.name === 'PaymentSettled' && genuineEvent?.name === 'PaymentSettled');
+    assert.deepEqual(Array.from(event.args), Array.from(genuineEvent.args), 'ethers must decode the same settlement arguments');
+    t.diagnostic(JSON.stringify({ firstStatus: reserved.status, successorStatus: store.get(second.id)?.status,
+      journalRows: store.journals().length, nativeSends: proxy.sends.length }));
   } else if (field === 'logIndex') {
     assert.ok(genuineLog.index >= 0);
     assert.equal(log.index, -1, 'ethers must retain the negative log index from the RPC reply');

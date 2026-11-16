@@ -298,6 +298,18 @@ for (const missingBlock of [false, true]) {
   });
 }
 
+for (const excess of ['trailing data', 'a fifth topic'] as const) {
+  test('matching settlement event with ' + excess + ' triggers review and retains its journal', async () => {
+    const coherent = settlementLog();
+    const malformed = excess === 'trailing data'
+      ? { ...coherent, data: coherent.data + '00' }
+      : { ...coherent, topics: [...coherent.topics, '0x' + '00'.repeat(32)] };
+    assert.deepEqual(iface.parseLog(malformed)?.args.toArray(), iface.parseLog(coherent)?.args.toArray());
+    receipt.logs = [malformed];
+    await flagged();
+  });
+}
+
 for (const [field, value] of Object.entries({
   token: '0x' + '88'.repeat(20), debit_account: payee, credit_account: payer,
   amount: '1', tx_hash: '0x' + '99'.repeat(32), block_number: 18, block_hash: '0x' + 'aa'.repeat(32)

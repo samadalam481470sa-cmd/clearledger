@@ -1,4 +1,4 @@
-import { getBigInt, keccak256, Transaction, zeroPadValue, type JsonRpcProvider, type Wallet, type TypedDataDomain, type TransactionReceipt, type Block } from 'ethers';
+import { getBigInt, keccak256, Transaction, type Interface, type JsonRpcProvider, type Wallet, type TypedDataDomain, type TransactionReceipt, type Block } from 'ethers';
 import { digest, domain, paymentKey, paymentSchema, submissionSchema, type Payment } from './payment.ts';
 import { Store, type RecordRow } from './store.ts';
 
@@ -211,25 +211,18 @@ export class PaymentService {
 
   private settlementEvidence(p: Payment, receipt: TransactionReceipt): 'matching' | 'inconsistent' | 'missing' {
     if (!Array.isArray(receipt.logs)) return 'missing';
+    const abi: Interface = this.router.interface;
+    const expected = abi.encodeEventLog('PaymentSettled', [p.paymentId, p.payer, p.payee, p.token, p.amount, p.nonce]);
+    const [eventTopic, paymentIdTopic, payerTopic] = expected.topics;
     let found = false;
     for (const log of receipt.logs) {
-      if (typeof log?.address !== 'string' || log.address.toLowerCase() !== this.routerAddress.toLowerCase()) continue;
-      try {
-        const event = this.router.interface.parseLog(log);
-        if (event?.name !== 'PaymentSettled' || event.args.paymentId !== p.paymentId ||
-          event.args.payer !== p.payer) continue;
-        if (event.args.payee !== p.payee || event.args.token !== p.token ||
-          event.args.amount.toString() !== p.amount || event.args.nonce.toString() !== p.nonce)
-          return 'inconsistent';
-      } catch {
-        // Indexed identity survives a damaged payee topic or event payload.
-        if (Array.isArray(log.topics) && sameHash(log.topics[1], p.paymentId) &&
-          sameHash(log.topics[2], zeroPadValue(p.payer, 32))) {
-          const eventTopic = this.router.interface?.getEvent?.('PaymentSettled')?.topicHash;
-          if (eventTopic && sameHash(log.topics[0], eventTopic)) return 'inconsistent';
-        }
-        continue;
-      }
+      if (typeof log?.address !== 'string' || log.address.toLowerCase() !== this.routerAddress.toLowerCase() ||
+        !Array.isArray(log.topics) || !sameHash(log.topics[0], eventTopic) ||
+        !sameHash(log.topics[1], paymentIdTopic) || !sameHash(log.topics[2], payerTopic)) continue;
+      // Compare the full ABI encoding because decoding can accept trailing bytes or topics.
+      if (log.topics.length !== expected.topics.length ||
+        !expected.topics.every((topic, index) => sameHash(log.topics[index], topic)) ||
+        typeof log.data !== 'string' || log.data.toLowerCase() !== expected.data) return 'inconsistent';
       // The reserved call emits one matching event, with provenance from its receipt.
       const transactionIndex = receipt.index;
       if (found || !Number.isSafeInteger(log.index) || log.index < 0 ||
