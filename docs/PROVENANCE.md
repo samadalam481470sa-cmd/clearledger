@@ -23,7 +23,7 @@ The snapshot is unmodified. Its code and tests are not claimed as original Clear
 
 ## Counting
 
-`npm run source:count` writes `docs/source-count.json`, separating application (`original` in the report) and upstream physical/nonblank source lines. The application bucket includes the clearly attributed signature-checker adaptation described above. Comments and tests in recognized source files are included. The counter excludes dependency installations, documentation, JSON, lockfiles, generated files, binaries, databases, and build output. The Besu snapshot alone contributes 622,912 nonblank source lines.
+`npm run source:count` writes `docs/source-count.json`, separating application (`original` in the report) and upstream physical/nonblank source lines. CI runs `npm run source:count -- --check` to compare the recalculated report with the committed report without rewriting it. The comparison accepts CRLF line endings and requires the other bytes to match. The application bucket includes the clearly attributed signature-checker adaptation described above. Comments and tests in recognized source files are included. The counter excludes dependency installations, documentation, JSON, lockfiles, generated files, binaries, databases, and build output. The Besu snapshot alone contributes 622,912 nonblank source lines.
 
 ## Packages
 

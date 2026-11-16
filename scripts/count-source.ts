@@ -1,5 +1,10 @@
-import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, extname } from 'node:path';
+
+const [mode, ...extra] = process.argv.slice(2);
+if (extra.length || (mode !== undefined && mode !== '--check'))
+  throw new Error('Usage: npm run source:count -- [--check]');
+
 const excluded = new Set(['node_modules', '.git', 'artifacts', 'dist', 'data', 'generated']);
 const extensions = new Set(['.java', '.kt', '.sol', '.ts', '.tsx', '.js', '.jsx', '.py', '.rs', '.go', '.c', '.h', '.cpp']);
 const totals = {
@@ -27,7 +32,16 @@ const report = {
   totalNonblankSourceLines: totals.original.nonblankLines + totals.upstream.nonblankLines,
   upstreamProject: 'Besu 26.10.1; not original ClearLedger code'
 };
-writeFileSync('docs/source-count.json', JSON.stringify(report, null, 2) + '\n');
-console.log(JSON.stringify(report, null, 2));
+const reportPath = 'docs/source-count.json';
+const current = JSON.stringify(report, null, 2) + '\n';
+if (mode === '--check') {
+  if (!existsSync(reportPath) || readFileSync(reportPath, 'utf8').replace(/\r\n/g, '\n') !== current) {
+    console.error('Source-count report is missing or stale. Run npm run source:count to refresh it.');
+    process.exitCode = 1;
+  }
+} else {
+  writeFileSync(reportPath, current);
+}
+process.stdout.write(current);
 if (report.totalNonblankSourceLines <= 100000) process.exitCode = 1;
 

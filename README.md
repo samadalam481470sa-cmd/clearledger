@@ -69,7 +69,7 @@ On the original Windows workspace, `Start-ClearLedger.ps1` can use the Node runt
 npm run typecheck
 npm test
 npm run build
-npm run source:count
+npm run source:count -- --check
 ```
 
 The results below belong to the stated source revisions. Documentation-only commits can follow those revisions.
@@ -89,13 +89,13 @@ Detailed regression results and earlier failures retain their original source re
 
 ## More than 100,000 source lines
 
-The [machine-readable count](docs/source-count.json) records **641,299 nonblank source lines**, including comments and tests.
+The [machine-readable count](docs/source-count.json) records **641,311 nonblank source lines**, including comments and tests.
 
 | Source area | Files | Nonblank lines |
 | --- | --- | --- |
-| ClearLedger application area | 122 | 18,387 |
+| ClearLedger application area | 122 | 18,399 |
 | Attributed Besu snapshot | 4,484 | 622,912 |
-| Combined | 4,606 | 641,299 |
+| Combined | 4,606 | 641,311 |
 
 Package installs, lockfiles, JSON, documentation, generated output and databases are excluded. Application-area counting includes the clearly attributed OpenZeppelin-derived signature-check adaptation. Application code is MIT-licensed. Besu and dependencies retain their own licenses, and the consensus implementation belongs to Besu. [Provenance and licenses](docs/PROVENANCE.md).
 
