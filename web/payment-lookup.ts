@@ -85,6 +85,35 @@ export function newDemoPaymentAttempt(amount: string, payer: string | undefined,
   return { request: { amount, paymentId }, recordId: payer.toLowerCase() + ':' + paymentId };
 }
 
+/** Bound the client wait without changing the attempt or cancelling server-side work. */
+export async function requestDemoPayment(attempt: DemoPaymentAttempt,
+  send: (body: DemoPaymentAttempt['request'], signal: AbortSignal) => Promise<unknown>,
+  parentSignal: AbortSignal, timeoutMs = 15_000): Promise<unknown> {
+  if (parentSignal.aborted) throw parentSignal.reason;
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let cancel!: () => void;
+  const interrupted = new Promise<never>((_, reject) => {
+    const stop = (reason: unknown) => {
+      reject(reason);
+      controller.abort(reason);
+    };
+    cancel = () => stop(parentSignal.reason);
+    parentSignal.addEventListener('abort', cancel, { once: true });
+    timer = setTimeout(() => stop(new Error('Payment response timed out')), timeoutMs);
+  });
+  try {
+    const response = Promise.resolve().then(() => {
+      if (controller.signal.aborted) throw controller.signal.reason;
+      return send(attempt.request, controller.signal);
+    });
+    return await Promise.race([interrupted, response]);
+  } finally {
+    clearTimeout(timer);
+    parentSignal.removeEventListener('abort', cancel);
+  }
+}
+
 /** Acknowledge the returned record only when it agrees with the submitted demo transfer. */
 export function demoPaymentSnapshot(response: unknown, amount: string,
   context: Pick<Overview, 'payer' | 'payee' | 'token'> & { recordId?: string }, now = new Date()): PaymentLookupSnapshot {

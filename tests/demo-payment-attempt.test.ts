@@ -7,7 +7,7 @@ import { makeServer } from '../src/http.ts';
 import { paymentTypes, type Payment } from '../src/payment.ts';
 import { PaymentService } from '../src/service.ts';
 import { Store } from '../src/store.ts';
-import { demoPaymentSnapshot, newDemoPaymentAttempt, paymentLookupPath } from '../web/payment-lookup.ts';
+import { demoPaymentSnapshot, newDemoPaymentAttempt, paymentLookupPath, requestDemoPayment } from '../web/payment-lookup.ts';
 
 const payerAddress = '0x' + 'a1'.repeat(20);
 const payee = '0x' + '22'.repeat(20);
@@ -59,9 +59,66 @@ function gate() {
   return { waiting, release };
 }
 
+test('a demo response deadline bounds a transport that ignores cancellation', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const attempt = newDemoPaymentAttempt(amount, payerAddress, fillRandom);
+  const parent = new AbortController();
+  const lateReply = gate();
+  let childSignal: AbortSignal | undefined;
+  const pending = requestDemoPayment(attempt, async (body, signal) => {
+    assert.equal(body, attempt.request);
+    childSignal = signal;
+    await lateReply.waiting;
+    return { payment: 'late response' };
+  }, parent.signal, 20);
+  const rejected = assert.rejects(pending, { message: 'Payment response timed out' });
+  try {
+    await Promise.resolve();
+    t.mock.timers.tick(20);
+    await rejected;
+    assert.equal(childSignal?.aborted, true);
+    assert.equal(parent.signal.aborted, false);
+  } finally { lateReply.release(); }
+});
+
+test('a pending demo request propagates its parent cancellation reason', async () => {
+  const attempt = newDemoPaymentAttempt(amount, payerAddress, fillRandom);
+  const parent = new AbortController();
+  const cancelled = new Error('Connection changed');
+  const lateReply = gate();
+  let childSignal: AbortSignal | undefined;
+  const pending = requestDemoPayment(attempt, async (_body, signal) => {
+    childSignal = signal;
+    await lateReply.waiting;
+  }, parent.signal);
+  const rejected = assert.rejects(pending, reason => reason === cancelled);
+  try {
+    await Promise.resolve();
+    parent.abort(cancelled);
+    await rejected;
+    assert.equal(childSignal?.reason, cancelled);
+  } finally { lateReply.release(); }
+});
+
+test('a completed demo request detaches its parent and clears its deadline', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const attempt = newDemoPaymentAttempt(amount, payerAddress, fillRandom);
+  const parent = new AbortController();
+  const expected = { payment: 'completed response' };
+  let childSignal: AbortSignal | undefined;
+  const result = await requestDemoPayment(attempt, async (_body, signal) => {
+    childSignal = signal;
+    return expected;
+  }, parent.signal, 20);
+  assert.equal(result, expected);
+  parent.abort();
+  t.mock.timers.tick(20);
+  assert.equal(childSignal?.aborted, false);
+});
+
 // Exercise the dashboard request, native HTTP and the real submitter/Store.
 // The synthetic provider and no-dispatch tick isolate the admission/replay boundary.
-test('the same demo attempt replays its queued record after the first client loses its response', {
+test('the same demo attempt replays its queued record after the first response times out', {
   timeout: 10000
 }, async t => {
   const apiKey = 'demo-attempt-test';
@@ -111,12 +168,16 @@ test('the same demo attempt replays its queued record after the first client los
     await once(server, 'listening');
     const url = 'http://127.0.0.1:' + (server.address() as { port: number }).port + '/api/';
     const headers = { Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json' };
-    const post = (signal: AbortSignal) => fetch(url + 'demo/payment', {
-      method: 'POST', headers, body: JSON.stringify(attempt.request), signal
+    const post = (body: typeof attempt.request, signal: AbortSignal) => fetch(url + 'demo/payment', {
+      method: 'POST', headers, body: JSON.stringify(body), signal
     });
-    const first = post(AbortSignal.any([controller.signal, AbortSignal.timeout(5000)]));
+    const deadlineMs = 1500;
+    const first = requestDemoPayment(attempt, async (body, signal) => {
+      const response = await post(body, signal);
+      return response.json();
+    }, controller.signal, deadlineMs);
     await Promise.race([committed.waiting,
-      first.then(response => assert.fail('The first response escaped the commit gate with status ' + response.status))]);
+      first.then(() => assert.fail('The first response escaped the commit gate'))]);
 
     const queued = store.get(attempt.recordId);
     assert.ok(queued);
@@ -127,16 +188,21 @@ test('the same demo attempt replays its queued record after the first client los
     assert.equal(audit[0].action, 'accepted');
     const writes = () => store.db.prepare('SELECT total_changes() AS count').get();
     const afterAdmission = writes();
-    controller.abort();
-    await assert.rejects(first, { name: 'AbortError' });
+    await assert.rejects(first, { message: 'Payment response timed out' });
+    assert.equal(controller.signal.aborted, false);
     releaseReply.release();
 
-    const second = await post(AbortSignal.timeout(5000));
-    assert.equal(second.status, 200);
-    const body = await second.json();
-    assert.equal(body.replay, true);
+    let retryStatus: number | undefined;
+    const replay = await requestDemoPayment(attempt, async (body, signal) => {
+      const response = await post(body, signal);
+      retryStatus = response.status;
+      return response.json();
+    }, controller.signal, 5000);
+    assert.equal(retryStatus, 200);
+    assert.ok(replay && typeof replay === 'object' && 'replay' in replay);
+    assert.equal(replay.replay, true);
     const context = { payer: payer.address, payee, token, recordId: attempt.recordId };
-    const snapshot = demoPaymentSnapshot(body, attempt.request.amount, context);
+    const snapshot = demoPaymentSnapshot(replay, attempt.request.amount, context);
     assert.deepEqual(snapshot.row, service.publicRow(queued));
 
     const exact = await fetch(url + paymentLookupPath(attempt.recordId), { headers, signal: AbortSignal.timeout(5000) });
@@ -149,7 +215,7 @@ test('the same demo attempt replays its queued record after the first client los
     assert.deepEqual(writes(), afterAdmission);
     assert.deepEqual({ latestReads, nonceReads, signatureChecks, signatures, ticks },
       { latestReads: 2, nonceReads: 1, signatureChecks: 1, signatures: 1, ticks: 1 });
-    t.diagnostic(JSON.stringify({ firstResponseLost: true, retryStatus: second.status,
+    t.diagnostic(JSON.stringify({ firstResponseTimedOut: true, deadlineMs, retryStatus,
       storedRows: 1, acceptedAudits: 1, extraReads: 0, extraSignatures: 0, extraWrites: 0 }));
   } finally {
     controller.abort();

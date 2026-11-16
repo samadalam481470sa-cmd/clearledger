@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AssetMetadataRegistry, AssetTotalsPanel, PageNavigation } from './views.tsx';
 import { PaymentHistoryRow, PaymentLookupPanel, PaymentReceiptSnapshot, type ReceiptSnapshot } from './payment-history.tsx';
-import { demoPaymentSnapshot, newDemoPaymentAttempt, PaymentLookup, type DemoPaymentAttempt, type PaymentLookupState } from './payment-lookup.ts';
+import { demoPaymentSnapshot, newDemoPaymentAttempt, PaymentLookup, requestDemoPayment, type DemoPaymentAttempt, type PaymentLookupState } from './payment-lookup.ts';
 import { startPolling } from './polling.ts';
 import { emptyTotals, reduceTotals, totalsCounts, type TotalsReport } from './totals.ts';
 import {
@@ -223,9 +223,8 @@ function App() {
     posts.current.add(controller);
     setBusy(true); setNotice('');
     try {
-      const result = await request<unknown>('demo/payment', {
-        method: 'POST', body: attempt.request, signal: controller.signal
-      });
+      const result = await requestDemoPayment(attempt, (body, signal) =>
+        request<unknown>('demo/payment', { method: 'POST', body, signal }), controller.signal);
       if (session.current !== activeSession || controller.signal.aborted) return;
       if (currentNetwork.current !== activeNetwork) { setNotice(changedNetwork); return; }
       const snapshot = demoPaymentSnapshot(result, attempt.request.amount, {
