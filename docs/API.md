@@ -55,7 +55,9 @@ Authenticated clients can send a nonzero 32-byte `paymentId` alongside the decim
 
 Repeat the same ID and amount to read the result after a lost response. Equivalent decimal spellings compare by exact base-unit value. A stored match returns HTTP 200 and `replay: true` without a new signature or RPC request. Reusing the ID for a different amount returns HTTP 409. If the first request is still in progress before it commits, the demo may report that it is busy. Once the payment exists, the replay returns its stored lifecycle state.
 
-This lookup is limited to the current in-memory demo ledger. A restart starts a new ledger. The dashboard currently uses server-generated IDs. [Demo replay evidence](../STATUS.md#demo-payment-replay-by-id).
+The dashboard generates the ID before submitting. If the outcome is uncertain, Resume payment opens the saved request. Retry same payment reuses its original ID and amount, and Find this payment reads the exact stored record. An acknowledgement must match the original record ID before the dashboard opens its receipt. Starting a different payment clears the pending attempt and requires a new amount. [Dashboard retry evidence](../STATUS.md#demo-dashboard-retry).
+
+Replay is limited to the running demo’s in-memory ledger. The dashboard holds the attempt in the open page and clears it when authentication is reset or the observed chain/router changes. A page reload clears its copy, and a demo restart starts a new ledger. [API replay evidence](../STATUS.md#demo-payment-replay-by-id).
 
 ## Exact payment lookup
 

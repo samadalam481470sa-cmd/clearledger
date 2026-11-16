@@ -61,16 +61,39 @@ function publicRecord(value: unknown, requestedId: string): PaymentRow {
   return result;
 }
 
+function demoAmountBaseUnits(amount: string) {
+  const decimal = /^([0-9]{1,7})(?:\.([0-9]{1,6}))?(?![\s\S])/.exec(amount);
+  return decimal && BigInt(decimal[1] + (decimal[2] ?? '').padEnd(6, '0')).toString();
+}
+
+export interface DemoPaymentAttempt {
+  readonly request: Readonly<{ amount: string; paymentId: string }>;
+  readonly recordId: string;
+}
+
+export function newDemoPaymentAttempt(amount: string, payer: string | undefined,
+  fillRandom: (bytes: Uint8Array) => void = bytes => { crypto.getRandomValues(bytes); }): DemoPaymentAttempt {
+  const baseUnits = demoAmountBaseUnits(amount);
+  if (baseUnits === null) throw new Error('Enter a decimal amount with at most six decimal places');
+  if (baseUnits === '0') throw new Error('Enter an amount greater than zero');
+  if (!payer || !addressPattern.test(payer) || payer === '0x' + '00'.repeat(20))
+    throw new Error('The demo payer address is unavailable');
+  const random = new Uint8Array(32);
+  fillRandom(random);
+  const paymentId = '0x' + Array.from(random, byte => byte.toString(16).padStart(2, '0')).join('');
+  if (paymentId === '0x' + '00'.repeat(32)) throw new Error('The payment ID could not be generated');
+  return { request: { amount, paymentId }, recordId: payer.toLowerCase() + ':' + paymentId };
+}
+
 /** Acknowledge the returned record only when it agrees with the submitted demo transfer. */
 export function demoPaymentSnapshot(response: unknown, amount: string,
-  context: Pick<Overview, 'payer' | 'payee' | 'token'>, now = new Date()): PaymentLookupSnapshot {
-  if (!record(response) || !record(response.payment) || !isPaymentLookupId(response.payment.id))
+  context: Pick<Overview, 'payer' | 'payee' | 'token'> & { recordId?: string }, now = new Date()): PaymentLookupSnapshot {
+  if (!record(response) || !record(response.payment) || !isPaymentLookupId(response.payment.id) ||
+    (context.recordId !== undefined && response.payment.id !== context.recordId))
     throw new Error(invalidResponse);
   const row = publicRecord(response.payment, response.payment.id);
-  const decimal = /^([0-9]{1,7})(?:\.([0-9]{1,6}))?(?![\s\S])/.exec(amount);
   const payment = row.payment;
-  if (!decimal || !payment ||
-    payment.amount !== BigInt(decimal[1] + (decimal[2] ?? '').padEnd(6, '0')).toString() ||
+  if (!payment || payment.amount !== demoAmountBaseUnits(amount) ||
     payment.payer.toLowerCase() !== context.payer?.toLowerCase() ||
     payment.payee.toLowerCase() !== context.payee?.toLowerCase() ||
     payment.token.toLowerCase() !== context.token?.toLowerCase())

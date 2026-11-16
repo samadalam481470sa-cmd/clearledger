@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AssetMetadataRegistry, AssetTotalsPanel, PageNavigation } from './views.tsx';
 import { PaymentHistoryRow, PaymentLookupPanel, PaymentReceiptSnapshot, type ReceiptSnapshot } from './payment-history.tsx';
-import { demoPaymentSnapshot, PaymentLookup, type PaymentLookupState } from './payment-lookup.ts';
+import { demoPaymentSnapshot, newDemoPaymentAttempt, PaymentLookup, type DemoPaymentAttempt, type PaymentLookupState } from './payment-lookup.ts';
 import { startPolling } from './polling.ts';
 import { emptyTotals, reduceTotals, totalsCounts, type TotalsReport } from './totals.ts';
 import {
@@ -64,7 +64,7 @@ function App() {
   const [page, setPage] = useState('Overview'), [filter, setFilter] = useState<StatusFilter>('all');
   const [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState(false);
   const [form, setForm] = useState(false), [amount, setAmount] = useState('250.00');
-  const [uncertainPayment, setUncertainPayment] = useState(false);
+  const [uncertainPayment, setUncertainPayment] = useState<DemoPaymentAttempt | null>(null);
   const [selected, setSelected] = useState<ReceiptSnapshot | null>(null);
   const [lookupState, setLookupState] = useState<PaymentLookupState>(emptyLookup);
   const [loadedLookupContext, setLoadedLookupContext] = useState('');
@@ -73,6 +73,7 @@ function App() {
   const [paymentRevision, setPaymentRevision] = useState(0), [journalRevision, setJournalRevision] = useState(0);
   const session = useRef(0), currentNetwork = useRef('');
   const posts = useRef(new Set<AbortController>());
+  const demoPost = useRef<AbortController | null>(null);
   const overviewPoller = useRef<ReturnType<typeof startPolling> | null>(null);
   const totalsPoller = useRef<ReturnType<typeof startPolling> | null>(null);
 
@@ -95,9 +96,10 @@ function App() {
     overviewPoller.current?.stop(); totalsPoller.current?.stop();
     for (const controller of posts.current) controller.abort();
     posts.current.clear();
+    demoPost.current = null;
     currentNetwork.current = '';
     setData(null); setTotals(emptyTotals()); setSelected(null); setForm(false);
-    setError(''); setNotice(''); setBusy(false); setUncertainPayment(false);
+    setError(''); setNotice(''); setBusy(false); setUncertainPayment(null);
     setFilter('all'); setManualKey(''); setKey(next.trim());
     setRevision(value => value + 1);
     setPaymentRevision(value => value + 1); setJournalRevision(value => value + 1);
@@ -125,7 +127,7 @@ function App() {
           currentNetwork.current = context;
           lookupController.current?.reset(); setLookupState(emptyLookup());
           totalsPoller.current?.stop();
-          setTotals(emptyTotals()); setSelected(null); setForm(false); setUncertainPayment(false);
+          setTotals(emptyTotals()); setSelected(null); setForm(false); setUncertainPayment(null);
         }
         setData(overview); setError('');
       },
@@ -207,21 +209,31 @@ function App() {
   }
   async function pay(event: React.FormEvent) {
     event.preventDefault();
-    if (busy || uncertainPayment || !data) return;
+    if (busy || demoPost.current || !data || chainContext(data) !== currentNetwork.current) return;
+    let attempt: DemoPaymentAttempt;
+    try { attempt = uncertainPayment ?? newDemoPaymentAttempt(amount, data.payer); }
+    catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Unable to prepare this payment');
+      return;
+    }
     const activeSession = session.current, activeNetwork = currentNetwork.current;
     const changedNetwork = 'The connection changed during submission. Check the original network payment history before retrying.';
     const controller = new AbortController();
+    demoPost.current = controller;
     posts.current.add(controller);
     setBusy(true); setNotice('');
     try {
       const result = await request<unknown>('demo/payment', {
-        method: 'POST', body: { amount }, signal: controller.signal
+        method: 'POST', body: attempt.request, signal: controller.signal
       });
       if (session.current !== activeSession || controller.signal.aborted) return;
       if (currentNetwork.current !== activeNetwork) { setNotice(changedNetwork); return; }
-      const snapshot = demoPaymentSnapshot(result, amount, data);
+      const snapshot = demoPaymentSnapshot(result, attempt.request.amount, {
+        payer: data.payer, payee: data.payee, token: data.token, recordId: attempt.recordId
+      });
       // Acknowledge the validated record before any independent read refresh.
       setForm(false);
+      setUncertainPayment(null);
       setSelected(snapshot);
       setNotice(snapshot.row.status === 'failed'
         ? 'Payment rejected: ' + (snapshot.row.error ?? 'Contract rejected the instruction')
@@ -230,15 +242,15 @@ function App() {
     } catch (e) {
       if (session.current !== activeSession || controller.signal.aborted) return;
       if (currentNetwork.current !== activeNetwork) { setNotice(changedNetwork); return; }
-      if (e instanceof ApiError && [400, 401, 403, 429].includes(e.status)) {
+      if (!uncertainPayment && e instanceof ApiError && [400, 401, 403, 429].includes(e.status)) {
         setNotice(e.message);
       } else {
-        setUncertainPayment(true);
-        setNotice('Payment outcome is unknown. Check payment history and reconcile before retrying. ' +
-          (e instanceof Error ? e.message : 'The response was lost.'));
+        setUncertainPayment(attempt);
+        setNotice(e instanceof Error ? e.message : 'The response was lost.');
       }
     } finally {
       posts.current.delete(controller);
+      if (demoPost.current === controller) demoPost.current = null;
       if (session.current === activeSession) setBusy(false);
     }
   }
@@ -293,7 +305,7 @@ function App() {
         <span className="env">{data ? data.mode === 'rpc' ? 'RPC NETWORK' : 'LOCAL DEMO' : key ? 'CONNECTING' : 'DISCONNECTED'}</span><span className="avatar">CL</span></div></header>
       <main>
         <div className="page-title"><div><div className="eyebrow">PAYMENTS, WITH PROOF.</div><h1>{page === 'Overview' ? 'Settlement overview' : page}</h1><p>Move value. Verify every step. Keep the books in sync.</p></div>
-          <div className="actions"><button className="secondary" onClick={refreshLatest} disabled={!key}>↻ Refresh latest</button><button className="secondary" onClick={reconcile} disabled={busy || !data}>Reconcile</button><button className="primary" onClick={() => { setForm(true); setNotice(''); setUncertainPayment(false); }} disabled={busy || !isDemo}>+ New payment</button></div></div>
+          <div className="actions"><button className="secondary" onClick={refreshLatest} disabled={!key}>↻ Refresh latest</button><button className="secondary" onClick={reconcile} disabled={busy || !data}>Reconcile</button><button className="primary" onClick={() => { setForm(true); if (!uncertainPayment) setNotice(''); }} disabled={busy || !isDemo}>{uncertainPayment ? 'Resume payment' : '+ New payment'}</button></div></div>
         {(!key || (!data && error)) && <form className="login panel" onSubmit={event => { event.preventDefault(); changeToken(manualKey); }}><h2>Connect to your API</h2><p>Enter the API token configured on the local server. It stays in this page’s memory.</p><input aria-label="API token" type="password" value={manualKey} onChange={event => setManualKey(event.target.value)} required/><button className="primary">Connect</button></form>}
         {error && <div role="alert" className="banner danger">Overview could not refresh: {error}. {data ? 'Showing the last received overview.' : 'Change the token or retry the connection.'}</div>}
         {notice && <div role="status" className="banner">{notice}<button aria-label="Dismiss notification" onClick={() => setNotice('')}>×</button></div>}
@@ -359,7 +371,42 @@ function App() {
         </>}
       </main>
     </div>
-    {form && isDemo && <div className="overlay" role="presentation"><section className="modal" role="dialog" aria-modal="true" aria-labelledby="payment-title"><button className="close" aria-label="Close payment form" onClick={() => setForm(false)}>×</button><div className="eyebrow">LOCAL DEMO</div><h2 id="payment-title">Create a payment</h2><p>A temporary demo wallet signs and submits this payment on your local EVM.</p><form onSubmit={pay}><label>From</label><div className="account">Treasury <code>{short(data?.payer)}</code></div><label>To</label><div className="account">Merchant <code>{short(data?.payee)}</code></div><label htmlFor="amount">Amount in demo USD</label><div className="amount-input"><input id="amount" inputMode="decimal" value={amount} onChange={event => setAmount(event.target.value)} autoFocus required disabled={busy || uncertainPayment}/><span>dUSD</span></div><p className="hint">Maximum 10,000 dUSD per payment. No real money moves.</p>{notice && <p role="alert" className={uncertainPayment ? 'error' : ''}>{notice}</p>}<button className="primary full" disabled={busy || uncertainPayment}>{busy ? 'Signing & settling…' : 'Sign and submit payment →'}</button>{uncertainPayment && <button type="button" className="secondary full history-check" onClick={() => { setForm(false); setPage('Payments'); setFilter('all'); refreshLatest(); }}>Check payment history</button>}</form></section></div>}
+    {form && isDemo && <div className="overlay" role="presentation">
+      <section className="modal" role="dialog" aria-modal="true" aria-labelledby="payment-title">
+        <button className="close" aria-label="Close payment form" onClick={() => setForm(false)}>×</button>
+        <div className="eyebrow">LOCAL DEMO</div>
+        <h2 id="payment-title">{uncertainPayment ? 'Resume a payment' : 'Create a payment'}</h2>
+        <p>A temporary demo wallet signs and submits payments on your local EVM.</p>
+        <form onSubmit={pay}>
+          <label>From</label><div className="account">Treasury <code>{short(data?.payer)}</code></div>
+          <label>To</label><div className="account">Merchant <code>{short(data?.payee)}</code></div>
+          <label htmlFor="amount">Amount in demo USD</label>
+          <div className="amount-input">
+            <input id="amount" inputMode="decimal" value={uncertainPayment?.request.amount ?? amount}
+              onChange={event => setAmount(event.target.value)} autoFocus required disabled={busy || Boolean(uncertainPayment)}/>
+            <span>dUSD</span>
+          </div>
+          {uncertainPayment ? <p className="hint">Check this payment before starting a different one.
+            <code className="mono pending-record-id">{uncertainPayment.recordId}</code>
+          </p> : <p className="hint">Maximum 10,000 dUSD per payment. No real money moves.</p>}
+          {notice && <p role="alert" className={uncertainPayment ? 'error' : ''}>{notice}</p>}
+          <button className="primary full" disabled={busy}>
+            {busy ? 'Submitting…' : uncertainPayment ? 'Retry same payment' : 'Sign and submit payment →'}
+          </button>
+          {uncertainPayment && <>
+            <button type="button" className="secondary full history-check"
+              disabled={busy || loadedLookupContext !== lookupContext}
+              onClick={() => {
+                setForm(false); setPage('Payments'); setFilter('all');
+                lookupController.current?.setInput(uncertainPayment.recordId);
+                void lookupController.current?.find();
+              }}>Find this payment</button>
+            <button type="button" className="secondary full history-check" disabled={busy}
+              onClick={() => { setUncertainPayment(null); setAmount(''); setNotice(''); }}>Start a different payment</button>
+          </>}
+        </form>
+      </section>
+    </div>}
     {selected && <PaymentReceiptSnapshot snapshot={selected} overview={data} onClose={() => setSelected(null)}/>}
   </div>;
 }
