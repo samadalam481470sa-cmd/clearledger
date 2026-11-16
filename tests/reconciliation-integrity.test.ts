@@ -34,7 +34,8 @@ beforeEach(() => {
   store.broadcast(paymentId, rawTx, txHash);
   store.finalize(paymentId, 17, blockHash);
   receipt = withFixtureLogsBloom({ hash: txHash, from: fixtureRelayer.address, to: routerAddress,
-    index: 0, blockNumber: 17, status: 1, gasUsed: 125000n, blockHash, logs: [settlementLog()] });
+    index: 0, blockNumber: 17, status: 1, gasUsed: 125000n,
+    cumulativeGasUsed: 125000n, blockHash, logs: [settlementLog()] });
   canonical = { number: 17, hash: blockHash, transactions: [txHash] };
 });
 afterEach(() => { store.close(); });
@@ -164,6 +165,7 @@ for (const signature of ['0x', '0x0123Abcd']) {
 
 test('the reserved hash at a different canonical transaction slot is reviewed', async () => {
   receipt.index = 1;
+  receipt.cumulativeGasUsed += 21_000n;
   receipt.logs[0].transactionIndex = 1;
   canonical.transactions = [txHash, '0x' + '99'.repeat(32)];
   await flagged();
@@ -243,7 +245,17 @@ for (const missingBlock of [false, true]) {
   test('gasUsed above the signed limit triggers review ' +
     (missingBlock ? 'without' : 'with') + ' a canonical block', async () => {
     receipt.gasUsed = Transaction.from(rawTx).gasLimit + 1n;
+    receipt.cumulativeGasUsed = receipt.gasUsed;
     if (missingBlock) canonical = null;
+    await flagged();
+  });
+}
+
+for (const missingBlock of [false, true]) {
+  test('inconsistent cumulative gas triggers review ' +
+    (missingBlock ? 'without' : 'with') + ' a canonical block', async () => {
+    if (missingBlock) canonical = null;
+    receipt.cumulativeGasUsed = receipt.gasUsed + 1n;
     await flagged();
   });
 }
@@ -257,7 +269,7 @@ test('duplicate matching PaymentSettled logs flag only their settlement and reta
   store.broadcast(secondId, raw, hash);
   store.finalize(secondId, 17, blockHash);
   canonical.transactions = [txHash, hash];
-  const secondReceipt = withFixtureLogsBloom({ ...receipt, hash, index: 1, logs: [
+  const secondReceipt = withFixtureLogsBloom({ ...receipt, hash, index: 1, cumulativeGasUsed: receipt.gasUsed + 21_000n, logs: [
     { ...settlementLog(unaffected), transactionHash: hash, transactionIndex: 1, index: 3 }
   ] });
   const before = { first: store.get(paymentId), second: store.get(secondId), journals: store.journals(), audit: store.events() };
@@ -342,7 +354,8 @@ for (const [missing, description] of [
   ['block', 'a successful receipt with an unavailable canonical block']
 ] as const) {
   test(description + ' keeps its settlement for a healthy retry', async () => {
-    const receiptWithIndex = { ...receipt, index: 1, hash: '0x' + txHash.slice(2).toUpperCase(),
+    const receiptWithIndex = { ...receipt, index: 1, cumulativeGasUsed: receipt.gasUsed + 21_000n,
+      hash: '0x' + txHash.slice(2).toUpperCase(),
       logs: [{ ...receipt.logs[0], transactionIndex: 1 }] };
     const blockWithTransaction = { ...canonical, hash: '0x' + blockHash.slice(2).toUpperCase(),
       transactions: ['0x' + '99'.repeat(32), '0x' + txHash.slice(2).toUpperCase()] };
@@ -501,7 +514,7 @@ test('valid receipt and canonical hash hex casing does not create a false integr
   const recordedBlock = '0x' + 'cd'.repeat(32);
   store.db.prepare('UPDATE payments SET tx_hash=?,block_hash=? WHERE id=?').run(transaction, recordedBlock, paymentId);
   store.db.prepare('UPDATE journals SET tx_hash=?,block_hash=? WHERE payment_id=?').run(transaction, recordedBlock, paymentId);
-  receipt = { ...receipt, index: 1, hash: txHash, blockHash: '0x' + 'CD'.repeat(32) };
+  receipt = { ...receipt, index: 1, cumulativeGasUsed: receipt.gasUsed + 21_000n, hash: txHash, blockHash: '0x' + 'CD'.repeat(32) };
   receipt.logs = receipt.logs.map((log: any) => ({ ...log,
     transactionIndex: 1, transactionHash: transaction, blockHash: '0x' + 'cD'.repeat(32) }));
   canonical = { ...canonical, hash: '0x' + 'CD'.repeat(32),

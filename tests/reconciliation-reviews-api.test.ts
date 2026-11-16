@@ -23,7 +23,8 @@ const iface = new Interface([
   'event PaymentSettled(bytes32 indexed paymentId,address indexed payer,address indexed payee,address token,uint256 amount,uint256 nonce)'
 ]);
 const receipt = withFixtureLogsBloom({ hash: txHash, from: fixtureRelayer.address, to: routerAddress,
-  index: 0, status: 1, blockNumber: 17, blockHash, gasUsed: 125_000n, logs: [
+  index: 0, status: 1, blockNumber: 17, blockHash, gasUsed: 125_000n,
+  cumulativeGasUsed: 125_000n, logs: [
     { address: routerAddress, transactionHash: txHash, transactionIndex: 0, index: 0, blockNumber: 17, blockHash,
       ...iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
         [payment.paymentId, payer, payee, token, payment.amount, payment.nonce]) }

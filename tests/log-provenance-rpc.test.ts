@@ -17,7 +17,8 @@ type Provenance = 'transactionHash' | 'blockHash' | 'blockNumber' | 'transaction
 type ReceiptFault = Provenance | 'duplicate' | 'conflictingAmount' | 'malformedData' |
   'extraDataWord' | 'extraTopic' | 'status' | 'status-no-logs' | typeof receiptFields[number];
 const fields: Provenance[] = ['transactionHash', 'blockHash', 'blockNumber', 'transactionIndex', 'logIndex', 'siblingLogIndex'];
-const receiptFields = ['gasUsed', 'zeroBloom', 'strippedSuccessLogs', 'missingBloomBit', 'extraBloomBit'] as const;
+const receiptFields = ['gasUsed', 'zeroBloom', 'strippedSuccessLogs', 'missingBloomBit', 'extraBloomBit',
+  'cumulativeGasUsedBelowGasUsed', 'cumulativeGasUsedAboveGasUsed'] as const;
 const settlementDataTypes = ['address', 'uint256', 'uint256']; // Token, amount and nonce.
 const transferTopic = id('Transfer(address,address,uint256)');
 const coder = AbiCoder.defaultAbiCoder();
@@ -75,7 +76,15 @@ async function receiptProxy(upstream: string, routerAddress: string, topic: stri
             if (fault === 'gasUsed') {
               const limit = signedGasLimits.get(target!);
               assert.ok(limit !== undefined);
+              const cumulative = BigInt(receipt.cumulativeGasUsed) - BigInt(receipt.gasUsed) + limit + 1n;
               receipt.gasUsed = toQuantity(limit + 1n);
+              receipt.cumulativeGasUsed = toQuantity(cumulative);
+              altered++;
+              break;
+            }
+            if (fault === 'cumulativeGasUsedBelowGasUsed' || fault === 'cumulativeGasUsedAboveGasUsed') {
+              const gasUsed = BigInt(receipt.gasUsed);
+              receipt.cumulativeGasUsed = toQuantity(fault === 'cumulativeGasUsedBelowGasUsed' ? gasUsed - 1n : gasUsed + 1n);
               altered++;
               break;
             }
@@ -246,11 +255,24 @@ for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData
   } else if (field === 'gasUsed') {
     assert.ok(genuine.gasUsed > 0n && genuine.gasUsed <= envelope.gasLimit);
     assert.equal(presented.gasUsed, envelope.gasLimit + 1n, 'ethers must retain the over-limit gas usage');
+    assert.equal(presented.cumulativeGasUsed - presented.gasUsed, genuine.cumulativeGasUsed - genuine.gasUsed,
+      'The reported gas increase must preserve the preceding cumulative gas');
     repairedPresentation.gasUsed = genuine.toJSON().gasUsed;
+    repairedPresentation.cumulativeGasUsed = genuine.toJSON().cumulativeGasUsed;
     t.diagnostic(JSON.stringify({ genuineGasUsed: genuine.gasUsed.toString(),
       reportedGasUsed: presented.gasUsed.toString(), signedGasLimit: envelope.gasLimit.toString(),
       firstStatus: reserved.status, successorStatus: store.get(second.id)?.status,
       journalRows: store.journals().length, nativeSends: proxy.sends.length }));
+  } else if (field === 'cumulativeGasUsedBelowGasUsed' || field === 'cumulativeGasUsedAboveGasUsed') {
+    assert.equal(genuine.index, 0);
+    assert.ok(genuine.gasUsed > 1n && genuine.gasUsed <= envelope.gasLimit);
+    assert.equal(genuine.cumulativeGasUsed, genuine.gasUsed, 'The first transaction must account for all gas used so far');
+    const expectedCumulativeGasUsed = genuine.gasUsed + (field === 'cumulativeGasUsedBelowGasUsed' ? -1n : 1n);
+    assert.equal(presented.cumulativeGasUsed, expectedCumulativeGasUsed, 'ethers must retain the contradictory cumulative gas');
+    repairedPresentation.cumulativeGasUsed = genuine.toJSON().cumulativeGasUsed;
+    t.diagnostic(JSON.stringify({ transactionIndex: genuine.index, gasUsed: genuine.gasUsed.toString(),
+      reportedCumulativeGasUsed: presented.cumulativeGasUsed.toString(), firstStatus: reserved.status,
+      successorStatus: store.get(second.id)?.status, journalRows: store.journals().length, nativeSends: proxy.sends.length }));
   } else if (field === 'duplicate' || field === 'conflictingAmount' || field === 'malformedData') {
     assert.equal(presented.logs.length, genuine.logs.length + 1);
     const appended = repairedPresentation.logs.pop();
@@ -316,7 +338,7 @@ for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData
     assert.notEqual(log[field], genuineLog[field], 'ethers must retain the contradictory RPC provenance');
     repairedPresentation.logs[index][field] = genuineLog[field];
   }
-  assert.deepEqual(repairedPresentation, JSON.parse(JSON.stringify(genuine)), 'Only the injected field may differ from the genuine receipt');
+  assert.deepEqual(repairedPresentation, JSON.parse(JSON.stringify(genuine)), 'Only the injected fields may differ from the genuine receipt');
   assert.ok(proxy.altered() >= 2);
   assert.equal(reserved.status, 'broadcast');
 

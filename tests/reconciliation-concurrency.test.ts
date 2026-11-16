@@ -38,6 +38,7 @@ function receipt(tx: string) {
     [p.paymentId, p.payer, p.payee, p.token, p.amount, p.nonce]);
   const index = [...payments.keys()].indexOf(tx);
   return withFixtureLogsBloom({ hash: tx, index, status: 1, blockNumber: 17, blockHash, gasUsed: 125_000n,
+    cumulativeGasUsed: 125_000n * BigInt(index + 1),
     from: fixtureRelayer.address, to: routerAddress,
     logs: [{ address: routerAddress, ...log, transactionHash: tx, transactionIndex: index, index, blockHash, blockNumber: 17 }] });
 }

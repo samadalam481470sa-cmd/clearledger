@@ -50,6 +50,7 @@ beforeEach(() => {
   store.broadcast(firstId, raw, txHash);
   secondId = undefined;
   receipt = withFixtureLogsBloom({ hash: txHash, index: 0, blockNumber: 17, blockHash, status: 1, gasUsed: 125000n,
+    cumulativeGasUsed: 125000n,
     from: fixtureRelayer.address, to: routerAddress,
     logs: [settlementLog()] });
   canonical = { number: 17, hash: blockHash, transactions: [txHash] };
@@ -351,6 +352,7 @@ for (const status of [0, 1]) {
     test(description + ' keeps status ' + status + ' broadcast unresolved', async () => {
       setReceiptStatus(status);
       receipt.index = index;
+      if (index > 0) receipt.cumulativeGasUsed += 21_000n;
       if (status === 1) receipt.logs[0].transactionIndex = index;
       canonical.transactions = transactions;
       await remainsUncertain();
@@ -421,6 +423,7 @@ for (const status of [0, 1]) {
       setReceiptStatus(status);
       if (gasUsed === undefined) delete receipt.gasUsed;
       else receipt.gasUsed = gasUsed;
+      if (typeof gasUsed === 'bigint') receipt.cumulativeGasUsed = gasUsed;
       await remainsUncertain();
       assert.equal(blockReads, 0);
     });
@@ -429,10 +432,42 @@ for (const status of [0, 1]) {
   test('gasUsed equal to the signed limit permits status-' + status + ' confirmation', async () => {
     setReceiptStatus(status);
     receipt.gasUsed = signedGasLimit;
+    receipt.cumulativeGasUsed = signedGasLimit;
     await service().tick();
     assert.equal(store.get(firstId)!.status, status === 1 ? 'settled' : 'failed');
     assert.equal(store.journals().length, status);
     assert.equal(blockReads, 1);
+  });
+}
+
+for (const status of [0, 1]) {
+  for (const [description, cumulative] of [
+    ['missing', undefined], ['a number', 125000], ['one unit below gas used', 124999n],
+    ['one unit above gas used', 125001n]
+  ] as const) {
+    test('index-zero status-' + status + ' receipt with ' + description + ' cumulative gas stays unresolved', async () => {
+      setReceiptStatus(status);
+      receipt.cumulativeGasUsed = cumulative;
+      await remainsUncertain();
+      assert.equal(blockReads, 0);
+    });
+  }
+
+  test('later status-' + status + ' receipt must account for preceding gas before resolving', async () => {
+    setReceiptStatus(status);
+    receipt.index = 1;
+    if (status === 1) receipt.logs[0].transactionIndex = 1;
+    canonical.transactions = [otherTxHash, txHash];
+    const worker = await remainsUncertain();
+    assert.equal(blockReads, 0);
+
+    receipt.cumulativeGasUsed = signedGasLimit + 21_000n;
+    await assert.rejects(worker.tick(), /Queued nonce was allocated too early/);
+    const outcome = status === 1 ? 'settled' : 'failed';
+    assert.equal(store.get(firstId)!.status, outcome);
+    assert.equal(store.get(firstId)!.raw_tx, raw);
+    assert.equal(store.journals().length, status);
+    assert.equal(store.events().filter(event => event.action === outcome).length, 1);
   });
 }
 
@@ -569,6 +604,7 @@ test('matching receipt addresses, hashes and event bytes remain valid across hex
   receipt.blockHash = '0x' + 'Cd'.repeat(32);
   canonical.hash = '0x' + 'cD'.repeat(32);
   receipt.index = 1;
+  receipt.cumulativeGasUsed += 21_000n;
   receipt.logs[0].transactionIndex = 1;
   canonical.transactions = [otherTxHash, uppercaseHash];
   receipt.logs[0].transactionHash = uppercaseHash;

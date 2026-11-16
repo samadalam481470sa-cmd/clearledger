@@ -171,9 +171,12 @@ export class PaymentService {
   }
 
   private receiptMatchesSettlementCall(receipt: TransactionReceipt, gasLimit: bigint): boolean {
-    return typeof receipt.from === 'string' && receipt.from.toLowerCase() === this.relayer.address.toLowerCase() &&
-      typeof receipt.to === 'string' && receipt.to.toLowerCase() === this.routerAddress.toLowerCase() &&
-      typeof receipt.gasUsed === 'bigint' && receipt.gasUsed > 0n && receipt.gasUsed <= gasLimit;
+    const { from, to, gasUsed, cumulativeGasUsed, index } = receipt;
+    return typeof from === 'string' && from.toLowerCase() === this.relayer.address.toLowerCase() &&
+      typeof to === 'string' && to.toLowerCase() === this.routerAddress.toLowerCase() &&
+      typeof gasUsed === 'bigint' && gasUsed > 0n && gasUsed <= gasLimit &&
+      typeof cumulativeGasUsed === 'bigint' &&
+      (index === 0 ? cumulativeGasUsed === gasUsed : cumulativeGasUsed > gasUsed);
   }
 
   private async confirm(row: RecordRow) {
