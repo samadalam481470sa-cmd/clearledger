@@ -4,7 +4,7 @@ import { Interface, keccak256, Transaction, Wallet, type JsonRpcProvider, type T
 import { digest, domain, type Payment } from '../src/payment.ts';
 import { PaymentService } from '../src/service.ts';
 import { Store } from '../src/store.ts';
-import { fixtureNonemptyLogsBloom } from './fixtures/signed-settlement.ts';
+import { withFixtureLogsBloom } from './fixtures/signed-settlement.ts';
 
 // Offline native signatures plus synthetic provider evidence isolate the
 // reservation evidence for retransmission and receipt decisions.
@@ -49,10 +49,9 @@ function coherentReceipt(status = 1) {
   const hash = store.get(firstId)!.tx_hash!;
   const log = iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
     [payment.paymentId, payment.payer, payment.payee, payment.token, payment.amount, payment.nonce]);
-  return { hash, index: 0, blockNumber: 17, blockHash, status, gasUsed: 125_000n,
+  return withFixtureLogsBloom({ hash, index: 0, blockNumber: 17, blockHash, status, gasUsed: 125_000n,
     from: relayer.address, to: routerAddress,
-    logsBloom: status === 0 ? '0x' + '0'.repeat(512) : fixtureNonemptyLogsBloom,
-    logs: status === 1 ? [{ address: routerAddress, ...log, transactionHash: hash, transactionIndex: 0, index: 0, blockNumber: 17, blockHash }] : [] };
+    logs: status === 1 ? [{ address: routerAddress, ...log, transactionHash: hash, transactionIndex: 0, index: 0, blockNumber: 17, blockHash }] : [] });
 }
 function makeService(configuredChainId = chainId) {
   const provider = {

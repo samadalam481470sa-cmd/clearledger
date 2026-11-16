@@ -1,12 +1,13 @@
 import { getBigInt, isHexString, keccak256, Transaction, type Interface, type JsonRpcProvider, type Wallet, type TypedDataDomain, type TransactionReceipt, type Block } from 'ethers';
 import { digest, domain, paymentKey, paymentSchema, submissionSchema, type Payment } from './payment.ts';
+import { computeReceiptLogsBloom } from './receipt-bloom.ts';
 import { Store, type RecordRow } from './store.ts';
 
 // A fresh daily-spend slot can cost 17,100 gas more than an update (EIP-2200/2929).
 const DAILY_SPEND_GAS_ALLOWANCE = 20_000n;
 const EMPTY_LOGS_BLOOM = '0x' + '00'.repeat(256);
 
-function hasConsistentLogsBloom(receipt: TransactionReceipt): boolean {
+function hasConsistentLogsBloomShape(receipt: TransactionReceipt): boolean {
   const { logs, logsBloom } = receipt;
   return Array.isArray(logs) && isHexString(logsBloom, 256) &&
     (logsBloom === EMPTY_LOGS_BLOOM) === (logs.length === 0);
@@ -194,7 +195,7 @@ export class PaymentService {
       !Number.isSafeInteger(receipt.index) || receipt.index < 0 ||
       !Number.isSafeInteger(receipt.blockNumber) || receipt.blockNumber < 0 ||
       !isHash(receipt.blockHash) || (receipt.status !== 0 && receipt.status !== 1) ||
-      !hasConsistentLogsBloom(receipt)) return;
+      !hasConsistentLogsBloomShape(receipt)) return;
     // A reverted top-level execution cannot leave receipt logs.
     if (receipt.status === 0 && receipt.logs.length !== 0) return;
     const latest = await this.provider.getBlockNumber();
@@ -207,7 +208,7 @@ export class PaymentService {
       return;
     }
     const evidence = this.settlementEvidence(p, receipt);
-    if (evidence === 'inconsistent') return;
+    if (evidence === 'inconsistent' || computeReceiptLogsBloom(receipt.logs) !== receipt.logsBloom.toLowerCase()) return;
     if (evidence === 'missing') {
       this.store.setStatus(row.id, 'review', 'Receipt does not contain the expected settlement event');
       return;
@@ -289,13 +290,14 @@ export class PaymentService {
             block.number === row.block_number && sameHash(block.hash, row.block_hash) &&
             uniqueTransactionIndex(block, txHash) !== undefined)
             throw new ReconciliationReceiptUnavailable('Receipt unavailable for transaction listed in the canonical block');
-          matches = journalMatches && !!receipt && receipt.status === 1 && hasConsistentLogsBloom(receipt) &&
+          matches = journalMatches && !!receipt && receipt.status === 1 && hasConsistentLogsBloomShape(receipt) &&
             sameHash(receipt.hash, txHash) &&
             this.receiptMatchesSettlementCall(receipt, transaction.gasLimit) && receipt.blockNumber === row.block_number &&
             sameHash(receipt.blockHash, row.block_hash) &&
             Number.isSafeInteger(receipt.index) && receipt.index >= 0 &&
             (block === null || matchesCanonicalPosition(receipt, block)) &&
-            this.settlementEvidence(p, receipt) === 'matching';
+            this.settlementEvidence(p, receipt) === 'matching' &&
+            computeReceiptLogsBloom(receipt.logs) === receipt.logsBloom.toLowerCase();
           if (matches && block === null)
             throw new ReconciliationEvidenceUnavailable('Canonical block unavailable for matching settlement receipt');
         }

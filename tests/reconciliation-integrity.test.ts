@@ -4,7 +4,7 @@ import { Interface, keccak256, Transaction, type JsonRpcProvider } from 'ethers'
 import { Store } from '../src/store.ts';
 import { PaymentService, ReconciliationEvidenceUnavailable, ReconciliationReceiptUnavailable } from '../src/service.ts';
 import { digest, domain, type Payment } from '../src/payment.ts';
-import { fixtureNonemptyLogsBloom, fixtureRelayer, settleAbi, signedSettlement } from './fixtures/signed-settlement.ts';
+import { withFixtureLogsBloom, fixtureRelayer, settleAbi, signedSettlement } from './fixtures/signed-settlement.ts';
 
 // Synthetic receipt/projection fixtures exercise integrity decisions, not EVM execution.
 const payer = '0x' + '11'.repeat(20);
@@ -33,8 +33,8 @@ beforeEach(() => {
   paymentId = store.accept(payment, fingerprint, '0x').row.id;
   store.broadcast(paymentId, rawTx, txHash);
   store.finalize(paymentId, 17, blockHash);
-  receipt = { hash: txHash, from: fixtureRelayer.address, to: routerAddress,
-    index: 0, blockNumber: 17, status: 1, logsBloom: fixtureNonemptyLogsBloom, gasUsed: 125000n, blockHash, logs: [settlementLog()] };
+  receipt = withFixtureLogsBloom({ hash: txHash, from: fixtureRelayer.address, to: routerAddress,
+    index: 0, blockNumber: 17, status: 1, gasUsed: 125000n, blockHash, logs: [settlementLog()] });
   canonical = { number: 17, hash: blockHash, transactions: [txHash] };
 });
 afterEach(() => { store.close(); });
@@ -257,9 +257,9 @@ test('duplicate matching PaymentSettled logs flag only their settlement and reta
   store.broadcast(secondId, raw, hash);
   store.finalize(secondId, 17, blockHash);
   canonical.transactions = [txHash, hash];
-  const secondReceipt = { ...receipt, hash, index: 1, logs: [
+  const secondReceipt = withFixtureLogsBloom({ ...receipt, hash, index: 1, logs: [
     { ...settlementLog(unaffected), transactionHash: hash, transactionIndex: 1, index: 3 }
-  ] };
+  ] });
   const before = { first: store.get(paymentId), second: store.get(secondId), journals: store.journals(), audit: store.events() };
   const result = await service({ getTransactionReceipt: async (requested: string) =>
     requested === hash ? secondReceipt : receipt }).reconcile();
@@ -487,9 +487,10 @@ for (const missingBlock of [false, true]) {
 }
 
 test('a genuine matching settlement remains valid alongside unrelated or malformed logs', async () => {
-  receipt.logs = [{ address: routerAddress, topics: ['0x1234'], data: 'not-abi-data' },
+  receipt.logs = [{ address: routerAddress, topics: ['0x' + '12'.repeat(32)], data: '0x12' },
     { address: payee, ...iface.encodeEventLog(iface.getEvent('Unrelated')!, [1]) },
     { ...settlementLog({ payer: payee }), index: 2, data: '0x12' }, settlementLog()];
+  receipt = withFixtureLogsBloom(receipt);
   const result = await service().reconcile();
   assert.deepEqual(result.exceptions, []);
   assert.equal(store.get(paymentId)!.status, 'settled');

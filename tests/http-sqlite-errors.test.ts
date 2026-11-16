@@ -6,7 +6,7 @@ import { makeServer } from '../src/http.ts';
 import { paymentKey, type Payment } from '../src/payment.ts';
 import { PaymentService } from '../src/service.ts';
 import { Store } from '../src/store.ts';
-import { fixtureNonemptyLogsBloom } from './fixtures/signed-settlement.ts';
+import { withFixtureLogsBloom } from './fixtures/signed-settlement.ts';
 
 // Actual HTTP, SQLite triggers/transactions and offline envelope signing. Router
 // authorization and execution evidence are synthetic: no EVM transfer is claimed.
@@ -38,9 +38,9 @@ function fixture() {
       const hash = keccak256(raw);
       const log = iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
         [payment.paymentId, payment.payer, payment.payee, payment.token, payment.amount, payment.nonce]);
-      receipt = { hash, index: 0, blockNumber: 17, blockHash, status: 1, logsBloom: fixtureNonemptyLogsBloom, gasUsed: 125_000n,
+      receipt = withFixtureLogsBloom({ hash, index: 0, blockNumber: 17, blockHash, status: 1, gasUsed: 125_000n,
         from: signer.address, to: routerAddress,
-        logs: [{ address: routerAddress, ...log, transactionHash: hash, transactionIndex: 0, index: 0, blockNumber: 17, blockHash }] };
+        logs: [{ address: routerAddress, ...log, transactionHash: hash, transactionIndex: 0, index: 0, blockNumber: 17, blockHash }] });
       return { hash };
     }
   };

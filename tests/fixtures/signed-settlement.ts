@@ -1,11 +1,16 @@
-import { Interface, keccak256, Transaction, Wallet } from 'ethers';
+import { Interface, keccak256, Transaction, Wallet, type Log } from 'ethers';
 import type { Payment } from '../../src/payment.ts';
+import { computeReceiptLogsBloom } from '../../src/receipt-bloom.ts';
 
 export const settleAbi = 'function settle((bytes32 paymentId,address payer,address payee,address token,uint256 amount,uint256 nonce,uint256 deadline) p,bytes signature)';
 const router = new Interface([settleAbi]);
-// Synthetic receipts use a correctly sized nonzero bloom to represent a nonempty log list.
-export const fixtureNonemptyLogsBloom = '0x' + '00'.repeat(255) + 'ab';
 export const fixtureRelayer = new Wallet(Wallet.createRandom().privateKey);
+
+export function withFixtureLogsBloom<T extends { logs: readonly Pick<Log, 'address' | 'topics'>[] }>(receipt: T) {
+  const logsBloom = computeReceiptLogsBloom(receipt.logs);
+  if (!logsBloom) throw new Error('Cannot compute bloom for fixture receipt logs');
+  return { ...receipt, logsBloom };
+}
 
 export function signedSettlement(payment: Payment, signature: string, routerAddress: string, nonce: number) {
   const transaction = Transaction.from({ type: 2, chainId: 31337, nonce, to: routerAddress,

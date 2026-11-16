@@ -15,6 +15,7 @@ on:
       - scripts/deploy-network.ts
       - contracts/**
       - src/chain.ts
+      - src/receipt-bloom.ts
       - src/service.ts
       - src/store.ts
       - tests/fixtures/compile-wallet.ts

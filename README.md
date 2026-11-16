@@ -89,13 +89,13 @@ Detailed regression results and earlier failures retain their original source re
 
 ## More than 100,000 source lines
 
-The [machine-readable count](docs/source-count.json) records **641,461 nonblank source lines**, including comments and tests.
+The [machine-readable count](docs/source-count.json) records **641,515 nonblank source lines**, including comments and tests.
 
 | Source area | Files | Nonblank lines |
 | --- | --- | --- |
-| ClearLedger application area | 122 | 18,549 |
+| ClearLedger application area | 123 | 18,603 |
 | Attributed Besu snapshot | 4,484 | 622,912 |
-| Combined | 4,606 | 641,461 |
+| Combined | 4,607 | 641,515 |
 
 Package installs, lockfiles, JSON, documentation, generated output and databases are excluded. Application-area counting includes the clearly attributed OpenZeppelin-derived signature-check adaptation. Application code is MIT-licensed. Besu and dependencies retain their own licenses, and the consensus implementation belongs to Besu. [Provenance and licenses](docs/PROVENANCE.md).
 

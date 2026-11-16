@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { isDeepStrictEqual } from 'node:util';
-import { AbiCoder, Wallet, id, keccak256, toQuantity, Transaction, type TransactionReceipt } from 'ethers';
+import { AbiCoder, Wallet, id, keccak256, toBeHex, toQuantity, Transaction, type TransactionReceipt } from 'ethers';
 import { compile } from '../scripts/compile.ts';
 import { localChain } from '../scripts/local-chain.ts';
 import { connectRouter } from '../src/chain.ts';
@@ -14,9 +14,10 @@ import { PaymentService } from '../src/service.ts';
 import { paymentTypes, type Payment } from '../src/payment.ts';
 
 type Provenance = 'transactionHash' | 'blockHash' | 'blockNumber' | 'transactionIndex' | 'logIndex' | 'siblingLogIndex';
-type ReceiptFault = Provenance | 'gasUsed' | 'duplicate' | 'conflictingAmount' | 'malformedData' |
-  'extraDataWord' | 'extraTopic' | 'status' | 'status-no-logs' | 'zeroBloom' | 'strippedSuccessLogs';
+type ReceiptFault = Provenance | 'duplicate' | 'conflictingAmount' | 'malformedData' |
+  'extraDataWord' | 'extraTopic' | 'status' | 'status-no-logs' | typeof receiptFields[number];
 const fields: Provenance[] = ['transactionHash', 'blockHash', 'blockNumber', 'transactionIndex', 'logIndex', 'siblingLogIndex'];
+const receiptFields = ['gasUsed', 'zeroBloom', 'strippedSuccessLogs', 'missingBloomBit', 'extraBloomBit'] as const;
 const settlementDataTypes = ['address', 'uint256', 'uint256']; // Token, amount and nonce.
 const transferTopic = id('Transfer(address,address,uint256)');
 const coder = AbiCoder.defaultAbiCoder();
@@ -60,6 +61,14 @@ async function receiptProxy(upstream: string, routerAddress: string, topic: stri
               assert.equal(receipt.status, '0x1');
               if (fault === 'zeroBloom') receipt.logsBloom = zeroBloom;
               else receipt.logs = [];
+              altered++;
+              break;
+            }
+            if (fault === 'missingBloomBit' || fault === 'extraBloomBit') {
+              const bloom = BigInt(receipt.logsBloom);
+              const candidates = fault === 'missingBloomBit' ? bloom : ~bloom;
+              const bit = candidates & -candidates; // Isolate the lowest eligible bit.
+              receipt.logsBloom = toBeHex(bloom ^ bit, 256);
               altered++;
               break;
             }
@@ -184,8 +193,8 @@ function matchingLog(receipt: TransactionReceipt) {
 // Real HTTP JSON-RPC and ethers formatting are exercised. Service ticks are
 // explicitly driven; this does not claim autonomous CLI or Besu validation.
 for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData', 'extraDataWord', 'extraTopic',
-  'gasUsed', 'zeroBloom', 'strippedSuccessLogs'] as const) test(
-  'actual RPC ' + (field === 'gasUsed' || field === 'zeroBloom' || field === 'strippedSuccessLogs' ? 'receipt ' : 'log ') +
+  ...receiptFields] as const) test(
+  'actual RPC ' + (receiptFields.some(receiptField => receiptField === field) ? 'receipt ' : 'log ') +
     field + ' contradiction blocks confirmation and later flags reconciliation', {
   timeout: 30000
 }, async t => {
@@ -223,6 +232,17 @@ for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData
     t.diagnostic(JSON.stringify({ firstStatus: reserved.status, successorStatus: store.get(second.id)?.status,
       journalRows: store.journals().length, nativeSends: proxy.sends.length,
       reportedLogs: presented.logs.length, reportedBloomEmpty: presented.logsBloom === zeroBloom }));
+  } else if (field === 'missingBloomBit' || field === 'extraBloomBit') {
+    assert.match(presented.logsBloom, /^0x[0-9a-f]{512}$/);
+    const genuineBloom = BigInt(genuine.logsBloom);
+    const reportedBloom = BigInt(presented.logsBloom);
+    assert.ok(genuineBloom > 0n && reportedBloom > 0n, 'Both receipt blooms must be nonzero');
+    const changedBits = (genuineBloom ^ reportedBloom).toString(2).replaceAll('0', '');
+    assert.equal(changedBits, '1', 'ethers must retain exactly one changed bloom bit');
+    assert.ok(field === 'missingBloomBit' ? reportedBloom < genuineBloom : reportedBloom > genuineBloom);
+    repairedPresentation.logsBloom = genuine.logsBloom;
+    t.diagnostic(JSON.stringify({ firstStatus: reserved.status, successorStatus: store.get(second.id)?.status,
+      journalRows: store.journals().length, nativeSends: proxy.sends.length, reportedLogs: presented.logs.length }));
   } else if (field === 'gasUsed') {
     assert.ok(genuine.gasUsed > 0n && genuine.gasUsed <= envelope.gasLimit);
     assert.equal(presented.gasUsed, envelope.gasLimit + 1n, 'ethers must retain the over-limit gas usage');

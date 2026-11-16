@@ -2,9 +2,10 @@ import { beforeEach, afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { getAddress, Interface, Transaction, type JsonRpcProvider, type Wallet } from 'ethers';
 import { Store } from '../src/store.ts';
+import { computeReceiptLogsBloom } from '../src/receipt-bloom.ts';
 import { PaymentService } from '../src/service.ts';
 import { digest, domain, type Payment } from '../src/payment.ts';
-import { fixtureNonemptyLogsBloom, fixtureRelayer, settleAbi, signedSettlement } from './fixtures/signed-settlement.ts';
+import { withFixtureLogsBloom, fixtureRelayer, settleAbi, signedSettlement } from './fixtures/signed-settlement.ts';
 
 // Synthetic provider evidence isolates initial-confirmation decisions. No EVM
 // transfer is claimed by these fixtures; separate integration tests cover that.
@@ -48,9 +49,9 @@ beforeEach(() => {
   firstId = store.accept(payment, digest(payment, signingDomain), signature).row.id;
   store.broadcast(firstId, raw, txHash);
   secondId = undefined;
-  receipt = { hash: txHash, index: 0, blockNumber: 17, blockHash, status: 1, logsBloom: fixtureNonemptyLogsBloom, gasUsed: 125000n,
+  receipt = withFixtureLogsBloom({ hash: txHash, index: 0, blockNumber: 17, blockHash, status: 1, gasUsed: 125000n,
     from: fixtureRelayer.address, to: routerAddress,
-    logs: [settlementLog()] };
+    logs: [settlementLog()] });
   canonical = { number: 17, hash: blockHash, transactions: [txHash] };
   latest = 18;
   preflights = 0; signing = 0; blockReads = 0;
@@ -254,9 +255,10 @@ for (const siblingFirst of [false, true]) {
 
 test('a coherent matching event remains accepted alongside unrelated contracts and malformed nonmatching logs', async () => {
   const coherent = receipt.logs[0];
-  receipt.logs = [{ address: routerAddress, topics: ['0x1234'], data: 'not-abi-data' },
+  receipt.logs = [{ address: routerAddress, topics: ['0x' + '12'.repeat(32)], data: '0x12' },
     { ...coherent, address: payee, index: -1, transactionHash: '0x' + 'ef'.repeat(32) },
     { ...settlementLog({ paymentId: '0x' + '78'.repeat(32) }), index: 2, data: '0x12' }, coherent];
+  receipt = withFixtureLogsBloom(receipt);
   await service().tick();
   assert.equal(store.get(firstId)!.status, 'settled');
   assert.equal(store.journals().length, 1);
@@ -510,6 +512,15 @@ test('a canonical success with an explicit empty log array enters review once', 
   assert.equal(store.events().filter(event => event.action === 'review').length, 1);
 });
 
+test('receipt bloom matches the Besu vector with an all-zero topic', () => {
+  const logs = [{ address: '0x095e7baea6a6c7c4c2dfeb977efac326af552d87', topics: ['0x' + '00'.repeat(32)] }];
+  const expected = new Uint8Array(256);
+  for (const [position, value] of [[8, 16], [100, 2], [110, 8], [168, 4], [222, 32], [228, 64]]) {
+    expected[position] = value;
+  }
+  assert.equal(computeReceiptLogsBloom(logs), '0x' + Buffer.from(expected).toString('hex'));
+});
+
 test('unsafe or nonpositive confirmation policies are rejected before receipt processing', () => {
   for (const confirmations of [0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])
     assert.throws(() => service({}, confirmations), /Invalid confirmation count/);
@@ -565,6 +576,7 @@ test('matching receipt addresses, hashes and event bytes remain valid across hex
   const uppercaseHex = (hex: string) => '0x' + hex.slice(2).toUpperCase();
   receipt.logs[0].topics = receipt.logs[0].topics.map(uppercaseHex);
   receipt.logs[0].data = uppercaseHex(receipt.logs[0].data);
+  receipt.logsBloom = uppercaseHex(receipt.logsBloom);
   await service().tick();
   assert.equal(store.get(firstId)!.status, 'settled');
   assert.equal(store.get(firstId)!.tx_hash, txHash);
