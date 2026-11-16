@@ -1,6 +1,6 @@
 # ClearLedger status
 
-Updated: November 15, 2026.
+Updated: November 16, 2026.
 
 ## Scope and constraints
 
@@ -475,6 +475,14 @@ Project writes are confined to the new `outputs/clearledger/` directory and task
 
 - Extended Linux job `132765327224` passed all 10 steps on source `a0c13705da1434864e3f899eb15bf30dee398e64` and tree `60114eb751b60d0ddf1a937593040f0477867b99`. Its focused case passed in 653,219.816626 ms. Before and after restart it observed 322,696 and 322,559 ms respectively, with 60 bursts, 720 HTTP 200 responses, 296 invariant observations and 318 failed receipt attempts per window. Each window logged 21 failed receipts after its boundary. Combined active observation was 645,255 ms within a 646,229 ms receipt-route outage. The 871 ms closed-to-ready gap and one startup receipt attempt were excluded. All 1,440 reads passed the existing response and ledger assertions. Both payments settled with two journals and reconciliation 2/0. [Extended outage CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/43698870254).
 - Regular Linux job `132765327427` passed all 1,130 tests in 553,315.576838 ms with zero failures or skips on the same source. The default case passed in 189,736.254183 ms with 432 HTTP 200 responses and 183,006 ms of active observation. Fresh install, strict typecheck, Solidity 0.8.30 targeting Paris, the 35-module dashboard build and source count passed. The latest Besu result remains tied to the prior gas allowance revision. [Regular CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/43698870256).
+
+## Successful receipt log bloom consistency
+
+- Before resolving a broadcast or validating a settled record, ClearLedger now checks that the formatted receipt has a log array and a 256-byte hexadecimal bloom. The bloom must be all zeroes for an empty array and nonzero for a nonempty array. Reverted receipts still require an empty array. A contradictory success preserves the reservation and queued nonce priority. A contradiction in a previously settled receipt flags review while retaining the journal.
+- Both real HTTP JSON-RPC regressions reproduced the defect. With the genuine logs and a zero bloom, the original worker settled both payments and posted two journals. With the genuine nonzero bloom and the logs removed, it moved the first payment to review and settled the successor. Both replies retained status 1. The baseline process exited 1 after 23,626.4809 ms.
+- All 492 focused Windows tests passed in 222,864.4307 ms with zero failures or skips. Strict TypeScript checking passed. The fixed wire cases passed in 3,740.7309 and 4,094.6399 ms. Ethers preserved each alteration. Each fault produced five altered replies before healing and held the original signed transaction and queued successor through three retries, with one send, zero journals and no additional SQLite writes. Genuine replies restored both settlements with exactly two sends and two journals. Reapplying the fault for reconciliation flagged only the affected payment and preserved both journals.
+- The check uses the configured provider’s receipt and adds no RPC call. It checks bloom shape and log presence. Reconstruction of individual bits and independent inclusion remain outside its scope. The wire tests drive service ticks through a Ganache HTTP proxy with in-memory SQLite. [Receipt bloom definition](https://ethereum.org/content/developers/tutorials/yellow-paper-evm/yellow-paper-berlin.pdf).
+- The count is 641,461 nonblank lines, including comments and tests. The application area contributes 18,549 across 122 files and 19,438 physical lines. The attributed Besu snapshot contributes 622,912 across 4,484 files and 714,385 physical lines.
 
 ## Duplicate settlement log indexes
 

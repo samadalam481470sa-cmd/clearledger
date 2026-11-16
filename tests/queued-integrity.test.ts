@@ -4,7 +4,7 @@ import { Interface, type JsonRpcProvider, type Wallet } from 'ethers';
 import { Store } from '../src/store.ts';
 import { PaymentService } from '../src/service.ts';
 import { digest, domain, paymentSchema, type Payment } from '../src/payment.ts';
-import { fixtureRelayer, settleAbi, signedSettlement } from './fixtures/signed-settlement.ts';
+import { fixtureNonemptyLogsBloom, fixtureRelayer, settleAbi, signedSettlement } from './fixtures/signed-settlement.ts';
 
 // Synthetic RPC controls isolate local queue checks, not cryptographic authorization.
 const routerAddress = '0x' + '44'.repeat(20), hash = '0x' + 'aa'.repeat(32), blockHash = '0x' + 'bb'.repeat(32);
@@ -136,7 +136,7 @@ test('an older canonical broadcast can settle before queued reservation anomalie
   const log = iface.encodeEventLog(iface.getEvent('PaymentSettled')!, Object.values({
     paymentId: payment().paymentId, payer: payment().payer, payee: payment().payee,
     token: payment().token, amount: payment().amount, nonce: payment().nonce }));
-  receipt = { hash: originalHash, index: 0, blockHash, blockNumber: 17, status: 1, gasUsed: 125_000n,
+  receipt = { hash: originalHash, index: 0, blockHash, blockNumber: 17, status: 1, logsBloom: fixtureNonemptyLogsBloom, gasUsed: 125_000n,
     from: fixtureRelayer.address, to: routerAddress,
     logs: [{ address: routerAddress, ...log, transactionHash: originalHash, transactionIndex: 0, index: 0, blockHash, blockNumber: 17 }] };
   await assert.rejects(service.tick(), error => error instanceof Error && error.message === blockedError);

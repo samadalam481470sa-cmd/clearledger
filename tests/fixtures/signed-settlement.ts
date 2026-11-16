@@ -3,6 +3,8 @@ import type { Payment } from '../../src/payment.ts';
 
 export const settleAbi = 'function settle((bytes32 paymentId,address payer,address payee,address token,uint256 amount,uint256 nonce,uint256 deadline) p,bytes signature)';
 const router = new Interface([settleAbi]);
+// Synthetic receipts use a correctly sized nonzero bloom to represent a nonempty log list.
+export const fixtureNonemptyLogsBloom = '0x' + '00'.repeat(255) + 'ab';
 export const fixtureRelayer = new Wallet(Wallet.createRandom().privateKey);
 
 export function signedSettlement(payment: Payment, signature: string, routerAddress: string, nonce: number) {

@@ -4,6 +4,7 @@ import { Interface, keccak256, Transaction, Wallet, type JsonRpcProvider } from 
 import { digest, domain, paymentKey, paymentSchema, type Payment } from '../src/payment.ts';
 import { PaymentService } from '../src/service.ts';
 import { Store } from '../src/store.ts';
+import { fixtureNonemptyLogsBloom } from './fixtures/signed-settlement.ts';
 
 // Real SQLite and canonical intent digests with synthetic router/provider
 // decisions. Offline native signing in the recovery control is fixture plumbing,
@@ -83,7 +84,7 @@ beforeEach(() => {
       sends++; const hash = keccak256(raw);
       const log = iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
         [first.paymentId, first.payer, first.payee, first.token, first.amount, first.nonce]);
-      receipt = { hash, index: 0, blockNumber: 17, blockHash, status: 1, gasUsed: 125_000n,
+      receipt = { hash, index: 0, blockNumber: 17, blockHash, status: 1, logsBloom: fixtureNonemptyLogsBloom, gasUsed: 125_000n,
         from: nativeSigner.address, to: routerAddress,
         logs: [{ address: routerAddress, ...log, transactionHash: hash, transactionIndex: 0, index: 0, blockNumber: 17, blockHash }] };
       return { hash };

@@ -7,7 +7,7 @@ import { digest, domain, type Payment } from '../src/payment.ts';
 import { PaymentService } from '../src/service.ts';
 import { Store } from '../src/store.ts';
 import { emptyTotals, reduceTotals, totalsCounts } from '../web/totals.ts';
-import { fixtureRelayer, settleAbi, signedSettlement } from './fixtures/signed-settlement.ts';
+import { fixtureNonemptyLogsBloom, fixtureRelayer, settleAbi, signedSettlement } from './fixtures/signed-settlement.ts';
 
 // Authenticated HTTP and real SQLite with synthetic canonical receipt evidence.
 // These tests do not execute EVM transfers, mount React, or establish browser UI.
@@ -63,7 +63,7 @@ function seed(n: number, asset = tokenA, amount = '125000000', reconcile = false
   transactionsByBlock.set(n, [hash]);
   const log = iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
     [payment.paymentId, payment.payer, payment.payee, payment.token, payment.amount, payment.nonce]);
-  receipts.set(hash, { hash, index: 0, blockNumber: n, blockHash, status: 1, gasUsed: 125_000n,
+  receipts.set(hash, { hash, index: 0, blockNumber: n, blockHash, status: 1, logsBloom: fixtureNonemptyLogsBloom, gasUsed: 125_000n,
     from: fixtureRelayer.address, to: routerAddress,
     logs: [{ address: routerAddress, transactionHash: hash, transactionIndex: 0, index: 0, blockNumber: n, blockHash, ...log }] });
   return store.get(row.id)!;

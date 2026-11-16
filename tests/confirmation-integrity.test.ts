@@ -4,7 +4,7 @@ import { getAddress, Interface, Transaction, type JsonRpcProvider, type Wallet }
 import { Store } from '../src/store.ts';
 import { PaymentService } from '../src/service.ts';
 import { digest, domain, type Payment } from '../src/payment.ts';
-import { fixtureRelayer, settleAbi, signedSettlement } from './fixtures/signed-settlement.ts';
+import { fixtureNonemptyLogsBloom, fixtureRelayer, settleAbi, signedSettlement } from './fixtures/signed-settlement.ts';
 
 // Synthetic provider evidence isolates initial-confirmation decisions. No EVM
 // transfer is claimed by these fixtures; separate integration tests cover that.
@@ -48,7 +48,7 @@ beforeEach(() => {
   firstId = store.accept(payment, digest(payment, signingDomain), signature).row.id;
   store.broadcast(firstId, raw, txHash);
   secondId = undefined;
-  receipt = { hash: txHash, index: 0, blockNumber: 17, blockHash, status: 1, gasUsed: 125000n,
+  receipt = { hash: txHash, index: 0, blockNumber: 17, blockHash, status: 1, logsBloom: fixtureNonemptyLogsBloom, gasUsed: 125000n,
     from: fixtureRelayer.address, to: routerAddress,
     logs: [settlementLog()] };
   canonical = { number: 17, hash: blockHash, transactions: [txHash] };
@@ -481,8 +481,26 @@ test('restoring reported revert log evidence fails the original reservation once
   assert.equal(store.events().filter(event => event.action === 'failed').length, 1);
 });
 
+for (const [label, bloom] of [
+  ['missing', undefined], ['null', null], ['short', '0x01'], ['long', '0x' + '01'.repeat(257)],
+  ['nonhex', '0x' + 'gg'.repeat(256)], ['zero with a matching log', emptyLogsBloom]
+] as const) {
+  test('successful receipt with ' + label + ' bloom preserves the reservation before block reads', async () => {
+    receipt.logsBloom = bloom;
+    await remainsUncertain();
+    assert.equal(blockReads, 0);
+  });
+}
+
+test('successful receipt with a nonzero bloom and no logs preserves the reservation before block reads', async () => {
+  receipt.logs = [];
+  await remainsUncertain();
+  assert.equal(blockReads, 0);
+});
+
 test('a canonical success with an explicit empty log array enters review once', async () => {
   receipt.logs = [];
+  receipt.logsBloom = emptyLogsBloom;
   const worker = service();
   await worker.tick();
   assert.equal(store.get(firstId)!.status, 'review');

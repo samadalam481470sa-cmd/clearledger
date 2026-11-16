@@ -15,12 +15,13 @@ import { paymentTypes, type Payment } from '../src/payment.ts';
 
 type Provenance = 'transactionHash' | 'blockHash' | 'blockNumber' | 'transactionIndex' | 'logIndex' | 'siblingLogIndex';
 type ReceiptFault = Provenance | 'gasUsed' | 'duplicate' | 'conflictingAmount' | 'malformedData' |
-  'extraDataWord' | 'extraTopic' | 'status' | 'status-no-logs';
+  'extraDataWord' | 'extraTopic' | 'status' | 'status-no-logs' | 'zeroBloom' | 'strippedSuccessLogs';
 const fields: Provenance[] = ['transactionHash', 'blockHash', 'blockNumber', 'transactionIndex', 'logIndex', 'siblingLogIndex'];
 const settlementDataTypes = ['address', 'uint256', 'uint256']; // Token, amount and nonce.
 const transferTopic = id('Transfer(address,address,uint256)');
 const coder = AbiCoder.defaultAbiCoder();
 const extraWord = 'ab'.repeat(32);
+const zeroBloom = '0x' + '00'.repeat(256);
 const differentHash = (value: string) => '0x' + (value.toLowerCase() === '0x' + 'fa'.repeat(32) ? 'fb' : 'fa').repeat(32);
 
 /** Changes only the selected receipt or router log. All requests reach Ganache. */
@@ -55,6 +56,13 @@ async function receiptProxy(upstream: string, routerAddress: string, topic: stri
           for (const log of receipt.logs) {
             if (log.address.toLowerCase() !== routerAddress.toLowerCase() || log.topics[0]?.toLowerCase() !== topic.toLowerCase()) continue;
             target ??= receipt.transactionHash.toLowerCase();
+            if (fault === 'zeroBloom' || fault === 'strippedSuccessLogs') {
+              assert.equal(receipt.status, '0x1');
+              if (fault === 'zeroBloom') receipt.logsBloom = zeroBloom;
+              else receipt.logs = [];
+              altered++;
+              break;
+            }
             if (fault === 'gasUsed') {
               const limit = signedGasLimits.get(target!);
               assert.ok(limit !== undefined);
@@ -175,8 +183,10 @@ function matchingLog(receipt: TransactionReceipt) {
 
 // Real HTTP JSON-RPC and ethers formatting are exercised. Service ticks are
 // explicitly driven; this does not claim autonomous CLI or Besu validation.
-for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData', 'extraDataWord', 'extraTopic', 'gasUsed'] as const) test(
-  'actual RPC ' + (field === 'gasUsed' ? 'receipt ' : 'log ') + field + ' contradiction blocks confirmation and later flags reconciliation', {
+for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData', 'extraDataWord', 'extraTopic',
+  'gasUsed', 'zeroBloom', 'strippedSuccessLogs'] as const) test(
+  'actual RPC ' + (field === 'gasUsed' || field === 'zeroBloom' || field === 'strippedSuccessLogs' ? 'receipt ' : 'log ') +
+    field + ' contradiction blocks confirmation and later flags reconciliation', {
   timeout: 30000
 }, async t => {
   const firstInput = await signed('125000000', '0'), secondInput = await signed('7000000', '1');
@@ -195,10 +205,25 @@ for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData
   const presented = await provider.getTransactionReceipt(originalHash);
   assert.ok(genuine && presented);
   assert.equal(genuine.status, 1);
-  const { log, index } = matchingLog(presented);
-  const genuineLog = genuine.logs[index];
+  const { log: genuineLog, index } = matchingLog(genuine);
+  const log = presented.logs[index];
   const repairedPresentation = JSON.parse(JSON.stringify(presented));
-  if (field === 'gasUsed') {
+  if (field === 'zeroBloom' || field === 'strippedSuccessLogs') {
+    assert.notEqual(genuine.logsBloom, zeroBloom);
+    assert.notEqual(genuine.logs.length, 0);
+    assert.equal(presented.status, 1);
+    if (field === 'zeroBloom') {
+      assert.equal(presented.logsBloom, zeroBloom);
+      repairedPresentation.logsBloom = genuine.logsBloom;
+    } else {
+      assert.equal(presented.logs.length, 0);
+      assert.equal(presented.logsBloom, genuine.logsBloom);
+      repairedPresentation.logs = JSON.parse(JSON.stringify(genuine.logs));
+    }
+    t.diagnostic(JSON.stringify({ firstStatus: reserved.status, successorStatus: store.get(second.id)?.status,
+      journalRows: store.journals().length, nativeSends: proxy.sends.length,
+      reportedLogs: presented.logs.length, reportedBloomEmpty: presented.logsBloom === zeroBloom }));
+  } else if (field === 'gasUsed') {
     assert.ok(genuine.gasUsed > 0n && genuine.gasUsed <= envelope.gasLimit);
     assert.equal(presented.gasUsed, envelope.gasLimit + 1n, 'ethers must retain the over-limit gas usage');
     repairedPresentation.gasUsed = genuine.toJSON().gasUsed;

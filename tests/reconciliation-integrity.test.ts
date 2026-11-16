@@ -4,7 +4,7 @@ import { Interface, keccak256, Transaction, type JsonRpcProvider } from 'ethers'
 import { Store } from '../src/store.ts';
 import { PaymentService, ReconciliationEvidenceUnavailable, ReconciliationReceiptUnavailable } from '../src/service.ts';
 import { digest, domain, type Payment } from '../src/payment.ts';
-import { fixtureRelayer, settleAbi, signedSettlement } from './fixtures/signed-settlement.ts';
+import { fixtureNonemptyLogsBloom, fixtureRelayer, settleAbi, signedSettlement } from './fixtures/signed-settlement.ts';
 
 // Synthetic receipt/projection fixtures exercise integrity decisions, not EVM execution.
 const payer = '0x' + '11'.repeat(20);
@@ -34,7 +34,7 @@ beforeEach(() => {
   store.broadcast(paymentId, rawTx, txHash);
   store.finalize(paymentId, 17, blockHash);
   receipt = { hash: txHash, from: fixtureRelayer.address, to: routerAddress,
-    index: 0, blockNumber: 17, status: 1, gasUsed: 125000n, blockHash, logs: [settlementLog()] };
+    index: 0, blockNumber: 17, status: 1, logsBloom: fixtureNonemptyLogsBloom, gasUsed: 125000n, blockHash, logs: [settlementLog()] };
   canonical = { number: 17, hash: blockHash, transactions: [txHash] };
 });
 afterEach(() => { store.close(); });
@@ -473,6 +473,15 @@ for (const missingBlock of [false, true]) {
     const coherent = settlementLog();
     const sibling = { ...coherent, address: token, topics: [], data: '0x' };
     receipt.logs = [sibling, coherent];
+    await flagged();
+  });
+}
+
+for (const missingBlock of [false, true]) {
+  test('a zero bloom with a matching event triggers review ' +
+    (missingBlock ? 'without' : 'with') + ' the canonical block', async () => {
+    if (missingBlock) canonical = null;
+    receipt.logsBloom = '0x' + '00'.repeat(256);
     await flagged();
   });
 }

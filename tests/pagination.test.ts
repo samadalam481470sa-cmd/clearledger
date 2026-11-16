@@ -6,7 +6,7 @@ import { Store, type Status } from '../src/store.ts';
 import { PaymentService } from '../src/service.ts';
 import { makeServer } from '../src/http.ts';
 import { digest, domain, type Payment } from '../src/payment.ts';
-import { fixtureRelayer, settleAbi, signedSettlement } from './fixtures/signed-settlement.ts';
+import { fixtureNonemptyLogsBloom, fixtureRelayer, settleAbi, signedSettlement } from './fixtures/signed-settlement.ts';
 
 // Synthetic projection records test pagination/accounting, not EVM settlement.
 const payer = '0x' + '11'.repeat(20);
@@ -62,7 +62,7 @@ function coherentReceipt(tx: string) {
   const payment = JSON.parse(row.payload) as Payment;
   const log = settlementInterface.encodeEventLog(settlementInterface.getEvent('PaymentSettled')!,
     [payment.paymentId, payment.payer, payment.payee, payment.token, payment.amount, payment.nonce]);
-  return { hash: tx, index: 0, blockNumber: row.block_number, status: 1, blockHash: row.block_hash, gasUsed: 125_000n,
+  return { hash: tx, index: 0, blockNumber: row.block_number, status: 1, blockHash: row.block_hash, logsBloom: fixtureNonemptyLogsBloom, gasUsed: 125_000n,
     from: fixtureRelayer.address, to: routerAddress,
     logs: [{ address: routerAddress, transactionHash: tx, transactionIndex: 0, index: 0, blockHash: row.block_hash,
       blockNumber: row.block_number, ...log }] };

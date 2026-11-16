@@ -4,7 +4,7 @@ import { Interface, type JsonRpcProvider } from 'ethers';
 import { Store } from '../src/store.ts';
 import { PaymentService } from '../src/service.ts';
 import { digest, domain, type Payment } from '../src/payment.ts';
-import { fixtureRelayer, settleAbi, signedSettlement } from './fixtures/signed-settlement.ts';
+import { fixtureNonemptyLogsBloom, fixtureRelayer, settleAbi, signedSettlement } from './fixtures/signed-settlement.ts';
 
 // Controlled SQLite/provider evidence, not executed EVM transfers.
 const routerAddress = '0x' + '44'.repeat(20), blockHash = '0x' + 'ee'.repeat(32);
@@ -37,7 +37,7 @@ function receipt(tx: string) {
   const log = iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
     [p.paymentId, p.payer, p.payee, p.token, p.amount, p.nonce]);
   const index = [...payments.keys()].indexOf(tx);
-  return { hash: tx, index, status: 1, blockNumber: 17, blockHash, gasUsed: 125_000n,
+  return { hash: tx, index, status: 1, blockNumber: 17, blockHash, logsBloom: fixtureNonemptyLogsBloom, gasUsed: 125_000n,
     from: fixtureRelayer.address, to: routerAddress,
     logs: [{ address: routerAddress, ...log, transactionHash: tx, transactionIndex: index, index, blockHash, blockNumber: 17 }] };
 }

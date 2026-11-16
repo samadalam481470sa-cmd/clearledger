@@ -6,7 +6,7 @@ import { makeServer } from '../src/http.ts';
 import { digest, domain, type Payment } from '../src/payment.ts';
 import { PaymentService } from '../src/service.ts';
 import { Store } from '../src/store.ts';
-import { fixtureRelayer, settleAbi, signedSettlement } from './fixtures/signed-settlement.ts';
+import { fixtureNonemptyLogsBloom, fixtureRelayer, settleAbi, signedSettlement } from './fixtures/signed-settlement.ts';
 
 // Real authenticated HTTP and SQLite with synthetic receipt/canonical evidence.
 // The signed envelopes are real; these fixtures do not execute an EVM transaction.
@@ -23,7 +23,7 @@ const iface = new Interface([
   'event PaymentSettled(bytes32 indexed paymentId,address indexed payer,address indexed payee,address token,uint256 amount,uint256 nonce)'
 ]);
 const receipt = { hash: txHash, from: fixtureRelayer.address, to: routerAddress,
-  index: 0, status: 1, blockNumber: 17, blockHash, gasUsed: 125_000n, logs: [
+  index: 0, status: 1, blockNumber: 17, blockHash, logsBloom: fixtureNonemptyLogsBloom, gasUsed: 125_000n, logs: [
     { address: routerAddress, transactionHash: txHash, transactionIndex: 0, index: 0, blockNumber: 17, blockHash,
       ...iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
         [payment.paymentId, payer, payee, token, payment.amount, payment.nonce]) }
