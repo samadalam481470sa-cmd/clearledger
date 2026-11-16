@@ -466,10 +466,21 @@ for (const [description, logs] of [
   test(description + ' cannot masquerade as PaymentSettled', async () => { receipt.logs = logs; await flagged(); });
 }
 
+for (const missingBlock of [false, true]) {
+  test('another log claiming the settlement log index triggers review ' +
+    (missingBlock ? 'without' : 'with') + ' the canonical block', async () => {
+    if (missingBlock) canonical = null;
+    const coherent = settlementLog();
+    const sibling = { ...coherent, address: token, topics: [], data: '0x' };
+    receipt.logs = [sibling, coherent];
+    await flagged();
+  });
+}
+
 test('a genuine matching settlement remains valid alongside unrelated or malformed logs', async () => {
   receipt.logs = [{ address: routerAddress, topics: ['0x1234'], data: 'not-abi-data' },
     { address: payee, ...iface.encodeEventLog(iface.getEvent('Unrelated')!, [1]) },
-    { ...settlementLog({ payer: payee }), data: '0x12' }, settlementLog()];
+    { ...settlementLog({ payer: payee }), index: 2, data: '0x12' }, settlementLog()];
   const result = await service().reconcile();
   assert.deepEqual(result.exceptions, []);
   assert.equal(store.get(paymentId)!.status, 'settled');

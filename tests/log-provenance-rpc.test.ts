@@ -13,17 +13,18 @@ import { Store } from '../src/store.ts';
 import { PaymentService } from '../src/service.ts';
 import { paymentTypes, type Payment } from '../src/payment.ts';
 
-type Provenance = 'transactionHash' | 'blockHash' | 'blockNumber' | 'transactionIndex' | 'logIndex';
+type Provenance = 'transactionHash' | 'blockHash' | 'blockNumber' | 'transactionIndex' | 'logIndex' | 'siblingLogIndex';
 type ReceiptFault = Provenance | 'gasUsed' | 'duplicate' | 'conflictingAmount' | 'malformedData' |
   'extraDataWord' | 'extraTopic' | 'status' | 'status-no-logs';
-const fields: Provenance[] = ['transactionHash', 'blockHash', 'blockNumber', 'transactionIndex', 'logIndex'];
+const fields: Provenance[] = ['transactionHash', 'blockHash', 'blockNumber', 'transactionIndex', 'logIndex', 'siblingLogIndex'];
 const settlementDataTypes = ['address', 'uint256', 'uint256']; // Token, amount and nonce.
+const transferTopic = id('Transfer(address,address,uint256)');
 const coder = AbiCoder.defaultAbiCoder();
 const extraWord = 'ab'.repeat(32);
 const differentHash = (value: string) => '0x' + (value.toLowerCase() === '0x' + 'fa'.repeat(32) ? 'fb' : 'fa').repeat(32);
 
 /** Changes only the selected receipt or router log. All requests reach Ganache. */
-async function receiptProxy(upstream: string, routerAddress: string, topic: string) {
+async function receiptProxy(upstream: string, routerAddress: string, topic: string, tokenAddress: string) {
   let fault: ReceiptFault | undefined, target: string | undefined, altered = 0;
   const sends: string[] = [];
   const signedGasLimits = new Map<string, bigint>();
@@ -86,6 +87,14 @@ async function receiptProxy(upstream: string, routerAddress: string, topic: stri
               altered++;
               break;
             }
+            if (fault === 'siblingLogIndex') {
+              const sibling = receipt.logs.find((candidate: { address: string; topics: string[] }) =>
+                candidate.address.toLowerCase() === tokenAddress.toLowerCase() && candidate.topics[0]?.toLowerCase() === transferTopic);
+              assert.ok(sibling && sibling.logIndex !== log.logIndex);
+              log.logIndex = sibling.logIndex;
+              altered++;
+              break;
+            }
             if (fault === 'logIndex') log.logIndex = -1;
             else log[fault] = fault === 'blockNumber' || fault === 'transactionIndex'
               ? '0x' + (BigInt(log[fault]) + 1n).toString(16)
@@ -127,7 +136,8 @@ before(async () => { compile(); chain = await localChain(); });
 after(async () => { await chain?.close(); });
 beforeEach(async () => {
   snapshot = await chain.provider.send('evm_snapshot', []);
-  proxy = await receiptProxy(chain.provider._getConnection().url, String(chain.router.target), chain.router.interface.getEvent('PaymentSettled')!.topicHash);
+  proxy = await receiptProxy(chain.provider._getConnection().url, String(chain.router.target),
+    chain.router.interface.getEvent('PaymentSettled')!.topicHash, String(chain.token.target));
   provider = createRpcProvider(proxy.url, 2000);
   const relayer = new Wallet(chain.relayer.privateKey, provider);
   store = new Store(); operations = new Set();
@@ -233,6 +243,19 @@ for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData
     assert.equal(log.index, -1, 'ethers must retain the negative log index from the RPC reply');
     repairedPresentation.logs[index].index = genuineLog.index;
     t.diagnostic(JSON.stringify({ reportedLogIndex: log.index, genuineLogIndex: genuineLog.index,
+      firstStatus: reserved.status, successorStatus: store.get(second.id)?.status,
+      journalRows: store.journals().length, nativeSends: proxy.sends.length }));
+  } else if (field === 'siblingLogIndex') {
+    const transferIndex = genuine.logs.findIndex(candidate => candidate.address.toLowerCase() === String(chain.token.target).toLowerCase() &&
+      candidate.topics[0] === transferTopic);
+    assert.ok(transferIndex >= 0 && transferIndex !== index, 'The genuine receipt must contain a distinct ERC-20 Transfer');
+    const sibling = genuine.logs[transferIndex];
+    assert.ok(sibling.index >= 0);
+    assert.notEqual(genuineLog.index, sibling.index);
+    assert.equal(log.index, sibling.index, 'ethers must retain the index copied from the ERC-20 Transfer');
+    assert.equal(presented.logs[transferIndex].index, sibling.index);
+    repairedPresentation.logs[index].index = genuineLog.index;
+    t.diagnostic(JSON.stringify({ reportedLogIndex: log.index, genuineLogIndex: genuineLog.index, transferLogIndex: sibling.index,
       firstStatus: reserved.status, successorStatus: store.get(second.id)?.status,
       journalRows: store.journals().length, nativeSends: proxy.sends.length }));
   } else {

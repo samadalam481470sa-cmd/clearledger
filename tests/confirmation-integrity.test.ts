@@ -241,11 +241,22 @@ test('a deferred token decoding error for the reserved indexed identity override
   assert.equal(blockReads, 2);
 });
 
+for (const siblingFirst of [false, true]) {
+  test('another log claiming the settlement log index keeps the reservation ' +
+    (siblingFirst ? 'before' : 'after') + ' the matching event', async () => {
+    const coherent = settlementLog();
+    const sibling = { ...coherent, address: token, topics: [], data: '0x' };
+    receipt.logs = siblingFirst ? [sibling, coherent] : [coherent, sibling];
+    await remainsUncertain();
+    assert.equal(blockReads, 2);
+  });
+}
+
 test('a coherent matching event remains accepted alongside unrelated contracts and malformed nonmatching logs', async () => {
   const coherent = receipt.logs[0];
   receipt.logs = [{ address: routerAddress, topics: ['0x1234'], data: 'not-abi-data' },
     { ...coherent, address: payee, index: -1, transactionHash: '0x' + 'ef'.repeat(32) },
-    { ...settlementLog({ paymentId: '0x' + '78'.repeat(32) }), data: '0x12' }, coherent];
+    { ...settlementLog({ paymentId: '0x' + '78'.repeat(32) }), index: 2, data: '0x12' }, coherent];
   await service().tick();
   assert.equal(store.get(firstId)!.status, 'settled');
   assert.equal(store.journals().length, 1);

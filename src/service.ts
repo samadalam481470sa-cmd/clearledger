@@ -210,12 +210,13 @@ export class PaymentService {
   }
 
   private settlementEvidence(p: Payment, receipt: TransactionReceipt): 'matching' | 'inconsistent' | 'missing' {
-    if (!Array.isArray(receipt.logs)) return 'missing';
+    const logs = receipt.logs;
+    if (!Array.isArray(logs)) return 'missing';
     const abi: Interface = this.router.interface;
     const expected = abi.encodeEventLog('PaymentSettled', [p.paymentId, p.payer, p.payee, p.token, p.amount, p.nonce]);
     const [eventTopic, paymentIdTopic, payerTopic] = expected.topics;
     let found = false;
-    for (const log of receipt.logs) {
+    for (const [position, log] of logs.entries()) {
       if (typeof log?.address !== 'string' || log.address.toLowerCase() !== this.routerAddress.toLowerCase() ||
         !Array.isArray(log.topics) || !sameHash(log.topics[0], eventTopic) ||
         !sameHash(log.topics[1], paymentIdTopic) || !sameHash(log.topics[2], payerTopic)) continue;
@@ -231,6 +232,9 @@ export class PaymentService {
         !sameHash(log.transactionHash, receipt.hash) ||
         !Number.isSafeInteger(log.blockNumber) || log.blockNumber < 0 ||
         log.blockNumber !== receipt.blockNumber || !sameHash(log.blockHash, receipt.blockHash))
+        return 'inconsistent';
+      // Two entries in one receipt cannot claim the settlement's block log index.
+      if (logs.some((other, otherPosition) => otherPosition !== position && other?.index === log.index))
         return 'inconsistent';
       found = true;
     }
