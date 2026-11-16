@@ -483,6 +483,8 @@ Project writes are confined to the new `outputs/clearledger/` directory and task
 - This check covers the report produced by the existing counting rules. It can detect stale line and file totals or attribution fields. Content changes that preserve those counts can still pass.
 - Source count is 641,311 nonblank lines, including comments and tests. The application area contributes 18,399 across 122 files, with 19,280 physical lines. The attributed Besu snapshot contributes 622,912 across 4,484 files, with 714,385 physical lines.
 
+- Reviewed source `007b350baec9a59654f2ba26818e39b1d65455ff` and tree `fb2f79d7efe42c6887d56d53cc208d24dec0971f` passed all 12 steps in Linux job `133041379836`. All 1,203 tests passed in 554,979.519049 ms with zero failures or skips. Step 9 ran `npm run source:count -- --check` and verified 18,399 application-area and 622,912 attributed Besu lines. Fresh npm ci, strict typecheck, Solidity 0.8.30 targeting Paris and the 35-module dashboard build passed. The Node 24.21.0/npm 11.19.0 install reported 33 audit findings. The latest Besu result remains tied to the receipt-gas revision. [Source](https://github.com/samadalam481470sa-cmd/clearledger/commit/007b350baec9a59654f2ba26818e39b1d65455ff) · [Regular CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/43788493659).
+
 ## Demo payment response timeout
 
 - The dashboard sets a 15-second client deadline around the entire demo POST, including JSON body consumption. Timeout ends the client wait and aborts the fetch while preserving the original request ID and amount in the current page. The form can then retry that same request or check its stored record.
