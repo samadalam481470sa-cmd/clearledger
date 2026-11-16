@@ -19,7 +19,9 @@ Historical artifact hashes and maintenance records remain evidence for their rec
 - Location: `upstream/besu-26.10.1/`.
 - Original `LICENSE` and `NOTICE` are preserved there.
 
-The snapshot is unmodified. Its code and tests are not claimed as original ClearLedger work, and its own build/test suite has not been run here. Development-network configuration references the corresponding published container image.
+The retained release ZIP matched the SHA-256 above and carried the recorded upstream commit ID in its archive comment. All 6,738 file paths and all file bytes matched the tracked snapshot after removing the ZIP's top-level directory from each path. Eighteen ZIP entries carried a Unix user-execute bit and are tracked with Git mode `100644`. The Besu code and tests retain their upstream attribution. ClearLedger's network acceptance uses the corresponding published container image. Besu's upstream build and test suite remain outside that acceptance scope.
+
+Regular CI requires the committed `upstream` Git tree to match `c4160c74616c6ba77a4575d517bc6cf1dc9c2d6b` from the initial public ClearLedger commit. This pins all committed paths, bytes and modes under `upstream/`. Update the pin when reviewing a snapshot replacement. The tree ID identifies ClearLedger's vendored copy. The archive SHA-256 identifies the downloaded ZIP.
 
 ## Counting
 

@@ -10,6 +10,16 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # observed v4 commit
         with:
           persist-credentials: false
+      - name: Verify vendored Besu snapshot
+        shell: bash
+        run: |
+          expected='c4160c74616c6ba77a4575d517bc6cf1dc9c2d6b'
+          actual=$(git rev-parse --verify HEAD:upstream)
+          if [ "$actual" != "$expected" ]; then
+            printf 'Vendored Besu tree mismatch. Expected %s, observed %s\n' "$expected" "$actual" >&2
+            exit 1
+          fi
+          printf 'Verified vendored Besu tree %s\n' "$actual"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # observed v4 commit
         with:
           node-version-file: .node-version
