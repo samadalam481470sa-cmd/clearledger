@@ -18,7 +18,7 @@ type ReceiptFault = Provenance | 'duplicate' | 'conflictingAmount' | 'malformedD
   'extraDataWord' | 'extraTopic' | 'status' | 'status-no-logs' | typeof receiptFields[number];
 const fields: Provenance[] = ['transactionHash', 'blockHash', 'blockNumber', 'transactionIndex', 'logIndex', 'siblingLogIndex'];
 const receiptFields = ['gasUsed', 'zeroBloom', 'strippedSuccessLogs', 'missingBloomBit', 'extraBloomBit',
-  'cumulativeGasUsedBelowGasUsed', 'cumulativeGasUsedAboveGasUsed'] as const;
+  'cumulativeGasUsedBelowGasUsed', 'cumulativeGasUsedAboveGasUsed', 'receiptType', 'omittedReceiptType'] as const;
 const settlementDataTypes = ['address', 'uint256', 'uint256']; // Token, amount and nonce.
 const transferTopic = id('Transfer(address,address,uint256)');
 const coder = AbiCoder.defaultAbiCoder();
@@ -85,6 +85,12 @@ async function receiptProxy(upstream: string, routerAddress: string, topic: stri
             if (fault === 'cumulativeGasUsedBelowGasUsed' || fault === 'cumulativeGasUsedAboveGasUsed') {
               const gasUsed = BigInt(receipt.gasUsed);
               receipt.cumulativeGasUsed = toQuantity(fault === 'cumulativeGasUsedBelowGasUsed' ? gasUsed - 1n : gasUsed + 1n);
+              altered++;
+              break;
+            }
+            if (fault === 'receiptType' || fault === 'omittedReceiptType') {
+              if (fault === 'receiptType') receipt.type = '0x1';
+              else delete receipt.type;
               altered++;
               break;
             }
@@ -225,7 +231,8 @@ for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData
   assert.equal(genuine.status, 1);
   const { log: genuineLog, index } = matchingLog(genuine);
   const log = presented.logs[index];
-  const repairedPresentation = JSON.parse(JSON.stringify(presented));
+  // ethers omits the receipt type from its JSON representation.
+  const repairedPresentation = { ...JSON.parse(JSON.stringify(presented)), type: presented.type };
   if (field === 'zeroBloom' || field === 'strippedSuccessLogs') {
     assert.notEqual(genuine.logsBloom, zeroBloom);
     assert.notEqual(genuine.logs.length, 0);
@@ -272,6 +279,14 @@ for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData
     repairedPresentation.cumulativeGasUsed = genuine.toJSON().cumulativeGasUsed;
     t.diagnostic(JSON.stringify({ transactionIndex: genuine.index, gasUsed: genuine.gasUsed.toString(),
       reportedCumulativeGasUsed: presented.cumulativeGasUsed.toString(), firstStatus: reserved.status,
+      successorStatus: store.get(second.id)?.status, journalRows: store.journals().length, nativeSends: proxy.sends.length }));
+  } else if (field === 'receiptType' || field === 'omittedReceiptType') {
+    assert.equal(envelope.type, 2);
+    assert.equal(genuine.type, envelope.type, 'The genuine receipt must match the signed transaction type');
+    const expectedType = field === 'receiptType' ? 1 : 0;
+    assert.equal(presented.type, expectedType, 'ethers must retain the substituted type or format the omitted type as legacy');
+    repairedPresentation.type = genuine.type;
+    t.diagnostic(JSON.stringify({ signedType: envelope.type, reportedType: presented.type, firstStatus: reserved.status,
       successorStatus: store.get(second.id)?.status, journalRows: store.journals().length, nativeSends: proxy.sends.length }));
   } else if (field === 'duplicate' || field === 'conflictingAmount' || field === 'malformedData') {
     assert.equal(presented.logs.length, genuine.logs.length + 1);
@@ -338,7 +353,8 @@ for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData
     assert.notEqual(log[field], genuineLog[field], 'ethers must retain the contradictory RPC provenance');
     repairedPresentation.logs[index][field] = genuineLog[field];
   }
-  assert.deepEqual(repairedPresentation, JSON.parse(JSON.stringify(genuine)), 'Only the injected fields may differ from the genuine receipt');
+  assert.deepEqual(repairedPresentation, { ...JSON.parse(JSON.stringify(genuine)), type: genuine.type },
+    'Only the injected fields may differ from the genuine receipt');
   assert.ok(proxy.altered() >= 2);
   assert.equal(reserved.status, 'broadcast');
 

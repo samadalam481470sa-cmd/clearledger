@@ -49,7 +49,7 @@ beforeEach(() => {
   firstId = store.accept(payment, digest(payment, signingDomain), signature).row.id;
   store.broadcast(firstId, raw, txHash);
   secondId = undefined;
-  receipt = withFixtureLogsBloom({ hash: txHash, index: 0, blockNumber: 17, blockHash, status: 1, gasUsed: 125000n,
+  receipt = withFixtureLogsBloom({ hash: txHash, type: 2, index: 0, blockNumber: 17, blockHash, status: 1, gasUsed: 125000n,
     cumulativeGasUsed: 125000n,
     from: fixtureRelayer.address, to: routerAddress,
     logs: [settlementLog()] });
@@ -469,6 +469,17 @@ for (const status of [0, 1]) {
     assert.equal(store.journals().length, status);
     assert.equal(store.events().filter(event => event.action === outcome).length, 1);
   });
+}
+
+for (const status of [0, 1]) {
+  for (const [label, type] of [['legacy', 0], ['access-list', 1], ['unsupported', 3], ['missing', undefined]] as const) {
+    test(label + ' receipt type cannot resolve a signed type-2 status-' + status + ' reservation', async () => {
+      setReceiptStatus(status);
+      receipt.type = type;
+      await remainsUncertain();
+      assert.equal(blockReads, 0);
+    });
+  }
 }
 
 for (const kind of ['matching', 'unrelated']) {

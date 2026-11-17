@@ -46,10 +46,11 @@ function snapshot() {
     journals: store.journals(), changes: store.db.prepare('SELECT total_changes() AS changes').get() };
 }
 function coherentReceipt(status = 1) {
-  const hash = store.get(firstId)!.tx_hash!;
+  const row = store.get(firstId)!;
+  const hash = row.tx_hash!;
   const log = iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
     [payment.paymentId, payment.payer, payment.payee, payment.token, payment.amount, payment.nonce]);
-  return withFixtureLogsBloom({ hash, index: 0, blockNumber: 17, blockHash, status, gasUsed: 125_000n,
+  return withFixtureLogsBloom({ hash, type: Transaction.from(row.raw_tx!).type, index: 0, blockNumber: 17, blockHash, status, gasUsed: 125_000n,
     cumulativeGasUsed: 125_000n,
     from: relayer.address, to: routerAddress,
     logs: status === 1 ? [{ address: routerAddress, ...log, transactionHash: hash, transactionIndex: 0, index: 0, blockNumber: 17, blockHash }] : [] });
@@ -109,6 +110,27 @@ for (const type of [0, 1, 2]) test('offline signed type ' + type + ' preserves e
   assert.deepEqual(sent, [raw, raw]); assert.equal(receiptReads.length, 4);
   assert.deepEqual(snapshot(), before); assert.equal(preflights, 0); assert.equal(populated, 0); assert.equal(signed, 0);
 });
+
+for (const type of [0, 1, 2]) {
+  test('restoring matching receipt type ' + type + ' settles that signed envelope once', async () => {
+    const raw = await sign({ type, ...(type === 1 ? { accessList: [{ address: routerAddress, storageKeys: [] }] } : {}) });
+    replaceEnvelope(raw);
+    receipt = coherentReceipt();
+    assert.equal(receipt.type, type);
+    receipt.type = type === 2 ? 1 : 2;
+    await remainsReserved();
+
+    receipt.type = type;
+    await assert.rejects(service.tick(), error => error === unavailable);
+    const settled = store.get(firstId)!;
+    assert.equal(settled.status, 'settled');
+    assert.equal(settled.raw_tx, raw);
+    assert.equal(store.journal(firstId)?.tx_hash, keccak256(raw));
+    assert.equal(store.journals().length, 1);
+    assert.equal(store.events().filter(event => event.action === 'settled').length, 1);
+    assert.deepEqual(sent, []);
+  });
+}
 
 for (const signature of ['0x', '0xdeadbeef', '0x' + 'ab'.repeat(4096)])
   test('opaque wallet authorization calldata is structural, bytes=' + (signature.length - 2) / 2, async () => {

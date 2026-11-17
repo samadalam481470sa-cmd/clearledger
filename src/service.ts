@@ -170,11 +170,12 @@ export class PaymentService {
     } catch { /* An unreadable signed transaction cannot resolve the reservation. */ }
   }
 
-  private receiptMatchesSettlementCall(receipt: TransactionReceipt, gasLimit: bigint): boolean {
-    const { from, to, gasUsed, cumulativeGasUsed, index } = receipt;
-    return typeof from === 'string' && from.toLowerCase() === this.relayer.address.toLowerCase() &&
+  private receiptMatchesSettlementCall(receipt: TransactionReceipt, transaction: Transaction): boolean {
+    const { type, from, to, gasUsed, cumulativeGasUsed, index } = receipt;
+    return type === transaction.type &&
+      typeof from === 'string' && from.toLowerCase() === this.relayer.address.toLowerCase() &&
       typeof to === 'string' && to.toLowerCase() === this.routerAddress.toLowerCase() &&
-      typeof gasUsed === 'bigint' && gasUsed > 0n && gasUsed <= gasLimit &&
+      typeof gasUsed === 'bigint' && gasUsed > 0n && gasUsed <= transaction.gasLimit &&
       typeof cumulativeGasUsed === 'bigint' &&
       (index === 0 ? cumulativeGasUsed === gasUsed : cumulativeGasUsed > gasUsed);
   }
@@ -194,7 +195,7 @@ export class PaymentService {
     // Inconsistent RPC evidence cannot consume a durable reservation or release
     // its nonce priority. Both success and revert decisions need the same
     // transaction identity, canonical inclusion, and configured depth checks.
-    if (!receipt || !sameHash(receipt.hash, row.tx_hash) || !this.receiptMatchesSettlementCall(receipt, transaction.gasLimit) ||
+    if (!receipt || !sameHash(receipt.hash, row.tx_hash) || !this.receiptMatchesSettlementCall(receipt, transaction) ||
       !Number.isSafeInteger(receipt.index) || receipt.index < 0 ||
       !Number.isSafeInteger(receipt.blockNumber) || receipt.blockNumber < 0 ||
       !isHash(receipt.blockHash) || (receipt.status !== 0 && receipt.status !== 1) ||
@@ -295,7 +296,7 @@ export class PaymentService {
             throw new ReconciliationReceiptUnavailable('Receipt unavailable for transaction listed in the canonical block');
           matches = journalMatches && !!receipt && receipt.status === 1 && hasConsistentLogsBloomShape(receipt) &&
             sameHash(receipt.hash, txHash) &&
-            this.receiptMatchesSettlementCall(receipt, transaction.gasLimit) && receipt.blockNumber === row.block_number &&
+            this.receiptMatchesSettlementCall(receipt, transaction) && receipt.blockNumber === row.block_number &&
             sameHash(receipt.blockHash, row.block_hash) &&
             Number.isSafeInteger(receipt.index) && receipt.index >= 0 &&
             (block === null || matchesCanonicalPosition(receipt, block)) &&

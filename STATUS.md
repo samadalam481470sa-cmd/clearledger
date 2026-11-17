@@ -1,6 +1,6 @@
 # ClearLedger status
 
-Updated: November 16, 2026.
+Updated: November 17, 2026.
 
 ## Scope and constraints
 
@@ -475,6 +475,15 @@ Project writes are confined to the new `outputs/clearledger/` directory and task
 
 - Extended Linux job `132765327224` passed all 10 steps on source `a0c13705da1434864e3f899eb15bf30dee398e64` and tree `60114eb751b60d0ddf1a937593040f0477867b99`. Its focused case passed in 653,219.816626 ms. Before and after restart it observed 322,696 and 322,559 ms respectively, with 60 bursts, 720 HTTP 200 responses, 296 invariant observations and 318 failed receipt attempts per window. Each window logged 21 failed receipts after its boundary. Combined active observation was 645,255 ms within a 646,229 ms receipt-route outage. The 871 ms closed-to-ready gap and one startup receipt attempt were excluded. All 1,440 reads passed the existing response and ledger assertions. Both payments settled with two journals and reconciliation 2/0. [Extended outage CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/43698870254).
 - Regular Linux job `132765327427` passed all 1,130 tests in 553,315.576838 ms with zero failures or skips on the same source. The default case passed in 189,736.254183 ms with 432 HTTP 200 responses and 183,006 ms of active observation. Fresh install, strict typecheck, Solidity 0.8.30 targeting Paris, the 35-module dashboard build and source count passed. The latest Besu result remains tied to the prior gas allowance revision. [Regular CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/43698870256).
+
+## Receipt transaction type binding
+
+- Confirmation and reconciliation now compare the formatted receipt type with the type decoded from the retained signed transaction. The worker already decodes that envelope and uses the same receipt response for this check. Mismatched evidence preserves a broadcast and its queued successor. Reconciliation flags the affected settlement while retaining its journal.
+- The unpatched wire regressions changed a genuine type-2 receipt to explicit type 1 or omitted the field, which ethers formatted as 0. Changing that one field let both payments settle and post journals in both cases. The baseline process exited 1 in 10,094.0251 ms.
+- All 524 focused Windows tests passed in 163,512.5997 ms with zero failures or skips. Strict TypeScript checking passed. The fixed wire cases passed in 2,791.0064 and 3,197.9643 ms. During each five-reply fault the signed reservation and queued successor held with one send and zero journals. Restoring the genuine receipt let both payments settle with two sends and two journals. Reapplying the fault caused one review and retained both journals.
+- Offline signed controls exercised all supported types 0, 1 and 2 with synthetic receipt evidence. The wire faults exercised type 2 through a local Ganache HTTP proxy, manually driven service ticks and in-memory SQLite. Ethers 6.17 normalizes missing or null type to 0, which can match a legacy signed envelope. Typed transactions require a matching formatted value. The check compares provider evidence against stored signed bytes. Independent inclusion remains outside its scope. [Typed receipt specification](https://eips.ethereum.org/EIPS/eip-2718#receipts).
+
+- The count is 641,650 nonblank lines, including comments and tests. The application area contributes 18,738 lines across 123 files and 19,639 physical lines. The attributed Besu snapshot contributes 622,912 across 4,484 files and 714,385 physical lines.
 
 ## Receipt cumulative gas consistency
 

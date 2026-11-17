@@ -33,7 +33,7 @@ beforeEach(() => {
   paymentId = store.accept(payment, fingerprint, '0x').row.id;
   store.broadcast(paymentId, rawTx, txHash);
   store.finalize(paymentId, 17, blockHash);
-  receipt = withFixtureLogsBloom({ hash: txHash, from: fixtureRelayer.address, to: routerAddress,
+  receipt = withFixtureLogsBloom({ hash: txHash, type: 2, from: fixtureRelayer.address, to: routerAddress,
     index: 0, blockNumber: 17, status: 1, gasUsed: 125000n,
     cumulativeGasUsed: 125000n, blockHash, logs: [settlementLog()] });
   canonical = { number: 17, hash: blockHash, transactions: [txHash] };
@@ -256,6 +256,15 @@ for (const missingBlock of [false, true]) {
     (missingBlock ? 'without' : 'with') + ' a canonical block', async () => {
     if (missingBlock) canonical = null;
     receipt.cumulativeGasUsed = receipt.gasUsed + 1n;
+    await flagged();
+  });
+}
+
+for (const missingBlock of [false, true]) {
+  test('a different receipt type triggers review ' +
+    (missingBlock ? 'without' : 'with') + ' a canonical block', async () => {
+    if (missingBlock) canonical = null;
+    receipt.type = 1;
     await flagged();
   });
 }

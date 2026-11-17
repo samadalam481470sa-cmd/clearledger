@@ -55,7 +55,7 @@ function coherentReceipt() {
   const log = iface.encodeEventLog(iface.getEvent('PaymentSettled')!, Object.values({
     paymentId: payment.paymentId, payer: payment.payer, payee: payment.payee,
     token: payment.token, amount: payment.amount, nonce: payment.nonce }));
-  return withFixtureLogsBloom({ hash: txHash, index: 0, blockNumber: 17, blockHash, status: 1, gasUsed: 125_000n,
+  return withFixtureLogsBloom({ hash: txHash, type: 2, index: 0, blockNumber: 17, blockHash, status: 1, gasUsed: 125_000n,
     cumulativeGasUsed: 125_000n,
     from: offlineRelayer.address, to: routerAddress,
     logs: [{ address: routerAddress, ...log, transactionHash: txHash, transactionIndex: 0, index: 0, blockNumber: 17, blockHash }] });
