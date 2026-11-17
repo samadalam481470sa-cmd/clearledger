@@ -1,0 +1,160 @@
+{
+  "recordedAtUtc": "2026-11-17T18:51:28.433Z",
+  "auditedSource": "d6b6efa2b94e608db1b98a92d64db40c69273e2b",
+  "auditedTree": "fdec5e61533b8f552eda0f8cb465a53900564ffd",
+  "manifestGitBlob": "c4d98086d8afffeb61cc669a04ab4f64d585ad19",
+  "lockfileGitBlob": "8b59d74963c30e1a20b1e0cab9d28715ee9159b7",
+  "toolchain": {
+    "platform": "Windows",
+    "node": "24.22.1",
+    "npm": "11.19.0",
+    "registry": "https://registry.npmjs.org",
+    "auditReportVersion": 2
+  },
+  "fullAudit": {
+    "command": "npm audit --json",
+    "exitCode": 1,
+    "affectedPackages": {
+      "info": 0,
+      "low": 1,
+      "moderate": 5,
+      "high": 25,
+      "critical": 5,
+      "total": 36
+    },
+    "affectedLocations": 44
+  },
+  "omitDevAudit": {
+    "command": "npm audit --omit=dev --json",
+    "exitCode": 1,
+    "affectedPackages": {
+      "info": 0,
+      "low": 1,
+      "moderate": 5,
+      "high": 17,
+      "critical": 4,
+      "total": 27
+    },
+    "affectedLocations": 33,
+    "allLocationsInGanacheExtraneousWithoutDevFlag": true
+  },
+  "historicalComparison": {
+    "record": "redirect-dependency-audit.json",
+    "identicalManifestAndLockfileBlobs": true,
+    "fullPackagesBefore": 33,
+    "omitDevPackagesBefore": 27,
+    "addedAffectedPackageNames": [
+      "fdir",
+      "tinyglobby",
+      "vite"
+    ],
+    "removedAffectedPackageNames": [],
+    "alreadyAffectedNameWithNewLocation": "picomatch"
+  },
+  "affectedLocationsOutsideGanache": [
+    {
+      "name": "fdir",
+      "path": "node_modules/fdir",
+      "version": "6.5.0",
+      "severity": "high",
+      "development": true,
+      "advisoryThrough": [
+        "picomatch"
+      ]
+    },
+    {
+      "name": "picomatch",
+      "path": "node_modules/picomatch",
+      "version": "4.0.7",
+      "severity": "high",
+      "development": true,
+      "advisoryThrough": []
+    },
+    {
+      "name": "tinyglobby",
+      "path": "node_modules/tinyglobby",
+      "version": "0.2.17",
+      "severity": "high",
+      "development": true,
+      "advisoryThrough": [
+        "fdir",
+        "picomatch"
+      ]
+    },
+    {
+      "name": "vite",
+      "path": "node_modules/vite",
+      "version": "7.3.7",
+      "severity": "high",
+      "development": true,
+      "advisoryThrough": [
+        "fdir",
+        "picomatch",
+        "tinyglobby"
+      ]
+    }
+  ],
+  "newFinding": {
+    "package": "picomatch",
+    "advisory": "https://github.com/advisories/GHSA-fc5q-39xc-vjpf",
+    "cve": "CVE-2026-112366",
+    "affectedRange": "<=4.0.7",
+    "registryCheckAtUtc": "2026-11-17T18:53:25.0758740Z",
+    "registryLatest": "4.0.7",
+    "publishedStableVersionsAboveAffectedRange": [],
+    "npmSuggestedViteVersion": "6.2.7",
+    "npmMarksViteSuggestionAsMajorChange": true
+  },
+  "declaredOmitDevTree": {
+    "command": "npm ls --omit=dev --all --json",
+    "exitCode": 0,
+    "directPackages": [
+      "@openzeppelin/contracts",
+      "ethers",
+      "react",
+      "react-dom",
+      "zod"
+    ],
+    "sharedAffectedPackageName": {
+      "package": "ws",
+      "ethersVersion": "8.21.0",
+      "affectedLocation": "node_modules/ganache/node_modules/@trufflesuite/uws-js-unofficial/node_modules/ws",
+      "affectedVersion": "8.13.0"
+    },
+    "limit": "This dependency listing does not establish executable deployment or request reachability. The documented npm start command requires tsx."
+  },
+  "boundedPicomatchProbe": {
+    "installedVersion": "4.0.7",
+    "deadlinePerChildMs": 1800,
+    "pattern": "+(*a)",
+    "sample": "Repeat a N times and append b for the non-matching cases.",
+    "positiveControl": {
+      "repeatedCharacters": 8,
+      "matched": true
+    },
+    "negativeControls": [
+      {
+        "repeatedCharacters": 8,
+        "matched": false,
+        "elapsedMs": 1.8174
+      },
+      {
+        "repeatedCharacters": 24,
+        "matched": false,
+        "elapsedMs": 761.7524
+      }
+    ],
+    "timedOutCase": {
+      "repeatedCharacters": 42,
+      "error": "ETIMEDOUT",
+      "wallMs": 1816.7436
+    },
+    "limit": "Direct package invocation in an isolated local child. Does not exercise an application request or establish application exploitability."
+  },
+  "corroboratingInstallCI": {
+    "sourceCommit": "b08a20557155321824da891354276bd17fa3d458",
+    "workflowRun": 44147598679,
+    "job": 134266864053,
+    "reportedAffectedPackages": 36
+  }
+}
