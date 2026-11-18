@@ -561,6 +561,26 @@ for (const status of [0, 1]) {
   }
 }
 
+for (const field of ['blobGasUsed', 'blobGasPrice'] as const) {
+  test('a reported revert with zero ' + field + ' waits for ordinary receipt evidence', async () => {
+    setReceiptStatus(0);
+    receipt[field] = 0n;
+    const worker = await remainsUncertain();
+    assert.equal(blockReads, 0);
+
+    receipt[field] = null;
+    await assert.rejects(worker.tick(), /Queued nonce was allocated too early/);
+    const failed = store.get(firstId)!;
+    assert.equal(failed.status, 'failed');
+    assert.equal(failed.error, 'Transaction reverted on chain');
+    assert.equal(failed.raw_tx, raw);
+    assert.equal(failed.tx_hash, txHash);
+    assert.equal(store.journals().length, 0);
+    assert.equal(store.events().filter(event => event.action === 'failed').length, 1);
+    assert.equal(blockReads, 1);
+  });
+}
+
 test('a reported revert claiming a creation address waits for consistent call evidence', async () => {
   setReceiptStatus(0);
   receipt.contractAddress = '0x' + '45'.repeat(20);

@@ -189,9 +189,11 @@ export class PaymentService {
   }
 
   private receiptMatchesSettlementCall(receipt: TransactionReceipt, transaction: Transaction): boolean {
-    const { type, from, to, contractAddress, gasUsed, cumulativeGasUsed, gasPrice, index } = receipt;
+    const { type, from, to, contractAddress, blobGasUsed, blobGasPrice,
+      gasUsed, cumulativeGasUsed, gasPrice, index } = receipt;
     const { maxFeePerGas, maxPriorityFeePerGas, gasPrice: signedGasPrice } = transaction;
     return type === transaction.type && contractAddress == null &&
+      blobGasUsed == null && blobGasPrice == null &&
       typeof gasPrice === 'bigint' && gasPrice >= 0n &&
       (type === 2 ? maxFeePerGas !== null && maxPriorityFeePerGas !== null &&
         gasPrice >= maxPriorityFeePerGas && gasPrice <= maxFeePerGas : gasPrice === signedGasPrice) &&

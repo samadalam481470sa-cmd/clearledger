@@ -19,13 +19,14 @@ type RpcFault = Provenance | 'blockGasUsedOverLimit' | 'duplicate' | 'conflictin
 const fields: Provenance[] = ['transactionHash', 'blockHash', 'blockNumber', 'transactionIndex', 'logIndex', 'siblingLogIndex'];
 const receiptFields = ['gasUsed', 'zeroBloom', 'strippedSuccessLogs', 'missingBloomBit', 'extraBloomBit',
   'cumulativeGasUsedBelowGasUsed', 'cumulativeGasUsedAboveGasUsed', 'receiptType', 'omittedReceiptType',
-  'contractAddress', 'effectiveGasPrice', 'effectiveGasPriceWithinBounds'] as const;
+  'contractAddress', 'effectiveGasPrice', 'effectiveGasPriceWithinBounds', 'blobGasUsed', 'blobGasPrice'] as const;
 const settlementDataTypes = ['address', 'uint256', 'uint256']; // Token, amount and nonce.
 const transferTopic = id('Transfer(address,address,uint256)');
 const coder = AbiCoder.defaultAbiCoder();
 const extraWord = 'ab'.repeat(32);
 const zeroBloom = '0x' + '00'.repeat(256);
 const injectedContractAddress = '0x' + '11'.repeat(20);
+const injectedBlobValue = 1n;
 const differentHash = (value: string) => '0x' + (value.toLowerCase() === '0x' + 'fa'.repeat(32) ? 'fb' : 'fa').repeat(32);
 
 /** Changes only the selected block, receipt or router log. All requests reach Ganache. */
@@ -124,6 +125,11 @@ async function receiptProxy(upstream: string, routerAddress: string, topic: stri
             }
             if (fault === 'contractAddress') {
               receipt.contractAddress = injectedContractAddress;
+              altered++;
+              break;
+            }
+            if (fault === 'blobGasUsed' || fault === 'blobGasPrice') {
+              receipt[fault] = toQuantity(injectedBlobValue);
               altered++;
               break;
             }
@@ -374,6 +380,16 @@ for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData
     assert.equal(presented.contractAddress, injectedContractAddress, 'ethers must retain the claimed creation address');
     repairedPresentation.contractAddress = genuine.contractAddress;
     t.diagnostic(JSON.stringify({ signedDestination: envelope.to, reportedContractAddress: presented.contractAddress,
+      firstStatus: reserved.status, successorStatus: store.get(second.id)?.status,
+      journalRows: store.journals().length, nativeSends: proxy.sends.length }));
+  } else if (field === 'blobGasUsed' || field === 'blobGasPrice') {
+    assert.equal(envelope.type, 2);
+    assert.equal(genuine.type, envelope.type);
+    assert.equal(envelope.to?.toLowerCase(), String(chain.router.target).toLowerCase());
+    assert.ok(genuine[field] == null, 'The genuine ordinary call must have no blob accounting');
+    assert.equal(presented[field], injectedBlobValue, 'ethers must retain the injected blob quantity as a bigint');
+    repairedPresentation[field] = genuine.toJSON()[field];
+    t.diagnostic(JSON.stringify({ signedType: envelope.type, blobField: field, reportedBlobValue: String(presented[field]),
       firstStatus: reserved.status, successorStatus: store.get(second.id)?.status,
       journalRows: store.journals().length, nativeSends: proxy.sends.length }));
   } else if (field === 'duplicate' || field === 'conflictingAmount' || field === 'malformedData') {

@@ -291,6 +291,12 @@ for (const missingBlock of [false, true]) {
   });
 }
 
+test('blob gas price on an ordinary receipt triggers review without a canonical block', async () => {
+  receipt.blobGasPrice = 0n;
+  canonical = null;
+  await flagged();
+});
+
 test('duplicate matching PaymentSettled logs flag only their settlement and retain both journals', async () => {
   const coherent = { ...settlementLog(), index: 1 };
   receipt.logs = [coherent, { ...coherent, index: 2 }];
