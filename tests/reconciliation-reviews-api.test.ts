@@ -99,7 +99,7 @@ async function createContext(reviewRows: number, withSettled: boolean) {
     getBlock: async (height: number) => {
       blockReads++;
       assert.equal(height, 17);
-      return { number: 17, hash: contradictory ? replacementHash : blockHash, baseFeePerGas: 1n,
+      return { number: 17, hash: contradictory ? replacementHash : blockHash, timestamp: 1_800_000_000, baseFeePerGas: 1n,
         gasUsed: contradictory ? 0n : 125_000n, gasLimit: 30_000_000n, transactions: contradictory ? [] : [txHash] };
     }
   };

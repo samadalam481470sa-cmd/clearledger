@@ -34,10 +34,14 @@ function hasValidBlockGasBudget(block: Block): boolean {
   const { gasUsed, gasLimit } = block;
   return typeof gasUsed === 'bigint' && typeof gasLimit === 'bigint' && gasUsed > 0n && gasUsed <= gasLimit;
 }
-function matchesCanonicalBlock(receipt: TransactionReceipt, block: Block | null): boolean {
-  if (!block || block.number !== receipt.blockNumber || !sameHash(block.hash, receipt.blockHash) ||
+function matchesCanonicalBlock(receipt: TransactionReceipt, block: Block): boolean {
+  if (block.number !== receipt.blockNumber || !sameHash(block.hash, receipt.blockHash) ||
     !Number.isSafeInteger(receipt.index) || receipt.index < 0) return false;
   return uniqueTransactionIndex(block, receipt.hash) === receipt.index && hasValidBlockGasBudget(block);
+}
+function blockMeetsDeadline(block: Block, deadline: string): boolean {
+  const { timestamp } = block;
+  return Number.isSafeInteger(timestamp) && timestamp >= 0 && BigInt(timestamp) <= BigInt(deadline);
 }
 
 function blockGasPriceEvidence(receipt: TransactionReceipt, block: Block | null, transaction: Transaction):
@@ -230,11 +234,13 @@ export class PaymentService {
     if (!Number.isSafeInteger(latest) || latest < receipt.blockNumber ||
       latest - receipt.blockNumber < this.confirmations - 1) return;
     const canonical = await this.provider.getBlock(receipt.blockNumber);
-    if (!matchesCanonicalBlock(receipt, canonical) || blockGasPriceEvidence(receipt, canonical, transaction) !== 'matching') return;
+    if (!canonical || !matchesCanonicalBlock(receipt, canonical) ||
+      blockGasPriceEvidence(receipt, canonical, transaction) !== 'matching') return;
     if (receipt.status === 0) {
       this.store.setStatus(row.id, 'failed', 'Transaction reverted on chain');
       return;
     }
+    if (!blockMeetsDeadline(canonical, p.deadline)) return;
     const evidence = this.settlementEvidence(p, receipt);
     if (evidence === 'inconsistent' || computeReceiptLogsBloom(receipt.logs) !== receipt.logsBloom.toLowerCase()) return;
     if (evidence === 'missing') {
@@ -313,17 +319,18 @@ export class PaymentService {
             journal.debit_account === p.payer && journal.credit_account === p.payee &&
             journal.amount === p.amount && journal.tx_hash === txHash &&
             journal.block_number === row.block_number && journal.block_hash === row.block_hash;
-          // A coherent block with unique membership leaves a missing receipt inconclusive.
+          // A block consistent with the recorded settlement leaves a missing receipt inconclusive.
           if (receipt === null && journalMatches && block &&
             block.number === row.block_number && sameHash(block.hash, row.block_hash) &&
-            uniqueTransactionIndex(block, txHash) !== undefined && hasValidBlockGasBudget(block))
+            uniqueTransactionIndex(block, txHash) !== undefined && hasValidBlockGasBudget(block) &&
+            blockMeetsDeadline(block, p.deadline))
             throw new ReconciliationReceiptUnavailable('Receipt unavailable for transaction listed in the canonical block');
           matches = journalMatches && !!receipt && receipt.status === 1 && hasConsistentLogsBloomShape(receipt) &&
             sameHash(receipt.hash, txHash) &&
             this.receiptMatchesSettlementCall(receipt, transaction) && receipt.blockNumber === row.block_number &&
             sameHash(receipt.blockHash, row.block_hash) &&
             Number.isSafeInteger(receipt.index) && receipt.index >= 0 &&
-            (block === null || matchesCanonicalBlock(receipt, block)) &&
+            (block === null || (matchesCanonicalBlock(receipt, block) && blockMeetsDeadline(block, p.deadline))) &&
             this.settlementEvidence(p, receipt) === 'matching' &&
             computeReceiptLogsBloom(receipt.logs) === receipt.logsBloom.toLowerCase();
           if (matches && receipt) {

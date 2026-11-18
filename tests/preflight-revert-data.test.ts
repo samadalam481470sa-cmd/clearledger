@@ -107,7 +107,7 @@ beforeEach(() => {
         return latestBlock();
       }
       blockReads++;
-      return { number: 17, hash: blockHash, baseFeePerGas: maxFee - maxFee / 2n,
+      return { number: 17, hash: blockHash, timestamp: 1_800_000_000, baseFeePerGas: maxFee - maxFee / 2n,
         gasUsed: receipt ? 125_000n : 0n, gasLimit: 30_000_000n, transactions: receipt ? [receipt.hash] : [] };
     }
   };

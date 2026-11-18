@@ -14,12 +14,15 @@ import { PaymentService } from '../src/service.ts';
 import { paymentTypes, type Payment } from '../src/payment.ts';
 
 type Provenance = 'transactionHash' | 'blockHash' | 'blockNumber' | 'transactionIndex' | 'logIndex' | 'siblingLogIndex';
-type RpcFault = Provenance | 'blockGasUsedOverLimit' | 'duplicate' | 'conflictingAmount' | 'malformedData' |
+type RpcFault = Provenance | BlockFault | 'duplicate' | 'conflictingAmount' | 'malformedData' |
   'extraDataWord' | 'extraTopic' | 'status' | 'status-no-logs' | typeof receiptFields[number];
 const fields: Provenance[] = ['transactionHash', 'blockHash', 'blockNumber', 'transactionIndex', 'logIndex', 'siblingLogIndex'];
 const receiptFields = ['gasUsed', 'zeroBloom', 'strippedSuccessLogs', 'missingBloomBit', 'extraBloomBit',
   'cumulativeGasUsedBelowGasUsed', 'cumulativeGasUsedAboveGasUsed', 'receiptType', 'omittedReceiptType',
   'contractAddress', 'effectiveGasPrice', 'effectiveGasPriceWithinBounds', 'blobGasUsed', 'blobGasPrice'] as const;
+const blockFields = ['gasUsedOverLimit', 'timestampAfterDeadline'] as const;
+type BlockFault = typeof blockFields[number];
+const isBlockFault = (fault: RpcFault | undefined): fault is BlockFault => blockFields.some(field => field === fault);
 const settlementDataTypes = ['address', 'uint256', 'uint256']; // Token, amount and nonce.
 const transferTopic = id('Transfer(address,address,uint256)');
 const coder = AbiCoder.defaultAbiCoder();
@@ -32,6 +35,7 @@ const differentHash = (value: string) => '0x' + (value.toLowerCase() === '0x' + 
 /** Changes only the selected block, receipt or router log. All requests reach Ganache. */
 async function receiptProxy(upstream: string, routerAddress: string, topic: string, tokenAddress: string) {
   let fault: RpcFault | undefined, target: string | undefined, altered = 0;
+  let reportedTimestamp: bigint | undefined;
   const sends: string[] = [];
   const signedTransactions = new Map<string, Transaction>();
   const active = new Set<Promise<void>>();
@@ -47,7 +51,7 @@ async function receiptProxy(upstream: string, routerAddress: string, topic: stri
           if (call.method !== 'eth_sendRawTransaction') continue;
           const hash = keccak256(call.params[0]);
           sends.push(hash);
-          if (fault === 'blockGasUsedOverLimit') target ??= hash.toLowerCase();
+          if (isBlockFault(fault)) target ??= hash.toLowerCase();
           if ((fault === 'gasUsed' || fault === 'effectiveGasPrice') && !signedTransactions.has(hash.toLowerCase()))
             signedTransactions.set(hash.toLowerCase(), Transaction.from(call.params[0]));
         }
@@ -56,12 +60,16 @@ async function receiptProxy(upstream: string, routerAddress: string, topic: stri
         const result = await response.json() as any;
         const replies = Array.isArray(result) ? result : [result];
         for (const reply of replies) {
-          if (fault === 'blockGasUsedOverLimit') {
+          if (isBlockFault(fault)) {
             const block = reply.result;
             const finalHash = Array.isArray(block?.transactions) ? block.transactions.at(-1) : undefined;
             if (target && calls.some(call => call.id === reply.id && call.method === 'eth_getBlockByNumber') &&
               typeof finalHash === 'string' && finalHash.toLowerCase() === target) {
-              block.gasUsed = toQuantity(BigInt(block.gasLimit) + 1n);
+              if (fault === 'gasUsedOverLimit') block.gasUsed = toQuantity(BigInt(block.gasLimit) + 1n);
+              else {
+                assert.ok(reportedTimestamp !== undefined);
+                block.timestamp = toQuantity(reportedTimestamp);
+              }
               altered++;
             }
             continue;
@@ -185,8 +193,10 @@ async function receiptProxy(upstream: string, routerAddress: string, topic: stri
   return {
     url: 'http://127.0.0.1:' + (server.address() as { port: number }).port,
     sends,
-    corrupt(field: RpcFault, hash?: string) { fault = field; target = hash?.toLowerCase(); },
-    heal() { fault = undefined; target = undefined; },
+    corrupt(field: RpcFault, hash?: string, timestamp?: bigint) {
+      fault = field; target = hash?.toLowerCase(); reportedTimestamp = timestamp;
+    },
+    heal() { fault = undefined; target = undefined; reportedTimestamp = undefined; },
     altered: () => altered,
     async close() {
       server.closeAllConnections();
@@ -247,16 +257,17 @@ function matchingLog(receipt: TransactionReceipt) {
 // Real HTTP JSON-RPC and ethers formatting are exercised. Service ticks are
 // explicitly driven; this does not claim autonomous CLI or Besu validation.
 for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData', 'extraDataWord', 'extraTopic',
-  ...receiptFields, 'blockGasUsedOverLimit'] as const) test(
-  'actual RPC ' + (field === 'blockGasUsedOverLimit' ? 'block gasUsedOverLimit' :
-    (receiptFields.some(receiptField => receiptField === field) ? 'receipt ' : 'log ') + field) +
-    ' contradiction blocks confirmation and later flags reconciliation', {
+  ...receiptFields, ...blockFields] as const) test(
+  'actual RPC ' + (isBlockFault(field) ? 'block ' : receiptFields.some(receiptField => receiptField === field) ? 'receipt ' : 'log ') +
+    field + ' contradiction blocks confirmation and later flags reconciliation', {
   timeout: 30000
 }, async t => {
   const firstInput = await signed('125000000', '0'), secondInput = await signed('7000000', '1');
   const first = (await operation(service.accept(firstInput))).row;
   const second = (await operation(service.accept(secondInput))).row;
-  proxy.corrupt(field);
+  const deadline = BigInt(firstInput.payment.deadline);
+  const lateTimestamp = field === 'timestampAfterDeadline' ? deadline + 1n : undefined;
+  proxy.corrupt(field, undefined, lateTimestamp);
   await operation(service.tick());
   const reserved = store.get(first.id)!;
   assert.ok(reserved.raw_tx && reserved.tx_hash);
@@ -271,21 +282,33 @@ for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData
   assert.equal(genuine.status, 1);
   const { log: genuineLog, index } = matchingLog(genuine);
   const log = presented.logs[index];
-  const genuineBlock = field === 'blockGasUsedOverLimit' ? await chain.provider.getBlock(genuine.blockNumber) : null;
+  const genuineBlock = isBlockFault(field) ? await chain.provider.getBlock(genuine.blockNumber) : null;
   // ethers omits the receipt type from its JSON representation.
   const repairedPresentation = { ...JSON.parse(JSON.stringify(presented)), type: presented.type };
-  if (field === 'blockGasUsedOverLimit') {
+  if (isBlockFault(field)) {
     const presentedBlock = await provider.getBlock(genuine.blockNumber);
     assert.ok(genuineBlock && presentedBlock);
     assert.equal(genuineBlock.hash, genuine.blockHash);
     assert.equal(genuine.index, genuineBlock.transactions.length - 1);
     assert.equal(genuineBlock.transactions[genuine.index], originalHash);
-    assert.ok(genuineBlock.gasUsed >= 0n && genuineBlock.gasUsed <= genuineBlock.gasLimit);
-    assert.equal(presentedBlock.gasUsed, genuineBlock.gasLimit + 1n, 'ethers must retain the block gas total above its limit');
-    assert.deepEqual({ ...presentedBlock.toJSON(), gasUsed: genuineBlock.toJSON().gasUsed }, genuineBlock.toJSON(),
-      'Only the block gas total may differ from the genuine block');
-    t.diagnostic(JSON.stringify({ genuineBlockGasUsed: genuineBlock.gasUsed.toString(),
-      reportedBlockGasUsed: presentedBlock.gasUsed.toString(), blockGasLimit: presentedBlock.gasLimit.toString(),
+    const genuineBlockJson = genuineBlock.toJSON();
+    const repairedBlock = presentedBlock.toJSON();
+    let faultDetails: Record<string, string | number>;
+    if (field === 'gasUsedOverLimit') {
+      assert.ok(genuineBlock.gasUsed >= 0n && genuineBlock.gasUsed <= genuineBlock.gasLimit);
+      assert.equal(presentedBlock.gasUsed, genuineBlock.gasLimit + 1n, 'ethers must retain the block gas total above its limit');
+      repairedBlock.gasUsed = genuineBlockJson.gasUsed;
+      faultDetails = { genuineBlockGasUsed: genuineBlock.gasUsed.toString(),
+        reportedBlockGasUsed: presentedBlock.gasUsed.toString(), blockGasLimit: presentedBlock.gasLimit.toString() };
+    } else {
+      assert.ok(BigInt(genuineBlock.timestamp) <= deadline);
+      assert.equal(BigInt(presentedBlock.timestamp), deadline + 1n, 'ethers must retain the timestamp after the signed deadline');
+      repairedBlock.timestamp = genuineBlockJson.timestamp;
+      faultDetails = { genuineBlockTimestamp: genuineBlock.timestamp,
+        reportedBlockTimestamp: presentedBlock.timestamp, signedDeadline: deadline.toString() };
+    }
+    assert.deepEqual(repairedBlock, genuineBlockJson, 'Only the injected field may differ from the genuine block');
+    t.diagnostic(JSON.stringify({ ...faultDetails,
       firstStatus: reserved.status, successorStatus: store.get(second.id)?.status,
       journalRows: store.journals().length, nativeSends: proxy.sends.length }));
   } else if (field === 'zeroBloom' || field === 'strippedSuccessLogs') {
@@ -505,7 +528,7 @@ for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData
 
   const journalEvidence = store.journals();
   const unaffectedPayment = store.get(second.id);
-  proxy.corrupt(field, originalHash);
+  proxy.corrupt(field, originalHash, lateTimestamp);
   const secondReceipt = await provider.getTransactionReceipt(store.get(second.id)!.tx_hash!);
   assert.ok(secondReceipt);
   const secondLog = matchingLog(secondReceipt).log;

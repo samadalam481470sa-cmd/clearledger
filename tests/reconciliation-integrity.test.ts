@@ -19,6 +19,7 @@ const iface = new Interface([
 ]);
 const payment: Payment = { paymentId: '0x' + 'ab'.repeat(32), payer, payee, token,
   amount: '125000000', nonce: '0', deadline: '2000000000' };
+const deadline = Number(payment.deadline);
 const signingDomain = domain(31337, routerAddress);
 const fingerprint = digest(payment, signingDomain);
 const { raw: rawTx, hash: txHash } = signedSettlement(payment, '0x', routerAddress, 0);
@@ -37,8 +38,8 @@ beforeEach(() => {
   receipt = withFixtureLogsBloom({ hash: txHash, type: 2, from: fixtureRelayer.address, to: routerAddress,
     index: 0, blockNumber: 17, status: 1, gasUsed: 125000n, gasPrice: 2n,
     cumulativeGasUsed: 125000n, blockHash, logs: [settlementLog()] });
-  canonical = { number: 17, hash: blockHash, baseFeePerGas: 1n, gasUsed: 125_000n,
-    gasLimit: 30_000_000n, transactions: [txHash] };
+  canonical = { number: 17, hash: blockHash, timestamp: deadline, baseFeePerGas: 1n,
+    gasUsed: 125_000n, gasLimit: 30_000_000n, transactions: [txHash] };
 });
 afterEach(() => { store.close(); });
 
@@ -277,6 +278,14 @@ for (const missingBlock of [false, true]) {
 for (const availability of ['matching', 'missing'] as const) {
   test('block gas used above its limit triggers review with a ' + availability + ' receipt', async () => {
     canonical.gasUsed = canonical.gasLimit + 1n;
+    if (availability === 'missing') receipt = null;
+    await flagged();
+  });
+}
+
+for (const availability of ['matching', 'missing'] as const) {
+  test('a block timestamp after the signed deadline triggers review with a ' + availability + ' receipt', async () => {
+    canonical.timestamp = deadline + 1;
     if (availability === 'missing') receipt = null;
     await flagged();
   });

@@ -23,6 +23,7 @@ const iface = new Interface([
 ]);
 const payment: Payment = { paymentId: '0x' + '12'.repeat(32), payer, payee, token,
   amount: '125000000', nonce: '0', deadline: '2000000000' };
+const deadline = Number(payment.deadline);
 const signingDomain = domain(31337, routerAddress);
 const signature = '0x1234';
 const { raw, hash: txHash } = signedSettlement(payment, signature, routerAddress, 7);
@@ -55,8 +56,8 @@ beforeEach(() => {
     cumulativeGasUsed: 125000n,
     from: fixtureRelayer.address, to: routerAddress,
     logs: [settlementLog()] });
-  canonical = { number: 17, hash: blockHash, baseFeePerGas: 1n, gasUsed: 125_000n,
-    gasLimit: 30_000_000n, transactions: [txHash] };
+  canonical = { number: 17, hash: blockHash, timestamp: deadline - 1, baseFeePerGas: 1n,
+    gasUsed: 125_000n, gasLimit: 30_000_000n, transactions: [txHash] };
   latest = 18;
   preflights = 0; signing = 0; blockReads = 0;
 });
@@ -341,6 +342,26 @@ for (const status of [0, 1]) {
       await remainsUncertain();
     });
   }
+}
+
+for (const [description, timestamp] of [
+  ['missing', undefined], ['negative', -1], ['fractional', deadline - 0.5], ['late', deadline + 1]
+] as const) {
+  test('a ' + description + ' block timestamp holds broadcast until it is corrected to the signed deadline', async () => {
+    if (timestamp === undefined) delete canonical.timestamp;
+    else canonical.timestamp = timestamp;
+    const worker = await remainsUncertain();
+    assert.equal(blockReads, 2);
+
+    canonical.timestamp = deadline;
+    await assert.rejects(worker.tick(), /Queued nonce was allocated too early/);
+    assert.equal(store.get(firstId)!.status, 'settled');
+    assert.equal(store.get(firstId)!.raw_tx, raw);
+    assert.equal(store.journal(firstId)?.tx_hash, txHash);
+    assert.equal(store.journals().length, 1);
+    assert.equal(store.events().filter(event => event.action === 'settled').length, 1);
+    assert.equal(blockReads, 3);
+  });
 }
 
 for (const status of [0, 1]) {
@@ -694,7 +715,7 @@ test('unsafe or nonpositive confirmation policies are rejected before receipt pr
     assert.throws(() => service({}, confirmations), /Invalid confirmation count/);
 });
 
-test('a matching revert is failed only after both confirmation depth and canonical evidence', async () => {
+test('a matching revert after the deadline fails once depth and canonical evidence agree', async () => {
   setReceiptStatus(0);
   latest = 17;
   const worker = service();
@@ -705,8 +726,8 @@ test('a matching revert is failed only after both confirmation depth and canonic
   canonical = null;
   await worker.tick();
   assert.equal(store.get(firstId)!.status, 'broadcast');
-  canonical = { number: 17, hash: blockHash, baseFeePerGas: 1n, gasUsed: 125_000n,
-    gasLimit: 30_000_000n, transactions: [txHash] };
+  canonical = { number: 17, hash: blockHash, timestamp: deadline + 1, baseFeePerGas: 1n,
+    gasUsed: 125_000n, gasLimit: 30_000_000n, transactions: [txHash] };
   await worker.tick();
   assert.equal(store.get(firstId)!.status, 'failed');
   assert.equal(store.get(firstId)!.tx_hash, txHash);

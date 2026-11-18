@@ -79,8 +79,8 @@ async function createContext() {
     },
     getBlock: async () => {
       blockReads++;
-      return missingBlock ? null : { number: 17, hash: blockHash, baseFeePerGas: 1n, gasUsed: 125_000n,
-        gasLimit: 30_000_000n, transactions: [txHash] };
+      return missingBlock ? null : { number: 17, hash: blockHash, timestamp: 1_800_000_000, baseFeePerGas: 1n,
+        gasUsed: 125_000n, gasLimit: 30_000_000n, transactions: [txHash] };
     }
   };
   const router = { interface: iface, connect() { return this; } };

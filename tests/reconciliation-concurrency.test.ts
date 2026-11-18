@@ -46,8 +46,8 @@ function service(read: (tx: string) => Promise<unknown>) {
   const provider = { getTransactionReceipt: async (tx: string) => { reads++; return read(tx); },
     getBlock: async () => {
       blockReads++;
-      return { number: 17, hash: blockHash, baseFeePerGas: 1n, gasUsed: 125_000n * BigInt(payments.size),
-        gasLimit: 30_000_000n, transactions: [...payments.keys()] };
+      return { number: 17, hash: blockHash, timestamp: 1_800_000_000, baseFeePerGas: 1n,
+        gasUsed: 125_000n * BigInt(payments.size), gasLimit: 30_000_000n, transactions: [...payments.keys()] };
     } };
   return new PaymentService(store, provider as unknown as JsonRpcProvider, fixtureRelayer,
     { interface: iface, connect() { return this; } }, 31337, routerAddress);
