@@ -18,12 +18,13 @@ type ReceiptFault = Provenance | 'duplicate' | 'conflictingAmount' | 'malformedD
   'extraDataWord' | 'extraTopic' | 'status' | 'status-no-logs' | typeof receiptFields[number];
 const fields: Provenance[] = ['transactionHash', 'blockHash', 'blockNumber', 'transactionIndex', 'logIndex', 'siblingLogIndex'];
 const receiptFields = ['gasUsed', 'zeroBloom', 'strippedSuccessLogs', 'missingBloomBit', 'extraBloomBit',
-  'cumulativeGasUsedBelowGasUsed', 'cumulativeGasUsedAboveGasUsed', 'receiptType', 'omittedReceiptType'] as const;
+  'cumulativeGasUsedBelowGasUsed', 'cumulativeGasUsedAboveGasUsed', 'receiptType', 'omittedReceiptType', 'contractAddress'] as const;
 const settlementDataTypes = ['address', 'uint256', 'uint256']; // Token, amount and nonce.
 const transferTopic = id('Transfer(address,address,uint256)');
 const coder = AbiCoder.defaultAbiCoder();
 const extraWord = 'ab'.repeat(32);
 const zeroBloom = '0x' + '00'.repeat(256);
+const injectedContractAddress = '0x' + '11'.repeat(20);
 const differentHash = (value: string) => '0x' + (value.toLowerCase() === '0x' + 'fa'.repeat(32) ? 'fb' : 'fa').repeat(32);
 
 /** Changes only the selected receipt or router log. All requests reach Ganache. */
@@ -91,6 +92,11 @@ async function receiptProxy(upstream: string, routerAddress: string, topic: stri
             if (fault === 'receiptType' || fault === 'omittedReceiptType') {
               if (fault === 'receiptType') receipt.type = '0x1';
               else delete receipt.type;
+              altered++;
+              break;
+            }
+            if (fault === 'contractAddress') {
+              receipt.contractAddress = injectedContractAddress;
               altered++;
               break;
             }
@@ -288,6 +294,14 @@ for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData
     repairedPresentation.type = genuine.type;
     t.diagnostic(JSON.stringify({ signedType: envelope.type, reportedType: presented.type, firstStatus: reserved.status,
       successorStatus: store.get(second.id)?.status, journalRows: store.journals().length, nativeSends: proxy.sends.length }));
+  } else if (field === 'contractAddress') {
+    assert.equal(envelope.to?.toLowerCase(), String(chain.router.target).toLowerCase());
+    assert.equal(genuine.contractAddress, null);
+    assert.equal(presented.contractAddress, injectedContractAddress, 'ethers must retain the claimed creation address');
+    repairedPresentation.contractAddress = genuine.contractAddress;
+    t.diagnostic(JSON.stringify({ signedDestination: envelope.to, reportedContractAddress: presented.contractAddress,
+      firstStatus: reserved.status, successorStatus: store.get(second.id)?.status,
+      journalRows: store.journals().length, nativeSends: proxy.sends.length }));
   } else if (field === 'duplicate' || field === 'conflictingAmount' || field === 'malformedData') {
     assert.equal(presented.logs.length, genuine.logs.length + 1);
     const appended = repairedPresentation.logs.pop();

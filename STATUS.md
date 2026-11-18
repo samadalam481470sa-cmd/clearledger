@@ -1,6 +1,6 @@
 # ClearLedger status
 
-Updated: November 17, 2026.
+Updated: November 18, 2026 (UTC).
 
 ## Scope and constraints
 
@@ -475,6 +475,13 @@ Project writes are confined to the new `outputs/clearledger/` directory and task
 
 - Extended Linux job `132765327224` passed all 10 steps on source `a0c13705da1434864e3f899eb15bf30dee398e64` and tree `60114eb751b60d0ddf1a937593040f0477867b99`. Its focused case passed in 653,219.816626 ms. Before and after restart it observed 322,696 and 322,559 ms respectively, with 60 bursts, 720 HTTP 200 responses, 296 invariant observations and 318 failed receipt attempts per window. Each window logged 21 failed receipts after its boundary. Combined active observation was 645,255 ms within a 646,229 ms receipt-route outage. The 871 ms closed-to-ready gap and one startup receipt attempt were excluded. All 1,440 reads passed the existing response and ledger assertions. Both payments settled with two journals and reconciliation 2/0. [Extended outage CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/43698870254).
 - Regular Linux job `132765327427` passed all 1,130 tests in 553,315.576838 ms with zero failures or skips on the same source. The default case passed in 189,736.254183 ms with 432 HTTP 200 responses and 183,006 ms of active observation. Fresh install, strict typecheck, Solidity 0.8.30 targeting Paris, the 35-module dashboard build and source count passed. The latest Besu result remains tied to the prior gas allowance revision. [Regular CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/43698870256).
+
+## Receipt contract creation address
+
+- The confirmation and reconciliation checks now reject a reported top-level contract creation address on a transaction signed to call the router. Either receipt status leaves a broadcast unresolved while this field contradicts the signed call. Reconciliation flags the affected payment and retains its journal. Ethers 6.17 normalizes omitted and null wire values to null. The shared check accepts an absent value from provider fixtures as well. [Ethereum JSON-RPC receipt fields](https://ethereum.org/en/developers/docs/apis/json-rpc/#eth_gettransactionreceipt).
+- The Windows Ganache HTTP proxy changed only the creation address on a genuine successful receipt. Before the fix, both payments settled and wrote two journals. The focused test failed on the first payment’s premature settlement. After the fix, three retries preserved the original signed broadcast and queued successor with one native send and zero journals. Restoring the genuine receipt settled both payments with two sends and two journals total. Reapplying the contradiction during reconciliation flagged one payment and retained both journals.
+- A synthetic status-0 receipt with empty logs and a zero bloom kept its reservation before any block reads. Clearing only its creation address let the original reservation fail once after canonical and depth checks, with its signed bytes and no journal. All 340 Windows tests across the confirmation, reconciliation and HTTP receipt suites passed with zero failures or skips. Strict TypeScript and source-report verification passed. The count is 641,685 nonblank lines, with 18,773 application-area lines in 123 files and 622,912 attributed Besu lines in 4,484 files.
+- The proxy case exercises configured-provider consistency through real HTTP and Ethers formatting with explicit worker ticks. The revert case uses synthetic provider evidence. Independent chain proofs and coherent rewrites of provider evidence are outside the check.
 
 ## November 17 dependency audit attribution
 
