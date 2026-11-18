@@ -4,9 +4,9 @@ Prioritize verified payment correctness and demonstrable engineering over source
 
 ## Verified baseline
 
-Source `b08a20557155321824da891354276bd17fa3d458` passed all 1,257 regular Linux tests with zero failures or skips, plus vendored Besu tree verification, strict typecheck, build and source-report verification. [Regular CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/44147598679).
+Source `890e53a39d159dda98b3ca400df12e6a7ff2416b` passed all 1,259 regular Linux tests with zero failures or skips, plus vendored Besu tree verification, strict typecheck, build and source-report verification. [Regular CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/44231356568).
 
-The same source passed all 11 Besu checks, including EOA and contract-wallet quorum recovery, revocation and reconciliation of three journals. [Besu CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/44147599169).
+The same source passed all 11 Besu checks, including EOA and contract-wallet quorum recovery, revocation and reconciliation of three journals. [Besu CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/44231356601).
 
 The CLI rollback case is included in the regular suite. The extended receipt outage test on source `a0c13705da1434864e3f899eb15bf30dee398e64` observed 645,255 ms across abrupt restart with 1,440 successful authenticated history responses in bursts of 12. [Extended outage CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/43698870254) · [Concurrent history evidence](STATUS.md#concurrent-history-reads-during-receipt-outage).
 
