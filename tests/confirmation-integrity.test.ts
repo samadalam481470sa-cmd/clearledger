@@ -49,7 +49,7 @@ beforeEach(() => {
   firstId = store.accept(payment, digest(payment, signingDomain), signature).row.id;
   store.broadcast(firstId, raw, txHash);
   secondId = undefined;
-  receipt = withFixtureLogsBloom({ hash: txHash, type: 2, index: 0, blockNumber: 17, blockHash, status: 1, gasUsed: 125000n,
+  receipt = withFixtureLogsBloom({ hash: txHash, type: 2, index: 0, blockNumber: 17, blockHash, status: 1, gasUsed: 125000n, gasPrice: 2n,
     cumulativeGasUsed: 125000n,
     from: fixtureRelayer.address, to: routerAddress,
     logs: [settlementLog()] });
@@ -436,6 +436,32 @@ for (const status of [0, 1]) {
     await service().tick();
     assert.equal(store.get(firstId)!.status, status === 1 ? 'settled' : 'failed');
     assert.equal(store.journals().length, status);
+    assert.equal(blockReads, 1);
+  });
+}
+
+for (const status of [0, 1]) {
+  test('status-' + status + ' requires a nonnegative bigint gas price and accepts one below the signed cap', async () => {
+    setReceiptStatus(status);
+    delete receipt.gasPrice;
+    const worker = await remainsUncertain();
+    assert.equal(blockReads, 0);
+
+    receipt.gasPrice = -1n;
+    await worker.tick();
+    assert.equal(store.get(firstId)!.status, 'broadcast');
+    assert.equal(store.get(secondId!)!.status, 'queued');
+    assert.equal(store.journals().length, 0);
+    assert.equal(preflights, 0);
+    assert.equal(blockReads, 0);
+
+    receipt.gasPrice = 1n;
+    await assert.rejects(worker.tick(), /Queued nonce was allocated too early/);
+    const outcome = status === 1 ? 'settled' : 'failed';
+    assert.equal(store.get(firstId)!.status, outcome);
+    assert.equal(store.get(firstId)!.raw_tx, raw);
+    assert.equal(store.journals().length, status);
+    assert.equal(store.events().filter(event => event.action === outcome).length, 1);
     assert.equal(blockReads, 1);
   });
 }

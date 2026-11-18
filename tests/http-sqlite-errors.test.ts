@@ -38,7 +38,7 @@ function fixture() {
       const hash = keccak256(raw);
       const log = iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
         [payment.paymentId, payment.payer, payment.payee, payment.token, payment.amount, payment.nonce]);
-      receipt = withFixtureLogsBloom({ hash, type: 2, index: 0, blockNumber: 17, blockHash, status: 1, gasUsed: 125_000n,
+      receipt = withFixtureLogsBloom({ hash, type: 2, index: 0, blockNumber: 17, blockHash, status: 1, gasUsed: 125_000n, gasPrice: 2n,
         cumulativeGasUsed: 125_000n,
         from: signer.address, to: routerAddress,
         logs: [{ address: routerAddress, ...log, transactionHash: hash, transactionIndex: 0, index: 0, blockNumber: 17, blockHash }] });

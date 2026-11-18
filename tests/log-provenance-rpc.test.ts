@@ -18,7 +18,8 @@ type ReceiptFault = Provenance | 'duplicate' | 'conflictingAmount' | 'malformedD
   'extraDataWord' | 'extraTopic' | 'status' | 'status-no-logs' | typeof receiptFields[number];
 const fields: Provenance[] = ['transactionHash', 'blockHash', 'blockNumber', 'transactionIndex', 'logIndex', 'siblingLogIndex'];
 const receiptFields = ['gasUsed', 'zeroBloom', 'strippedSuccessLogs', 'missingBloomBit', 'extraBloomBit',
-  'cumulativeGasUsedBelowGasUsed', 'cumulativeGasUsedAboveGasUsed', 'receiptType', 'omittedReceiptType', 'contractAddress'] as const;
+  'cumulativeGasUsedBelowGasUsed', 'cumulativeGasUsedAboveGasUsed', 'receiptType', 'omittedReceiptType',
+  'contractAddress', 'effectiveGasPrice'] as const;
 const settlementDataTypes = ['address', 'uint256', 'uint256']; // Token, amount and nonce.
 const transferTopic = id('Transfer(address,address,uint256)');
 const coder = AbiCoder.defaultAbiCoder();
@@ -31,7 +32,7 @@ const differentHash = (value: string) => '0x' + (value.toLowerCase() === '0x' + 
 async function receiptProxy(upstream: string, routerAddress: string, topic: string, tokenAddress: string) {
   let fault: ReceiptFault | undefined, target: string | undefined, altered = 0;
   const sends: string[] = [];
-  const signedGasLimits = new Map<string, bigint>();
+  const signedTransactions = new Map<string, Transaction>();
   const active = new Set<Promise<void>>();
   const server = createServer((req, res) => {
     const operation = (async () => {
@@ -45,7 +46,8 @@ async function receiptProxy(upstream: string, routerAddress: string, topic: stri
           if (call.method !== 'eth_sendRawTransaction') continue;
           const hash = keccak256(call.params[0]);
           sends.push(hash);
-          if (fault === 'gasUsed') signedGasLimits.set(hash.toLowerCase(), Transaction.from(call.params[0]).gasLimit);
+          if ((fault === 'gasUsed' || fault === 'effectiveGasPrice') && !signedTransactions.has(hash.toLowerCase()))
+            signedTransactions.set(hash.toLowerCase(), Transaction.from(call.params[0]));
         }
         const response = await fetch(upstream, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
           signal: AbortSignal.timeout(3000) });
@@ -75,11 +77,18 @@ async function receiptProxy(upstream: string, routerAddress: string, topic: stri
               break;
             }
             if (fault === 'gasUsed') {
-              const limit = signedGasLimits.get(target!);
+              const limit = signedTransactions.get(target!)?.gasLimit;
               assert.ok(limit !== undefined);
               const cumulative = BigInt(receipt.cumulativeGasUsed) - BigInt(receipt.gasUsed) + limit + 1n;
               receipt.gasUsed = toQuantity(limit + 1n);
               receipt.cumulativeGasUsed = toQuantity(cumulative);
+              altered++;
+              break;
+            }
+            if (fault === 'effectiveGasPrice') {
+              const maxFeePerGas = signedTransactions.get(target!)?.maxFeePerGas;
+              assert.ok(maxFeePerGas != null);
+              receipt.effectiveGasPrice = toQuantity(maxFeePerGas + 1n);
               altered++;
               break;
             }
@@ -276,6 +285,15 @@ for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData
       reportedGasUsed: presented.gasUsed.toString(), signedGasLimit: envelope.gasLimit.toString(),
       firstStatus: reserved.status, successorStatus: store.get(second.id)?.status,
       journalRows: store.journals().length, nativeSends: proxy.sends.length }));
+  } else if (field === 'effectiveGasPrice') {
+    const signedFeeCap = envelope.maxFeePerGas;
+    assert.ok(envelope.type === 2 && signedFeeCap !== null);
+    assert.ok(genuine.gasPrice >= 0n && genuine.gasPrice <= signedFeeCap);
+    assert.equal(presented.gasPrice, signedFeeCap + 1n, 'ethers must retain the effective gas price above the signed cap');
+    repairedPresentation.gasPrice = genuine.toJSON().gasPrice;
+    t.diagnostic(JSON.stringify({ signedFeeCap: signedFeeCap.toString(), genuineGasPrice: genuine.gasPrice.toString(),
+      reportedGasPrice: presented.gasPrice.toString(), firstStatus: reserved.status,
+      successorStatus: store.get(second.id)?.status, journalRows: store.journals().length, nativeSends: proxy.sends.length }));
   } else if (field === 'cumulativeGasUsedBelowGasUsed' || field === 'cumulativeGasUsedAboveGasUsed') {
     assert.equal(genuine.index, 0);
     assert.ok(genuine.gasUsed > 1n && genuine.gasUsed <= envelope.gasLimit);

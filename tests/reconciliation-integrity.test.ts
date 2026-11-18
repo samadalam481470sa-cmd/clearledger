@@ -34,7 +34,7 @@ beforeEach(() => {
   store.broadcast(paymentId, rawTx, txHash);
   store.finalize(paymentId, 17, blockHash);
   receipt = withFixtureLogsBloom({ hash: txHash, type: 2, from: fixtureRelayer.address, to: routerAddress,
-    index: 0, blockNumber: 17, status: 1, gasUsed: 125000n,
+    index: 0, blockNumber: 17, status: 1, gasUsed: 125000n, gasPrice: 2n,
     cumulativeGasUsed: 125000n, blockHash, logs: [settlementLog()] });
   canonical = { number: 17, hash: blockHash, transactions: [txHash] };
 });
@@ -250,6 +250,12 @@ for (const missingBlock of [false, true]) {
     await flagged();
   });
 }
+
+test('gasPrice above the signed fee cap triggers review without a canonical block', async () => {
+  receipt.gasPrice = Transaction.from(rawTx).maxFeePerGas! + 1n;
+  canonical = null;
+  await flagged();
+});
 
 for (const missingBlock of [false, true]) {
   test('inconsistent cumulative gas triggers review ' +

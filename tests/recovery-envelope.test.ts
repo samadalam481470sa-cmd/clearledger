@@ -50,7 +50,7 @@ function coherentReceipt(status = 1) {
   const hash = row.tx_hash!;
   const log = iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
     [payment.paymentId, payment.payer, payment.payee, payment.token, payment.amount, payment.nonce]);
-  return withFixtureLogsBloom({ hash, type: Transaction.from(row.raw_tx!).type, index: 0, blockNumber: 17, blockHash, status, gasUsed: 125_000n,
+  return withFixtureLogsBloom({ hash, type: Transaction.from(row.raw_tx!).type, index: 0, blockNumber: 17, blockHash, status, gasUsed: 125_000n, gasPrice: 2n,
     cumulativeGasUsed: 125_000n,
     from: relayer.address, to: routerAddress,
     logs: status === 1 ? [{ address: routerAddress, ...log, transactionHash: hash, transactionIndex: 0, index: 0, blockNumber: 17, blockHash }] : [] });
@@ -93,8 +93,9 @@ afterEach(() => { store.close(); });
 
 async function remainsReserved() {
   const before = snapshot();
+  const readsBefore = receiptReads.length;
   await service.tick(); await service.tick();
-  assert.deepEqual(sent, []); assert.equal(receiptReads.length, 2);
+  assert.deepEqual(sent, []); assert.equal(receiptReads.length, readsBefore + 2);
   assert.deepEqual(snapshot(), before);
   assert.equal(store.get(firstId)!.status, 'broadcast');
   assert.equal(store.get(secondId)!.status, 'queued');
@@ -125,6 +126,31 @@ for (const type of [0, 1, 2]) {
     const settled = store.get(firstId)!;
     assert.equal(settled.status, 'settled');
     assert.equal(settled.raw_tx, raw);
+    assert.equal(store.journal(firstId)?.tx_hash, keccak256(raw));
+    assert.equal(store.journals().length, 1);
+    assert.equal(store.events().filter(event => event.action === 'settled').length, 1);
+    assert.deepEqual(sent, []);
+  });
+}
+
+for (const type of [0, 1]) {
+  test('restoring the signed gas price settles the type-' + type + ' reservation once', async () => {
+    const raw = await sign({ type });
+    replaceEnvelope(raw);
+    receipt = coherentReceipt();
+    const signedGasPrice = Transaction.from(raw).gasPrice;
+    assert.ok(signedGasPrice !== null && signedGasPrice > 0n);
+    assert.equal(receipt.gasPrice, signedGasPrice);
+
+    receipt.gasPrice = signedGasPrice - 1n;
+    await remainsReserved();
+    receipt.gasPrice = signedGasPrice + 1n;
+    await remainsReserved();
+
+    receipt.gasPrice = signedGasPrice;
+    await assert.rejects(service.tick(), error => error === unavailable);
+    assert.equal(store.get(firstId)!.status, 'settled');
+    assert.equal(store.get(firstId)!.raw_tx, raw);
     assert.equal(store.journal(firstId)?.tx_hash, keccak256(raw));
     assert.equal(store.journals().length, 1);
     assert.equal(store.events().filter(event => event.action === 'settled').length, 1);

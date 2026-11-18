@@ -82,9 +82,12 @@ beforeEach(() => {
     getTransactionReceipt: async () => { receiptReads++; return receipt; },
     broadcastTransaction: async (raw: string) => {
       sends++; const hash = keccak256(raw);
+      const transaction = Transaction.from(raw);
+      const gasPrice = transaction.gasPrice ?? transaction.maxFeePerGas;
+      assert.ok(gasPrice !== null, 'The fixture transaction must have a signed fee');
       const log = iface.encodeEventLog(iface.getEvent('PaymentSettled')!,
         [first.paymentId, first.payer, first.payee, first.token, first.amount, first.nonce]);
-      receipt = withFixtureLogsBloom({ hash, type: Transaction.from(raw).type, index: 0, blockNumber: 17, blockHash, status: 1, gasUsed: 125_000n,
+      receipt = withFixtureLogsBloom({ hash, type: transaction.type, index: 0, blockNumber: 17, blockHash, status: 1, gasUsed: 125_000n, gasPrice,
         cumulativeGasUsed: 125_000n,
         from: nativeSigner.address, to: routerAddress,
         logs: [{ address: routerAddress, ...log, transactionHash: hash, transactionIndex: 0, index: 0, blockNumber: 17, blockHash }] });
@@ -246,6 +249,7 @@ test('zero-fee settlement gets gas headroom without a balance lookup', async () 
   assert.equal(settled.status, 'settled');
   const transaction = Transaction.from(settled.raw_tx!);
   assert.equal(transaction.maxFeePerGas, 0n);
+  assert.equal(receipt.gasPrice, 0n);
   assert.equal(transaction.gasLimit, 220_000n);
   assert.equal(latestBlockReads, 1);
   assert.equal(balanceReads, 0);

@@ -62,7 +62,7 @@ function coherentReceipt(tx: string) {
   const payment = JSON.parse(row.payload) as Payment;
   const log = settlementInterface.encodeEventLog(settlementInterface.getEvent('PaymentSettled')!,
     [payment.paymentId, payment.payer, payment.payee, payment.token, payment.amount, payment.nonce]);
-  return withFixtureLogsBloom({ hash: tx, type: 2, index: 0, blockNumber: row.block_number, status: 1, blockHash: row.block_hash, gasUsed: 125_000n,
+  return withFixtureLogsBloom({ hash: tx, type: 2, index: 0, blockNumber: row.block_number, status: 1, blockHash: row.block_hash, gasUsed: 125_000n, gasPrice: 2n,
     cumulativeGasUsed: 125_000n,
     from: fixtureRelayer.address, to: routerAddress,
     logs: [{ address: routerAddress, transactionHash: tx, transactionIndex: 0, index: 0, blockHash: row.block_hash,
