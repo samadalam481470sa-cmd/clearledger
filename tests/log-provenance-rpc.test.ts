@@ -19,7 +19,7 @@ type ReceiptFault = Provenance | 'duplicate' | 'conflictingAmount' | 'malformedD
 const fields: Provenance[] = ['transactionHash', 'blockHash', 'blockNumber', 'transactionIndex', 'logIndex', 'siblingLogIndex'];
 const receiptFields = ['gasUsed', 'zeroBloom', 'strippedSuccessLogs', 'missingBloomBit', 'extraBloomBit',
   'cumulativeGasUsedBelowGasUsed', 'cumulativeGasUsedAboveGasUsed', 'receiptType', 'omittedReceiptType',
-  'contractAddress', 'effectiveGasPrice'] as const;
+  'contractAddress', 'effectiveGasPrice', 'effectiveGasPriceWithinBounds'] as const;
 const settlementDataTypes = ['address', 'uint256', 'uint256']; // Token, amount and nonce.
 const transferTopic = id('Transfer(address,address,uint256)');
 const coder = AbiCoder.defaultAbiCoder();
@@ -89,6 +89,13 @@ async function receiptProxy(upstream: string, routerAddress: string, topic: stri
               const maxFeePerGas = signedTransactions.get(target!)?.maxFeePerGas;
               assert.ok(maxFeePerGas != null);
               receipt.effectiveGasPrice = toQuantity(maxFeePerGas + 1n);
+              altered++;
+              break;
+            }
+            if (fault === 'effectiveGasPriceWithinBounds') {
+              const gasPrice = BigInt(receipt.effectiveGasPrice);
+              assert.ok(gasPrice > 0n);
+              receipt.effectiveGasPrice = toQuantity(gasPrice - 1n);
               altered++;
               break;
             }
@@ -292,6 +299,28 @@ for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData
     assert.equal(presented.gasPrice, signedFeeCap + 1n, 'ethers must retain the effective gas price above the signed cap');
     repairedPresentation.gasPrice = genuine.toJSON().gasPrice;
     t.diagnostic(JSON.stringify({ signedFeeCap: signedFeeCap.toString(), genuineGasPrice: genuine.gasPrice.toString(),
+      reportedGasPrice: presented.gasPrice.toString(), firstStatus: reserved.status,
+      successorStatus: store.get(second.id)?.status, journalRows: store.journals().length, nativeSends: proxy.sends.length }));
+  } else if (field === 'effectiveGasPriceWithinBounds') {
+    const { maxFeePerGas, maxPriorityFeePerGas } = envelope;
+    assert.ok(envelope.type === 2 && maxFeePerGas !== null && maxPriorityFeePerGas !== null);
+    const block = await chain.provider.getBlock(genuine.blockNumber);
+    const proxiedBlock = await provider.getBlock(genuine.blockNumber);
+    assert.ok(block && proxiedBlock);
+    assert.equal(block.hash, genuine.blockHash);
+    assert.equal(block.transactions[genuine.index], originalHash);
+    assert.deepEqual(proxiedBlock.toJSON(), block.toJSON());
+    const { baseFeePerGas } = block;
+    assert.ok(baseFeePerGas !== null && baseFeePerGas >= 0n);
+    const priceWithFullTip = baseFeePerGas + maxPriorityFeePerGas;
+    const expectedGasPrice = maxFeePerGas < priceWithFullTip ? maxFeePerGas : priceWithFullTip;
+    assert.equal(genuine.gasPrice, expectedGasPrice);
+    assert.equal(presented.gasPrice, expectedGasPrice - 1n, 'ethers must retain the understated effective gas price');
+    assert.ok(presented.gasPrice >= maxPriorityFeePerGas && presented.gasPrice <= maxFeePerGas);
+    assert.ok(presented.gasPrice >= baseFeePerGas && presented.gasPrice - baseFeePerGas <= maxPriorityFeePerGas);
+    repairedPresentation.gasPrice = genuine.toJSON().gasPrice;
+    t.diagnostic(JSON.stringify({ baseFeePerGas: baseFeePerGas.toString(), maxFeePerGas: maxFeePerGas.toString(),
+      maxPriorityFeePerGas: maxPriorityFeePerGas.toString(), genuineGasPrice: genuine.gasPrice.toString(),
       reportedGasPrice: presented.gasPrice.toString(), firstStatus: reserved.status,
       successorStatus: store.get(second.id)?.status, journalRows: store.journals().length, nativeSends: proxy.sends.length }));
   } else if (field === 'cumulativeGasUsedBelowGasUsed' || field === 'cumulativeGasUsedAboveGasUsed') {

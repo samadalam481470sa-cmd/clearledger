@@ -107,7 +107,8 @@ beforeEach(() => {
         return latestBlock();
       }
       blockReads++;
-      return { number: 17, hash: blockHash, transactions: receipt ? [receipt.hash] : [] };
+      return { number: 17, hash: blockHash, baseFeePerGas: maxFee - maxFee / 2n,
+        transactions: receipt ? [receipt.hash] : [] };
     }
   };
   service = new PaymentService(store, provider as unknown as JsonRpcProvider,

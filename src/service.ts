@@ -36,6 +36,20 @@ function matchesCanonicalPosition(receipt: TransactionReceipt, block: Block | nu
   return uniqueTransactionIndex(block, receipt.hash) === receipt.index;
 }
 
+function blockGasPriceEvidence(receipt: TransactionReceipt, block: Block | null, transaction: Transaction):
+  'matching' | 'inconsistent' | 'unavailable' {
+  if (block === null) return 'unavailable';
+  if (transaction.type !== 2) return 'matching';
+  const { baseFeePerGas } = block;
+  if (baseFeePerGas == null) return 'unavailable';
+  const { maxFeePerGas, maxPriorityFeePerGas } = transaction;
+  if (typeof baseFeePerGas !== 'bigint' || baseFeePerGas < 0n || maxFeePerGas === null ||
+    maxPriorityFeePerGas === null || baseFeePerGas > maxFeePerGas) return 'inconsistent';
+  const uncappedPrice = baseFeePerGas + maxPriorityFeePerGas;
+  const expectedPrice = uncappedPrice < maxFeePerGas ? uncappedPrice : maxFeePerGas;
+  return receipt.gasPrice === expectedPrice ? 'matching' : 'inconsistent';
+}
+
 interface ReconciliationResult { checked: number; exceptions: string[]; outstandingReviews: number; at: string }
 export class ReconciliationEvidenceUnavailable extends Error {}
 export class ReconciliationReceiptUnavailable extends ReconciliationEvidenceUnavailable {}
@@ -172,10 +186,11 @@ export class PaymentService {
 
   private receiptMatchesSettlementCall(receipt: TransactionReceipt, transaction: Transaction): boolean {
     const { type, from, to, contractAddress, gasUsed, cumulativeGasUsed, gasPrice, index } = receipt;
-    const { maxFeePerGas, gasPrice: signedGasPrice } = transaction;
+    const { maxFeePerGas, maxPriorityFeePerGas, gasPrice: signedGasPrice } = transaction;
     return type === transaction.type && contractAddress == null &&
       typeof gasPrice === 'bigint' && gasPrice >= 0n &&
-      (type === 2 ? maxFeePerGas !== null && gasPrice <= maxFeePerGas : gasPrice === signedGasPrice) &&
+      (type === 2 ? maxFeePerGas !== null && maxPriorityFeePerGas !== null &&
+        gasPrice >= maxPriorityFeePerGas && gasPrice <= maxFeePerGas : gasPrice === signedGasPrice) &&
       typeof from === 'string' && from.toLowerCase() === this.relayer.address.toLowerCase() &&
       typeof to === 'string' && to.toLowerCase() === this.routerAddress.toLowerCase() &&
       typeof gasUsed === 'bigint' && gasUsed > 0n && gasUsed <= transaction.gasLimit &&
@@ -209,7 +224,7 @@ export class PaymentService {
     if (!Number.isSafeInteger(latest) || latest < receipt.blockNumber ||
       latest - receipt.blockNumber < this.confirmations - 1) return;
     const canonical = await this.provider.getBlock(receipt.blockNumber);
-    if (!matchesCanonicalPosition(receipt, canonical)) return;
+    if (!matchesCanonicalPosition(receipt, canonical) || blockGasPriceEvidence(receipt, canonical, transaction) !== 'matching') return;
     if (receipt.status === 0) {
       this.store.setStatus(row.id, 'failed', 'Transaction reverted on chain');
       return;
@@ -305,8 +320,14 @@ export class PaymentService {
             (block === null || matchesCanonicalPosition(receipt, block)) &&
             this.settlementEvidence(p, receipt) === 'matching' &&
             computeReceiptLogsBloom(receipt.logs) === receipt.logsBloom.toLowerCase();
-          if (matches && block === null)
-            throw new ReconciliationEvidenceUnavailable('Canonical block unavailable for matching settlement receipt');
+          if (matches && receipt) {
+            const feeEvidence = blockGasPriceEvidence(receipt, block, transaction);
+            if (feeEvidence === 'unavailable')
+              throw new ReconciliationEvidenceUnavailable(block === null
+                ? 'Canonical block unavailable for matching settlement receipt'
+                : 'Canonical block base fee unavailable for matching settlement receipt');
+            matches = feeEvidence === 'matching';
+          }
         }
         if (!matches) {
           exceptions.push(row.id);

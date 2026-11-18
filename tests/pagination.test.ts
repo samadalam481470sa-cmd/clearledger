@@ -72,7 +72,7 @@ function readService(overrides: Record<string, unknown> = {}) {
   const provider = {
     getBlockNumber: async () => 12345,
     getBlock: async (number: number | string) => ({
-      hash: blockHash, number: typeof number === 'number' ? number : 12345, timestamp: 1800000000,
+      hash: blockHash, number: typeof number === 'number' ? number : 12345, timestamp: 1800000000, baseFeePerGas: 1n,
       transactions: typeof number === 'number' ? transactionsByBlock.get(number) ?? [] : []
     }),
     getTransactionReceipt: async (tx: string) => coherentReceipt(tx),

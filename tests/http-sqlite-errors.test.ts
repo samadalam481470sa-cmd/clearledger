@@ -29,7 +29,7 @@ function fixture() {
   let receipt: any = null;
   const provider = {
     getBlock: async () => ({ number: 17, hash: blockHash, timestamp: 2000000000,
-      gasLimit: 30_000_000n, transactions: receipt ? [receipt.hash] : [] }),
+      gasLimit: 30_000_000n, baseFeePerGas: 1n, transactions: receipt ? [receipt.hash] : [] }),
     getBlockNumber: async () => 17,
     getBalance: async () => 10_000_000n,
     getTransactionReceipt: async (hash: string) => { calls.receiptReads++; return receipt?.hash === hash ? receipt : null; },

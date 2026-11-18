@@ -36,7 +36,7 @@ beforeEach(async () => {
     getTransactionReceipt: async (hash: string) => { rpcCalls++; return receipts.get(hash) ?? null; },
     getBlock: async (number: number) => {
       rpcCalls++;
-      return { number, hash: blockHash, transactions: transactionsByBlock.get(number) ?? [] };
+      return { number, hash: blockHash, baseFeePerGas: 1n, transactions: transactionsByBlock.get(number) ?? [] };
     }
   };
   const router = { interface: iface, connect() { return this; } };

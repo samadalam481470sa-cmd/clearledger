@@ -26,7 +26,9 @@ const payment: Payment = { paymentId: '0x' + '12'.repeat(32), payer, payee, toke
 const signingDomain = domain(31337, routerAddress);
 const signature = '0x1234';
 const { raw, hash: txHash } = signedSettlement(payment, signature, routerAddress, 7);
-const signedGasLimit = Transaction.from(raw).gasLimit;
+const signedTransaction = Transaction.from(raw);
+const signedGasLimit = signedTransaction.gasLimit;
+const signedFeeCap = signedTransaction.maxFeePerGas!;
 let store: Store;
 let firstId: string;
 let secondId: string | undefined;
@@ -53,7 +55,7 @@ beforeEach(() => {
     cumulativeGasUsed: 125000n,
     from: fixtureRelayer.address, to: routerAddress,
     logs: [settlementLog()] });
-  canonical = { number: 17, hash: blockHash, transactions: [txHash] };
+  canonical = { number: 17, hash: blockHash, baseFeePerGas: 1n, transactions: [txHash] };
   latest = 18;
   preflights = 0; signing = 0; blockReads = 0;
 });
@@ -456,6 +458,7 @@ for (const status of [0, 1]) {
     assert.equal(blockReads, 0);
 
     receipt.gasPrice = 1n;
+    canonical.baseFeePerGas = 0n;
     await assert.rejects(worker.tick(), /Queued nonce was allocated too early/);
     const outcome = status === 1 ? 'settled' : 'failed';
     assert.equal(store.get(firstId)!.status, outcome);
@@ -463,6 +466,28 @@ for (const status of [0, 1]) {
     assert.equal(store.journals().length, status);
     assert.equal(store.events().filter(event => event.action === outcome).length, 1);
     assert.equal(blockReads, 1);
+  });
+}
+
+for (const [description, baseFee] of [
+  ['a missing base fee', undefined], ['a negative base fee', -1n],
+  ['a base fee above the signed cap', signedFeeCap + 1n]
+] as const) {
+  test('confirmation waits with ' + description + ' before accepting a capped price', async () => {
+    if (baseFee === undefined) delete canonical.baseFeePerGas;
+    else canonical.baseFeePerGas = baseFee;
+    const worker = await remainsUncertain();
+    assert.equal(blockReads, 2);
+
+    // A block base fee at the cap leaves no room for the signed priority fee.
+    canonical.baseFeePerGas = signedFeeCap;
+    await assert.rejects(worker.tick(), /Queued nonce was allocated too early/);
+    assert.equal(store.get(firstId)!.status, 'settled');
+    assert.equal(store.get(firstId)!.raw_tx, raw);
+    assert.equal(store.journal(firstId)?.tx_hash, txHash);
+    assert.equal(store.journals().length, 1);
+    assert.equal(store.events().filter(event => event.action === 'settled').length, 1);
+    assert.equal(blockReads, 3);
   });
 }
 
@@ -632,7 +657,7 @@ test('a matching revert is failed only after both confirmation depth and canonic
   canonical = null;
   await worker.tick();
   assert.equal(store.get(firstId)!.status, 'broadcast');
-  canonical = { number: 17, hash: blockHash, transactions: [txHash] };
+  canonical = { number: 17, hash: blockHash, baseFeePerGas: 1n, transactions: [txHash] };
   await worker.tick();
   assert.equal(store.get(firstId)!.status, 'failed');
   assert.equal(store.get(firstId)!.tx_hash, txHash);

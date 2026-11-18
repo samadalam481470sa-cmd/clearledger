@@ -64,7 +64,7 @@ function makeService(configuredChainId = chainId) {
       throw new Error('Controlled send uncertainty');
     },
     getBlockNumber: async () => 17,
-    getBlock: async () => ({ number: 17, hash: blockHash, transactions: receipt ? [receipt.hash] : [] })
+    getBlock: async () => ({ number: 17, hash: blockHash, baseFeePerGas: 1n, transactions: receipt ? [receipt.hash] : [] })
   };
   const router = { interface: iface, connect() { return this; }, settle: {
     staticCall: async () => { preflights++; throw unavailable; },

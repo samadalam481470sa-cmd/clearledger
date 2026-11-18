@@ -40,7 +40,7 @@ beforeEach(() => {
       else throw unavailable;
     },
     getBlockNumber: async () => 17,
-    getBlock: async () => ({ number: 17, hash: blockHash, transactions: [txHash] })
+    getBlock: async () => ({ number: 17, hash: blockHash, baseFeePerGas: 1n, transactions: [txHash] })
   };
   const router = { interface: iface, connect() { return this; }, settle: {
     staticCall: async () => { preflights++; throw unavailable; }

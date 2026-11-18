@@ -22,6 +22,7 @@ const payment: Payment = { paymentId: '0x' + 'ab'.repeat(32), payer, payee, toke
 const signingDomain = domain(31337, routerAddress);
 const fingerprint = digest(payment, signingDomain);
 const { raw: rawTx, hash: txHash } = signedSettlement(payment, '0x', routerAddress, 0);
+const signedTransaction = Transaction.from(rawTx);
 const authorizationError = 'Stored settlement authorization is inconsistent; verify the original authorization and chain history';
 const transactionError = 'Stored settlement transaction is inconsistent; verify the original transaction and chain history';
 let store: Store;
@@ -36,7 +37,7 @@ beforeEach(() => {
   receipt = withFixtureLogsBloom({ hash: txHash, type: 2, from: fixtureRelayer.address, to: routerAddress,
     index: 0, blockNumber: 17, status: 1, gasUsed: 125000n, gasPrice: 2n,
     cumulativeGasUsed: 125000n, blockHash, logs: [settlementLog()] });
-  canonical = { number: 17, hash: blockHash, transactions: [txHash] };
+  canonical = { number: 17, hash: blockHash, baseFeePerGas: 1n, transactions: [txHash] };
 });
 afterEach(() => { store.close(); });
 
@@ -251,11 +252,16 @@ for (const missingBlock of [false, true]) {
   });
 }
 
-test('gasPrice above the signed fee cap triggers review without a canonical block', async () => {
-  receipt.gasPrice = Transaction.from(rawTx).maxFeePerGas! + 1n;
-  canonical = null;
-  await flagged();
-});
+for (const [description, gasPrice] of [
+  ['above the signed fee cap', signedTransaction.maxFeePerGas! + 1n],
+  ['below the signed priority fee', signedTransaction.maxPriorityFeePerGas! - 1n]
+] as const) {
+  test('gasPrice ' + description + ' triggers review without a canonical block', async () => {
+    receipt.gasPrice = gasPrice;
+    canonical = null;
+    await flagged();
+  });
+}
 
 for (const missingBlock of [false, true]) {
   test('inconsistent cumulative gas triggers review ' +
@@ -366,7 +372,8 @@ test('an oversized integer journal block number is reviewed without changing its
 
 for (const [missing, description] of [
   ['receipt', 'an indexed transaction with an unavailable receipt'],
-  ['block', 'a successful receipt with an unavailable canonical block']
+  ['block', 'a successful receipt with an unavailable canonical block'],
+  ['base fee', 'a matching type-2 block with an unavailable base fee']
 ] as const) {
   test(description + ' keeps its settlement for a healthy retry', async () => {
     const receiptWithIndex = { ...receipt, index: 1, cumulativeGasUsed: receipt.gasUsed + 21_000n,
@@ -375,7 +382,8 @@ for (const [missing, description] of [
     const blockWithTransaction = { ...canonical, hash: '0x' + blockHash.slice(2).toUpperCase(),
       transactions: ['0x' + '99'.repeat(32), '0x' + txHash.slice(2).toUpperCase()] };
     receipt = missing === 'receipt' ? null : receiptWithIndex;
-    canonical = missing === 'block' ? null : blockWithTransaction;
+    canonical = missing === 'block' ? null : { ...blockWithTransaction };
+    if (missing === 'base fee') canonical.baseFeePerGas = null;
     const snapshot = () => ({ row: store.get(paymentId), journal: store.journal(paymentId), audit: store.events(),
       changes: store.db.prepare('SELECT total_changes() AS count').get()!.count });
     const before = snapshot();
