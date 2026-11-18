@@ -23,7 +23,8 @@ beforeEach(() => {
     populateTransaction: async () => { populated++; throw new Error('Unexpected population'); }
   } };
   const provider = { getTransactionReceipt: async () => receipt, getBlockNumber: async () => 17,
-    getBlock: async () => ({ number: 17, hash: blockHash, baseFeePerGas: 1n, transactions: receipt ? [receipt.hash] : [] }),
+    getBlock: async () => ({ number: 17, hash: blockHash, baseFeePerGas: 1n, gasUsed: receipt ? 125_000n : 0n,
+      gasLimit: 30_000_000n, transactions: receipt ? [receipt.hash] : [] }),
     broadcastTransaction: async () => { throw unavailable; } };
   const relayer = { address: fixtureRelayer.address, populateTransaction: async () => { populated++; throw new Error('Unexpected population'); },
     signTransaction: async () => { signed++; throw new Error('Unexpected signing'); } };

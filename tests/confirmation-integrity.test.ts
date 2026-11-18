@@ -55,7 +55,8 @@ beforeEach(() => {
     cumulativeGasUsed: 125000n,
     from: fixtureRelayer.address, to: routerAddress,
     logs: [settlementLog()] });
-  canonical = { number: 17, hash: blockHash, baseFeePerGas: 1n, transactions: [txHash] };
+  canonical = { number: 17, hash: blockHash, baseFeePerGas: 1n, gasUsed: 125_000n,
+    gasLimit: 30_000_000n, transactions: [txHash] };
   latest = 18;
   preflights = 0; signing = 0; blockReads = 0;
 });
@@ -336,7 +337,7 @@ for (const status of [0, 1]) {
   ] as const) {
     test(description + ' keeps status ' + status + ' broadcast unresolved', async () => {
       setReceiptStatus(status);
-      canonical = block;
+      canonical = block === null ? null : { ...canonical, ...block };
       await remainsUncertain();
     });
   }
@@ -371,6 +372,7 @@ for (const status of [0, 1]) {
     assert.equal(blockReads, 2);
 
     canonical.transactions = [txHash, otherTxHash];
+    canonical.gasUsed = 146_000n;
     // The stub stops when the successor reaches preflight after the reservation resolves.
     await assert.rejects(worker.tick(), /Queued nonce was allocated too early/);
     const outcome = status === 1 ? 'settled' : 'failed';
@@ -435,10 +437,35 @@ for (const status of [0, 1]) {
     setReceiptStatus(status);
     receipt.gasUsed = signedGasLimit;
     receipt.cumulativeGasUsed = signedGasLimit;
+    canonical.gasUsed = signedGasLimit;
     await service().tick();
     assert.equal(store.get(firstId)!.status, status === 1 ? 'settled' : 'failed');
     assert.equal(store.journals().length, status);
     assert.equal(blockReads, 1);
+  });
+}
+
+for (const [description, overrides] of [
+  ['missing gas used', { gasUsed: undefined }], ['number-valued gas used', { gasUsed: Number(signedGasLimit) }],
+  ['missing gas limit', { gasLimit: undefined }], ['number-valued gas limit', { gasLimit: Number(signedGasLimit) }],
+  ['zero gas used', { gasUsed: 0n }], ['gas used above the limit', { gasUsed: signedGasLimit + 1n }]
+] as const) {
+  test('confirmation waits with ' + description + ' until the block gas capacity agrees', async () => {
+    receipt.gasUsed = signedGasLimit;
+    receipt.cumulativeGasUsed = signedGasLimit;
+    const fullBlock = { ...canonical, gasUsed: signedGasLimit, gasLimit: signedGasLimit };
+    canonical = { ...fullBlock, ...overrides };
+    const worker = await remainsUncertain();
+    assert.equal(blockReads, 2);
+
+    canonical = fullBlock;
+    await assert.rejects(worker.tick(), /Queued nonce was allocated too early/);
+    assert.equal(store.get(firstId)!.status, 'settled');
+    assert.equal(store.get(firstId)!.raw_tx, raw);
+    assert.equal(store.journal(firstId)?.tx_hash, txHash);
+    assert.equal(store.journals().length, 1);
+    assert.equal(store.events().filter(event => event.action === 'settled').length, 1);
+    assert.equal(blockReads, 3);
   });
 }
 
@@ -513,6 +540,7 @@ for (const status of [0, 1]) {
     assert.equal(blockReads, 0);
 
     receipt.cumulativeGasUsed = signedGasLimit + 21_000n;
+    canonical.gasUsed = receipt.cumulativeGasUsed;
     await assert.rejects(worker.tick(), /Queued nonce was allocated too early/);
     const outcome = status === 1 ? 'settled' : 'failed';
     assert.equal(store.get(firstId)!.status, outcome);
@@ -657,7 +685,8 @@ test('a matching revert is failed only after both confirmation depth and canonic
   canonical = null;
   await worker.tick();
   assert.equal(store.get(firstId)!.status, 'broadcast');
-  canonical = { number: 17, hash: blockHash, baseFeePerGas: 1n, transactions: [txHash] };
+  canonical = { number: 17, hash: blockHash, baseFeePerGas: 1n, gasUsed: 125_000n,
+    gasLimit: 30_000_000n, transactions: [txHash] };
   await worker.tick();
   assert.equal(store.get(firstId)!.status, 'failed');
   assert.equal(store.get(firstId)!.tx_hash, txHash);
@@ -692,6 +721,7 @@ test('matching receipt addresses, hashes and event bytes remain valid across hex
   receipt.cumulativeGasUsed += 21_000n;
   receipt.logs[0].transactionIndex = 1;
   canonical.transactions = [otherTxHash, uppercaseHash];
+  canonical.gasUsed = receipt.cumulativeGasUsed;
   receipt.logs[0].transactionHash = uppercaseHash;
   receipt.logs[0].blockHash = '0x' + 'cD'.repeat(32);
   const uppercaseHex = (hex: string) => '0x' + hex.slice(2).toUpperCase();

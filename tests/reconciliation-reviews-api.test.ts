@@ -100,7 +100,7 @@ async function createContext(reviewRows: number, withSettled: boolean) {
       blockReads++;
       assert.equal(height, 17);
       return { number: 17, hash: contradictory ? replacementHash : blockHash, baseFeePerGas: 1n,
-        transactions: contradictory ? [] : [txHash] };
+        gasUsed: contradictory ? 0n : 125_000n, gasLimit: 30_000_000n, transactions: contradictory ? [] : [txHash] };
     }
   };
   const router = { interface: iface, connect() { return this; } };

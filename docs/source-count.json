@@ -2,14 +2,14 @@
   "method": "Physical and nonblank source lines, including source comments and tests. Excludes dependency installs, lockfiles, JSON, docs, binaries, build output, generated files and databases.",
   "original": {
     "files": 123,
-    "physicalLines": 19843,
-    "nonblankLines": 18930
+    "physicalLines": 19937,
+    "nonblankLines": 19021
   },
   "upstream": {
     "files": 4484,
     "physicalLines": 714385,
     "nonblankLines": 622912
   },
-  "totalNonblankSourceLines": 641842,
+  "totalNonblankSourceLines": 641933,
   "upstreamProject": "Besu 26.10.1; not original ClearLedger code"
 }

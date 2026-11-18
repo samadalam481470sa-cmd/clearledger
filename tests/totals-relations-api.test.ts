@@ -36,7 +36,9 @@ beforeEach(async () => {
     getTransactionReceipt: async (hash: string) => { rpcCalls++; return receipts.get(hash) ?? null; },
     getBlock: async (number: number) => {
       rpcCalls++;
-      return { number, hash: blockHash, baseFeePerGas: 1n, transactions: transactionsByBlock.get(number) ?? [] };
+      const transactions = transactionsByBlock.get(number) ?? [];
+      return { number, hash: blockHash, baseFeePerGas: 1n, gasUsed: 125_000n * BigInt(transactions.length),
+        gasLimit: 30_000_000n, transactions };
     }
   };
   const router = { interface: iface, connect() { return this; } };

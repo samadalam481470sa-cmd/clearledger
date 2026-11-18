@@ -108,7 +108,7 @@ beforeEach(() => {
       }
       blockReads++;
       return { number: 17, hash: blockHash, baseFeePerGas: maxFee - maxFee / 2n,
-        transactions: receipt ? [receipt.hash] : [] };
+        gasUsed: receipt ? 125_000n : 0n, gasLimit: 30_000_000n, transactions: receipt ? [receipt.hash] : [] };
     }
   };
   service = new PaymentService(store, provider as unknown as JsonRpcProvider,
