@@ -19,6 +19,16 @@ Other statuses include 400 for malformed payloads, 401 authentication, 403 Host/
 
 JSON bodies are limited to 32 KiB. Authenticated API calls are limited to 240 per minute per loopback address. Overview returns bounded previews of up to 100 payments and 100 journal rows. The dashboard uses separate 25-row payment/journal pages and per-asset totals; overview still supplies network details, recent audit events, and explicitly bounded activity counts.
 
+## JSON request errors
+
+Within the 32 KiB body limit, malformed JSON sent to `POST /api/payments` or `POST /api/demo/payment` returns HTTP 400 with this fixed body:
+
+```json
+{"error":"Invalid JSON request body"}
+```
+
+The response omits submitted fragments and parser positions. Parsing fails before payment acceptance or demo signing. Host, Origin and authentication checks still precede body parsing. The limit counts received bytes; an oversized body retains HTTP 422 with `Request body exceeds 32 KiB`. This change covers JSON syntax errors in these two body readers. Valid JSON still reaches existing field validation, and later service errors retain their existing classification. UTF-8 decoding behavior is unchanged.
+
 ## SQLite HTTP errors
 
 Catch-path errors with top-level `code: "ERR_SQLITE_ERROR"` return HTTP 500 with this fixed body, after existing malformed-input/conflict classification:
@@ -27,7 +37,7 @@ Catch-path errors with top-level `code: "ERR_SQLITE_ERROR"` return HTTP 500 with
 {"error":"Storage operation failed; check payment history before retrying"}
 ```
 
-The response omits native messages, short messages and SQL/trigger details. The handler makes no automatic retry and does not infer whether acceptance committed before a later storage operation failed. Once storage is usable, inspect payment/journal history and reconcile as appropriate; replay the original signed payer/payment ID rather than creating a fresh instruction for the same transfer. The demo endpoint creates fresh IDs and has no durable client replay key.
+The response omits native messages, short messages and SQL/trigger details. The handler makes no automatic retry and does not infer whether acceptance committed before a later storage operation failed. Once storage is usable, inspect payment/journal history and reconcile as appropriate; replay the original signed payer/payment ID rather than creating a fresh instruction for the same transfer. For demo submissions, retry the original caller-supplied payment ID and amount; replay lasts only for the running demo’s in-memory ledger. See [demo replay](#retry-a-demo-payment-by-id).
 
 This branch recognizes only the top-level native code. Closed-handle `ERR_INVALID_STATE`, nested codes and generic errors retain their existing paths; it is not an all-error redaction or storage-availability guarantee. The existing dashboard already treats 422/500/503 submission errors as uncertain outcomes, so this adds no client retry behavior. See [validation](VALIDATION.md#sqlite-http-errors).
 

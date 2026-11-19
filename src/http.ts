@@ -34,7 +34,12 @@ async function body(req: IncomingMessage) {
     if (size > 32768) throw new Error('Request body exceeds 32 KiB');
     chunks.push(chunk);
   }
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch (error) {
+    if (error instanceof SyntaxError) throw new SyntaxError('Invalid JSON request body');
+    throw error;
+  }
 }
 function authenticated(req: IncomingMessage, key: string) {
   const actual = Buffer.from(req.headers.authorization ?? '');
