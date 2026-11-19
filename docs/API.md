@@ -61,6 +61,8 @@ Replay is limited to the running demo’s in-memory ledger. The dashboard holds 
 
 ## Exact payment lookup
 
+The dashboard gives each explicit ID lookup a 15-second response deadline, including receipt of its JSON body. Expiry aborts the client request, keeps the entered ID and displays `Payment lookup timed out. Try this ID again.` The Find payment button becomes available for an explicit retry. A timed-out or cancelled response cannot later open an obsolete receipt. The server can still finish a read after the client stops waiting. [Lookup timeout verification](../STATUS.md#dashboard-payment-lookup-response-deadline).
+
 `GET /api/payments/{id}` returns HTTP 200 with one direct public record, using the same shape as an item in `GET /api/payments`. There is no page or wrapper object. Use the record's `id`, or compute the submitted payer address in lowercase, a colon, and the submitted bytes32 payment ID in lowercase. The decoded identifier must match `0x{40 lowercase hex}:0x{64 lowercase hex}`; a literal colon or `encodeURIComponent(id)` is accepted. Decoding happens once, with no trimming or case folding.
 
 The route accepts no query parameters, including pagination/status metadata. Such metadata returns 400 with `{"error":"Payment lookup does not accept query parameters"}`. Malformed, noncanonical or undecodable identifiers return 400 with `{"error":"Invalid payment identifier"}`. A well-formed key with no visible local record returns 404 with `{"error":"Payment not found"}`. These checks validate key syntax only; zero-valued well-formed keys are not rejected as payment authorizations would be.

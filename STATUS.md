@@ -1,6 +1,6 @@
 # ClearLedger status
 
-Updated: November 18, 2026 (UTC).
+Updated: November 18, 2026 (America/Chicago).
 
 ## Scope and constraints
 
@@ -475,6 +475,14 @@ Project writes are confined to the new `outputs/clearledger/` directory and task
 
 - Extended Linux job `132765327224` passed all 10 steps on source `a0c13705da1434864e3f899eb15bf30dee398e64` and tree `60114eb751b60d0ddf1a937593040f0477867b99`. Its focused case passed in 653,219.816626 ms. Before and after restart it observed 322,696 and 322,559 ms respectively, with 60 bursts, 720 HTTP 200 responses, 296 invariant observations and 318 failed receipt attempts per window. Each window logged 21 failed receipts after its boundary. Combined active observation was 645,255 ms within a 646,229 ms receipt-route outage. The 871 ms closed-to-ready gap and one startup receipt attempt were excluded. All 1,440 reads passed the existing response and ledger assertions. Both payments settled with two journals and reconciliation 2/0. [Extended outage CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/43698870254).
 - Regular Linux job `132765327427` passed all 1,130 tests in 553,315.576838 ms with zero failures or skips on the same source. The default case passed in 189,736.254183 ms with 432 HTTP 200 responses and 183,006 ms of active observation. Fresh install, strict typecheck, Solidity 0.8.30 targeting Paris, the 35-module dashboard build and source count passed. The latest Besu result remains tied to the prior gas allowance revision. [Regular CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/43698870256).
+
+## Dashboard payment lookup response deadline
+
+- Explicit payment lookup now has a 15-second client response deadline covering the JSON body. A timeout aborts the request, preserves the entered record ID and leaves the controller in an error state with `Payment lookup timed out. Try this ID again.` The user can explicitly retry the same ID. Late responses are ignored. Editing, clearing or disposing a lookup also releases its pending wait when a loader ignores cancellation.
+- The initial regression held a loader unresolved. Before implementation, the outer one-second test deadline expired while the lookup stayed loading. After implementation, the timeout test returned false with the same ID, an aborted signal and zero receipt callbacks, then an explicit retry opened the original record. Simulated timers verified the default boundary at 15,000 ms and cleanup after a completed lookup.
+- All 58 focused controller, native HTTP and demo-submission tests passed on Windows with zero failures or skips. The HTTP case sent headers and half a JSON response, then held its remaining body across an injected 500 ms client deadline. The body read was aborted, the timeout state retained the ID, and releasing the old reply produced no stale receipt. An explicit retry succeeded. The fixture retained exact SQLite and filtered-page snapshots across nine exact reads, with zero lookup RPC calls and four found callbacks. Existing demo submission timeout and cancellation cases passed through the shared request helper.
+- Strict TypeScript, Solidity 0.8.30/Paris and the 35-module dashboard build passed locally. Source-report verification passed at 642,203 nonblank lines, with 19,291 application-area lines in 123 files and 622,912 attributed Besu lines in 4,484 files.
+- These are controller and native HTTP tests with synthetic ledger records. Browser layout, mounted interaction and accessibility remain unverified under the existing origin denial. The client timeout can stop its own wait while the server continues a read. Event-loop blocking and an overall server deadline remain outside this evidence.
 
 ## Signed payment deadline and containing block
 

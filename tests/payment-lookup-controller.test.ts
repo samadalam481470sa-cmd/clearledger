@@ -26,6 +26,14 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 const statusError = (status: number, message: string) => Object.assign(new Error(message), { status });
+async function within<T>(pending: Promise<T>, label: string) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([pending, new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(label + ' remained pending')), 1000);
+    })]);
+  } finally { clearTimeout(timer); }
+}
 
 test('lookup IDs require exact lowercase syntax without trimming, case folding or business validation', () => {
   assert.equal(isPaymentLookupId(key), true);
@@ -125,6 +133,120 @@ test('not-found uses local time-qualified copy and permits an explicit later ret
   assert.equal(await lookup.find(), true);
   assert.equal(calls, 2);
   lookup.dispose();
+});
+
+test('a lookup response timeout retains the ID and permits only an explicit same-ID retry', { timeout: 3000 }, async () => {
+  const response = deferred<PaymentRow>();
+  let calls = 0;
+  const signals: AbortSignal[] = [], found: PaymentLookupSnapshot[] = [];
+  const lookup = new PaymentLookup(async (path, signal) => {
+    assert.equal(path, paymentLookupPath(key));
+    calls++; signals.push(signal);
+    return calls === 1 ? response.promise : row();
+  }, () => {}, snapshot => found.push(snapshot), fixedNow, 20);
+  lookup.setInput(key);
+  const pending = lookup.find();
+  try {
+    assert.equal(await within(pending, 'Silent payment lookup'), false);
+    assert.deepEqual(lookup.state, {
+      id: key, phase: 'error', error: 'Payment lookup timed out. Try this ID again.', snapshot: null
+    });
+    assert.equal(signals[0].aborted, true);
+    assert.equal(found.length, 0);
+    await Promise.resolve(); await Promise.resolve();
+    assert.equal(calls, 1, 'A timed-out lookup must not retry automatically');
+    assert.notEqual(lookup.state.phase, 'not-found');
+    assert.equal(await within(lookup.find(), 'Explicit retry'), true);
+    assert.equal(calls, 2);
+    assert.equal(signals[1].aborted, false);
+    assert.equal(found.length, 1);
+    assert.equal(found[0].row.id, key);
+  } finally {
+    lookup.dispose(); response.resolve(row());
+    await Promise.allSettled([pending]);
+  }
+});
+
+for (const outcome of ['success', 'error'] as const)
+  test(`a timed-out lookup ignores a late ${outcome} after the same-ID retry succeeds`, { timeout: 3000 }, async () => {
+    const response = deferred<PaymentRow>();
+    let calls = 0;
+    const changes: PaymentLookupState[] = [], found: PaymentLookupSnapshot[] = [];
+    const lookup = new PaymentLookup(async () => ++calls === 1 ? response.promise : row(),
+      state => changes.push(state), snapshot => found.push(snapshot), fixedNow, 20);
+    lookup.setInput(key);
+    const pending = lookup.find();
+    try {
+      assert.equal(await within(pending, 'Lookup before late ' + outcome), false);
+      assert.equal(lookup.state.phase, 'error');
+      assert.equal(found.length, 0);
+      assert.equal(await within(lookup.find(), 'Replacement lookup'), true);
+      const completed = JSON.stringify(lookup.state), updates = changes.length;
+      if (outcome === 'success') response.resolve({ ...row(), status: 'review' });
+      else response.reject(statusError(404, 'Late missing record'));
+      for (let turn = 0; turn < 8; turn++) await Promise.resolve();
+      assert.equal(JSON.stringify(lookup.state), completed);
+      assert.equal(changes.length, updates);
+      assert.equal(found.length, 1);
+      assert.equal(found[0].row.status, 'settled');
+      assert.equal(calls, 2);
+    } finally {
+      lookup.dispose(); response.resolve(row());
+      await Promise.allSettled([pending]);
+    }
+  });
+
+test('the default lookup deadline is 15 seconds and does not depend on transport cancellation', { timeout: 3000 }, async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const response = deferred<PaymentRow>();
+  let signal: AbortSignal | undefined;
+  const lookup = new PaymentLookup(async (_path, active) => { signal = active; return response.promise; }, () => {});
+  lookup.setInput(key);
+  const pending = lookup.find();
+  try {
+    t.mock.timers.tick(14999);
+    for (let turn = 0; turn < 8; turn++) await Promise.resolve();
+    assert.equal(lookup.state.phase, 'loading');
+    assert.equal(signal?.aborted, false);
+    t.mock.timers.tick(1);
+    for (let turn = 0; turn < 8; turn++) await Promise.resolve();
+    assert.equal(lookup.state.phase, 'error');
+    assert.equal(lookup.state.error, 'Payment lookup timed out. Try this ID again.');
+    assert.equal(signal?.aborted, true);
+    assert.equal(await pending, false);
+  } finally {
+    lookup.dispose(); response.resolve(row());
+    await Promise.allSettled([pending]);
+  }
+});
+
+test('a completed lookup clears its deadline before the snapshot can become a timeout error', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let signal: AbortSignal | undefined;
+  const found: PaymentLookupSnapshot[] = [], changes: PaymentLookupState[] = [];
+  const lookup = new PaymentLookup(async (_path, active) => { signal = active; return row(); },
+    state => changes.push(state), snapshot => found.push(snapshot), fixedNow, 20);
+  try {
+    lookup.setInput(key);
+    assert.equal(await lookup.find(), true);
+    const updates = changes.length, completed = JSON.stringify(lookup.state);
+    t.mock.timers.tick(20000);
+    for (let turn = 0; turn < 8; turn++) await Promise.resolve();
+    assert.equal(JSON.stringify(lookup.state), completed);
+    assert.equal(changes.length, updates);
+    assert.equal(found.length, 1);
+    assert.equal(signal?.aborted, false);
+  } finally { lookup.dispose(); }
+});
+
+test('invalid lookup deadlines are rejected before a request or state update can start', () => {
+  for (const timeoutMs of [NaN, Infinity, 0, -1, 0.5, 2147483648]) {
+    let calls = 0, updates = 0;
+    assert.throws(() => new PaymentLookup(async () => { calls++; return row(); },
+      () => { updates++; }, undefined, fixedNow, timeoutMs), RangeError);
+    assert.equal(calls, 0);
+    assert.equal(updates, 0);
+  }
 });
 
 for (const [name, error, message] of [
@@ -246,6 +368,8 @@ for (const action of ['edit', 'same-input', 'reset', 'dispose'] as const)
     else lookup.dispose();
     assert.equal(signal?.aborted, true);
     const events = changes.length;
+    assert.equal(await within(pending, action + ' cancellation'), false,
+      'Cancellation must end the client wait even when its loader ignores abort');
     response.resolve(row());
     assert.equal(await pending, false);
     assert.equal(changes.length, events);

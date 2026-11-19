@@ -60,10 +60,11 @@ test('the exact-ID client reads old and corrupt local history during RPC failure
 }, async t => {
   const store = new Store();
   let server: ReturnType<typeof makeServer> | undefined, forwarder: ReturnType<typeof createServer> | undefined;
-  let lookup: PaymentLookup | undefined, pager: CursorPager<PaymentRow> | undefined;
+  let lookup: PaymentLookup | undefined, timeoutLookup: PaymentLookup | undefined, pager: CursorPager<PaymentRow> | undefined;
+  let onReadHeaders: (() => void) | undefined;
   let rpcCalls = 0, activeKey = apiKey;
   const clientOperations: Promise<unknown>[] = [], forwarding = new Set<Promise<void>>();
-  const gates: { entered: ReturnType<typeof deferred>; release: ReturnType<typeof deferred> }[] = [];
+  const gates: { entered: ReturnType<typeof deferred>; release: ReturnType<typeof deferred>; body: boolean }[] = [];
   let held: typeof gates[number] | undefined;
   const requests: { method: string; path: string }[] = [];
   const statuses: number[] = [], states: PaymentLookupState[] = [], found: PaymentLookupSnapshot[] = [];
@@ -95,6 +96,14 @@ test('the exact-ID client reads old and corrupt local history during RPC failure
         const response = await fetch(origin + path, { signal: AbortSignal.timeout(3000),
           headers: { Authorization: req.headers.authorization ?? '' } });
         const text = await response.text();
+        if (gate?.body) {
+          const split = Math.floor(text.length / 2);
+          res.writeHead(response.status, { 'Content-Type': 'application/json' });
+          res.write(text.slice(0, split));
+          gate.entered.resolve(); await gate.release.promise;
+          if (!res.destroyed) res.end(text.slice(split));
+          return;
+        }
         if (gate) { gate.entered.resolve(); await gate.release.promise; }
         if (!res.destroyed) { res.writeHead(response.status, { 'Content-Type': 'application/json' }); res.end(text); }
       })().catch(() => { if (!res.destroyed) { res.writeHead(502); res.end('{"error":"Test response forwarding failed"}'); } });
@@ -106,6 +115,7 @@ test('the exact-ID client reads old and corrupt local history during RPC failure
       const response = await fetch(url + '/api/' + path, {
         signal: AbortSignal.any([signal, AbortSignal.timeout(3000)]), headers: { Authorization: 'Bearer ' + activeKey }
       });
+      onReadHeaders?.();
       const text = await response.text();
       assert.ok(!text.includes(privateMarker), 'A local history response exposed private persisted evidence');
       statuses.push(response.status);
@@ -156,7 +166,7 @@ test('the exact-ID client reads old and corrupt local history during RPC failure
     activeKey = apiKey;
     assert.equal(await track(lookup.find()), true); assert.equal(found.length, 3);
     assert.deepEqual(found[2].row, found[0].row);
-    function arm() { const gate = { entered: deferred(), release: deferred() }; gates.push(gate); held = gate; return gate; }
+    function arm(body = false) { const gate = { entered: deferred(), release: deferred(), body }; gates.push(gate); held = gate; return gate; }
     const resetGate = arm(); lookup.setInput(oldId);
     const resetPending = track(lookup.find()); await within(resetGate.entered.promise, 'Reset lookup response');
     const resetSignal = lookupSignals.at(-1)!; assert.equal(resetSignal.aborted, false);
@@ -172,19 +182,53 @@ test('the exact-ID client reads old and corrupt local history during RPC failure
     assert.equal(states.length, updatesBeforeDispose); assert.equal(found.length, 3);
     assert.equal(await track(lookup.find()), false);
     await within(Promise.all([...forwarding]), 'Response forwarding completion');
+    // Send genuine HTTP headers and half a valid response before withholding the
+    // remainder. The lookup deadline must cover body consumption, not only fetch.
+    const bodyGate = arm(true), receivedHeaders = deferred(), abortedBody = deferred();
+    const timeoutFound: PaymentLookupSnapshot[] = [], timeoutStates: PaymentLookupState[] = [];
+    onReadHeaders = () => receivedHeaders.resolve();
+    timeoutLookup = new PaymentLookup((path, signal) => {
+      lookupPaths.push(path); lookupSignals.push(signal);
+      return load(path, signal).catch(error => { if (signal.aborted) abortedBody.resolve(); throw error; });
+    }, state => timeoutStates.push(state), result => timeoutFound.push(result), undefined, 500);
+    timeoutLookup.setInput(oldId);
+    const beforeTimeoutRequests = requests.length;
+    const timeoutPending = track(timeoutLookup.find());
+    await within(bodyGate.entered.promise, 'Held HTTP body');
+    await within(receivedHeaders.promise, 'Received HTTP response headers');
+    assert.equal(timeoutLookup.state.phase, 'loading');
+    assert.equal(await within(timeoutPending, 'Payment lookup body deadline'), false);
+    await within(abortedBody.promise, 'Native response body cancellation');
+    assert.equal(lookupSignals.at(-1)!.aborted, true);
+    assert.deepEqual(timeoutLookup.state, {
+      id: oldId, phase: 'error', error: 'Payment lookup timed out. Try this ID again.', snapshot: null
+    });
+    assert.equal(timeoutFound.length, 0);
+    assert.equal(requests.length, beforeTimeoutRequests + 1, 'Timeout must not issue an automatic retry');
+    assert.equal(snapshot(store), privateBefore);
+    assert.equal(JSON.stringify(pager.state), pageBefore);
+    const timeoutUpdates = timeoutStates.length;
+    bodyGate.release.resolve(); onReadHeaders = undefined;
+    await within(Promise.all([...forwarding]), 'Timed-out body forwarding cleanup');
+    assert.equal(timeoutStates.length, timeoutUpdates);
+    assert.equal(timeoutFound.length, 0);
+    assert.equal(await track(timeoutLookup.find()), true);
+    assert.equal(timeoutFound.length, 1);
+    assert.deepEqual(timeoutFound[0].row, found[0].row);
+    assert.equal(timeoutLookup.state.id, oldId);
     assert.equal(rpcCalls, 1, 'Exact lookup and cursor reads must not consult the unavailable provider');
     assert.equal(snapshot(store), privateBefore, 'History reads changed schema, rows, journal, audit, sequence or write count');
     assert.equal(JSON.stringify(pager.state), pageBefore); assert.deepEqual(pagePaths, pagesBefore);
     assert.equal(pagePaths.length, 2, 'Lookup must not refresh or traverse the existing filtered pager');
     assert.ok(requests.every(request => request.method === 'GET'));
     assert.equal(requests.filter(request => request.path === '/api/overview').length, 1);
-    assert.equal(requests.filter(request => request.path.startsWith('/api/payments/')).length, 7);
-    assert.equal(requests.length, 10, 'The controller issued an unrelated request');
-    t.diagnostic(JSON.stringify({ syntheticRecords: 107, exactReads: 7, foundCallbacks: found.length,
+    assert.equal(requests.filter(request => request.path.startsWith('/api/payments/')).length, 9);
+    assert.equal(requests.length, 12, 'The controller issued an unrelated request');
+    t.diagnostic(JSON.stringify({ syntheticRecords: 107, exactReads: 9, foundCallbacks: found.length + timeoutFound.length,
       lookupRpcCalls: rpcCalls - 1, filteredPage: pager.state.page, pagerLoads: pagePaths.length,
-      historyWrites: 0, cancelledNativeRequests: 2, automaticMutations: 0 }));
+      historyWrites: 0, cancelledNativeRequests: 3, bodyTimeouts: 1, automaticMutations: 0 }));
   } finally {
-    lookup?.dispose(); pager?.dispose(); for (const gate of gates) gate.release.resolve();
+    lookup?.dispose(); timeoutLookup?.dispose(); pager?.dispose(); for (const gate of gates) gate.release.resolve();
     const failures: unknown[] = [];
     const cleanup = async (action: () => unknown) => { try { await action(); } catch (error) { failures.push(error); } };
     await cleanup(() => within(Promise.allSettled(clientOperations), 'Client lookup cleanup'));

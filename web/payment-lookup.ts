@@ -85,10 +85,8 @@ export function newDemoPaymentAttempt(amount: string, payer: string | undefined,
   return { request: { amount, paymentId }, recordId: payer.toLowerCase() + ':' + paymentId };
 }
 
-/** Bound the client wait without changing the attempt or cancelling server-side work. */
-export async function requestDemoPayment(attempt: DemoPaymentAttempt,
-  send: (body: DemoPaymentAttempt['request'], signal: AbortSignal) => Promise<unknown>,
-  parentSignal: AbortSignal, timeoutMs = 15_000): Promise<unknown> {
+async function requestWithTimeout<T>(send: (signal: AbortSignal) => Promise<T>,
+  parentSignal: AbortSignal, timeoutMs: number, timeoutMessage: string): Promise<T> {
   if (parentSignal.aborted) throw parentSignal.reason;
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -100,18 +98,25 @@ export async function requestDemoPayment(attempt: DemoPaymentAttempt,
     };
     cancel = () => stop(parentSignal.reason);
     parentSignal.addEventListener('abort', cancel, { once: true });
-    timer = setTimeout(() => stop(new Error('Payment response timed out')), timeoutMs);
+    timer = setTimeout(() => stop(new Error(timeoutMessage)), timeoutMs);
   });
   try {
-    const response = Promise.resolve().then(() => {
-      if (controller.signal.aborted) throw controller.signal.reason;
-      return send(attempt.request, controller.signal);
-    });
+    const response = new Promise<T>(resolve => { resolve(send(controller.signal)); });
     return await Promise.race([interrupted, response]);
   } finally {
     clearTimeout(timer);
     parentSignal.removeEventListener('abort', cancel);
   }
+}
+
+/** Bound the client wait without changing the attempt or cancelling server-side work. */
+export async function requestDemoPayment(attempt: DemoPaymentAttempt,
+  send: (body: DemoPaymentAttempt['request'], signal: AbortSignal) => Promise<unknown>,
+  parentSignal: AbortSignal, timeoutMs = 15_000): Promise<unknown> {
+  return requestWithTimeout(signal => Promise.resolve().then(() => {
+    if (signal.aborted) throw signal.reason;
+    return send(attempt.request, signal);
+  }), parentSignal, timeoutMs, 'Payment response timed out');
 }
 
 /** Acknowledge the returned record only when it agrees with the submitted demo transfer. */
@@ -147,7 +152,11 @@ export class PaymentLookup {
   constructor(private readonly loader: (path: string, signal: AbortSignal) => Promise<PaymentRow>,
     private readonly onChange: (state: PaymentLookupState) => void,
     private readonly onFound?: (snapshot: PaymentLookupSnapshot) => void,
-    private readonly now: () => Date = () => new Date()) {}
+    private readonly now: () => Date = () => new Date(),
+    private readonly timeoutMs = 15_000) {
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2147483647)
+      throw new RangeError('Lookup timeout must be an integer from 1 to 2147483647 milliseconds');
+  }
   get state() { return copyState(this.view); }
   private publish(state: PaymentLookupState) { this.view = state; this.onChange(copyState(state)); }
   private invalidate() { this.generation++; this.current?.abort(); this.current = undefined; }
@@ -172,7 +181,8 @@ export class PaymentLookup {
     this.publish({ id, phase: 'loading', error: '', snapshot: null });
     if (!active()) return false;
     try {
-      const response = await this.loader(paymentLookupPath(id), controller.signal);
+      const response = await requestWithTimeout(signal => this.loader(paymentLookupPath(id), signal),
+        controller.signal, this.timeoutMs, 'Payment lookup timed out. Try this ID again.');
       if (!active()) return false;
       const snapshot = { row: publicRecord(response, id), capturedAt: this.now().toISOString() };
       this.publish({ id, phase: 'found', error: '', snapshot });
