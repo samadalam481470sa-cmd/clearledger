@@ -43,7 +43,7 @@ On the original Windows workspace, `Start-ClearLedger.ps1` can use the Node runt
 - The durable RPC CLI awaits a bound loopback listener before worker dispatch. A refused port preserves existing payment, audit and journal records; cleanup closes Store before releasing ownership. Earlier schema/context initialization can still write. See [listener readiness](docs/API.md#rpc-listener-readiness).
 - RPC startup also acquires exclusive ownership of its canonical local database file before opening the ledger or starting HTTP/dispatch. A second cooperating CLI refuses startup; process exit permits restart without deleting the persistent SQLite lock sidecar. Separate databases sharing a relayer key still require operator coordination; see [ownership limits](docs/API.md#rpc-database-ownership).
 - Exactly one matching settlement event, the configured confirmation count, and unique transaction membership at the receipt index are required before the transfer journal is finalized. The event's transaction hash, block hash, and height must agree with its receipt; a conflicting event for the same payer and payment ID preserves the broadcast reservation for retry.
-- Reconciliation checks saved authorization, signed bytes, receipt identity, transaction position, settlement event and journal. It distinguishes newly flagged records from all outstanding reviews, including unjournaled payments. Inconclusive missing-RPC evidence can return a retryable HTTP 503. [Reconciliation scope](docs/API.md#reconciliation-integrity).
+- Reconciliation checks saved authorization, signed bytes, receipt identity, transaction position, settlement event and journal. Known local journal contradictions flag review before RPC, with the original evidence retained. It distinguishes newly flagged records from all outstanding reviews, including unjournaled payments. Inconclusive missing-RPC evidence can return a retryable HTTP 503. [Reconciliation scope](docs/API.md#reconciliation-integrity).
 - Payment and journal APIs support bounded cursor pages, and exact integer transfer-volume totals are grouped by asset. Required missing postings, orphan/out-of-status journals, or malformed included journal tokens/amounts make the whole totals report unavailable; the dashboard clears cached totals/counts rather than showing partial or zero values. See [totals integrity](docs/API.md#journal-totals-integrity). Reconciliation scans all settled pages rather than a recent-record cutoff.
 - Invalid stored authorization data remains visible in history with a fixed warning and retained record/transaction metadata. Dashboard rows and receipts show placeholders for unavailable amounts or routes; reads do not repair financial records. See [nullable payment records](docs/API.md#invalid-stored-payment-data).
 - A React dashboard browses payment and transfer-journal cursor pages, shows settled/review volume separately per asset, and exposes receipt snapshots, block data, and recent local audit events. Chain-scoped configured metadata enables exact decimal display; unknown assets or metadata failing frontend display checks keep raw base units. Startup validates address checksums; the frontend checks nonzero address syntax without EIP-55 validation. An older demo can format its known token only when the registry is absent; present empty/invalid registries disable that fallback. See [metadata behavior](docs/API.md#asset-display-metadata).
@@ -77,8 +77,8 @@ The results below belong to the stated source revisions. Documentation-only comm
 
 | Verification | Reviewed source | Completed evidence |
 | --- | --- | --- |
-| Regular Linux suite | `4718356` | 1,341 tests passed with zero failures or skips. Vendored Besu tree verification, fresh install, strict typecheck, Solidity compilation, dashboard build and source-report verification passed. [CI run](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/44479682063) |
-| Four-validator Besu | `2f88d77` | All 11 checks passed on one Docker host in 359,421 ms, including EOA and contract-wallet quorum recovery, revocation and reconciliation of three journals. [CI run](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/44416077647) |
+| Regular Linux suite | `2122597` | 1,361 tests passed with zero failures or skips. Vendored Besu tree verification, fresh install, strict typecheck, Solidity compilation, dashboard build and source-report verification passed. [CI run](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/44599870055) |
+| Four-validator Besu | `4f5cb8e` | All 11 checks passed on one Docker host in 416,701 ms, including EOA and contract-wallet quorum recovery, revocation and reconciliation of three journals. [CI run](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/44597626345) |
 | CLI crash and rollback recovery | `86460563` | The CLI recovered the original signed reservation after a controlled Ganache rollback, then settled two payments on the final chain with two journals and reconciliation 2/0. [Evidence](STATUS.md#cli-recovery-after-a-rolled-back-settlement) |
 | Longer receipt outage | `a0c13705` | Two five-minute observation windows recorded 645,255 ms of active checks and 1,440 authenticated HTTP 200 history responses in bursts of 12 concurrent requests across abrupt restart. Two payments recovered with two journals and reconciliation 2/0. [Dedicated CI run](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/43698870254) |
 
@@ -90,13 +90,13 @@ Detailed regression results and earlier failures retain their original source re
 
 ## More than 100,000 source lines
 
-The [machine-readable count](docs/source-count.json) records **643,077 nonblank source lines**, including comments and tests.
+The [machine-readable count](docs/source-count.json) records **643,313 nonblank source lines**, including comments and tests.
 
 | Source area | Files | Nonblank lines |
 | --- | --- | --- |
-| ClearLedger application area | 126 | 20,165 |
+| ClearLedger application area | 127 | 20,401 |
 | Attributed Besu snapshot | 4,484 | 622,912 |
-| Combined | 4,610 | 643,077 |
+| Combined | 4,611 | 643,313 |
 
 Package installs, lockfiles, JSON, documentation, generated output and databases are excluded. Application-area counting includes the clearly attributed OpenZeppelin-derived signature-check adaptation. Application code is MIT-licensed. Besu and dependencies retain their own licenses, and the consensus implementation belongs to Besu. [Provenance and licenses](docs/PROVENANCE.md).
 
