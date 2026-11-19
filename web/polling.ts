@@ -1,3 +1,5 @@
+import { requestWithTimeout } from './request.ts';
+
 export interface PollScheduler {
   schedule(callback: () => void, delayMs: number): unknown;
   cancel(handle: unknown): void;
@@ -7,6 +9,7 @@ interface PollOptions<T> {
   onValue(value: T): void;
   onError?(error: unknown): void;
   intervalMs?: number;
+  timeoutMs?: number;
   scheduler?: PollScheduler;
 }
 
@@ -15,6 +18,9 @@ export function startPolling<T>(options: PollOptions<T>): { stop(): void } {
   const interval = options.intervalMs ?? 5000;
   if (!Number.isSafeInteger(interval) || interval < 1 || interval > 2147483647)
     throw new RangeError('Polling interval must be an integer from 1 to 2147483647 milliseconds');
+  const timeout = options.timeoutMs ?? 15_000;
+  if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 2147483647)
+    throw new RangeError('Polling timeout must be an integer from 1 to 2147483647 milliseconds');
   const scheduler = options.scheduler ?? {
     schedule: (callback: () => void, delay: number) => setTimeout(callback, delay),
     cancel: (handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>)
@@ -26,7 +32,8 @@ export function startPolling<T>(options: PollOptions<T>): { stop(): void } {
     if (stopped) return;
     scheduled = false;
     try {
-      const value = await options.load(controller.signal);
+      const value = await requestWithTimeout(signal => options.load(signal),
+        controller.signal, timeout, 'Refresh response timed out');
       if (!stopped) options.onValue(value);
     } catch (error) {
       if (!stopped) {

@@ -25,7 +25,117 @@ class Timers implements PollScheduler {
   }
   runNext() { this.takeNext().callback(); }
 }
-async function settled() { await Promise.resolve(); await Promise.resolve(); }
+async function settled() { await new Promise<void>(resolve => setImmediate(resolve)); }
+
+test('the default resource deadline reports a stalled refresh at 15 seconds and schedules one retry', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const timers = new Timers(), held = deferred<number>();
+  const values: number[] = [], errors: unknown[] = [];
+  let calls = 0, signal: AbortSignal | undefined;
+  const poller = startPolling({ load: active => { calls++; signal = active; return held.promise; },
+    onValue: value => values.push(value), onError: error => errors.push(error), scheduler: timers });
+  try {
+    assert.equal(calls, 1); assert.equal(signal?.aborted, false);
+    t.mock.timers.tick(14999); await settled();
+    assert.deepEqual(values, []); assert.deepEqual(errors, []); assert.equal(timers.pending.size, 0);
+    t.mock.timers.tick(1); await settled();
+    assert.equal(errors.length, 1);
+    assert.equal((errors[0] as Error).message, 'Refresh response timed out');
+    assert.equal(signal?.aborted, true); assert.equal(signal?.reason, errors[0]);
+    assert.equal(calls, 1); assert.equal(timers.pending.size, 1);
+    assert.equal(timers.takeNext().delay, 5000);
+  } finally { poller.stop(); held.resolve(0); await settled(); }
+});
+
+test('a timed-out refresh retains last-good data and recovers on the next scheduled refresh', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const timers = new Timers(), held = deferred<number>(), signals: AbortSignal[] = [];
+  let calls = 0;
+  const model = { value: 0, error: '' };
+  const poller = startPolling({ load: signal => {
+    signals.push(signal); calls++;
+    return calls === 2 ? held.promise : Promise.resolve(calls);
+  }, onValue: value => { model.value = value; model.error = ''; },
+  onError: error => { model.error = (error as Error).message; }, scheduler: timers, intervalMs: 25, timeoutMs: 20 });
+  try {
+    await settled(); assert.deepEqual(model, { value: 1, error: '' });
+    timers.runNext(); assert.equal(calls, 2); assert.equal(timers.pending.size, 0);
+    t.mock.timers.tick(19); await settled();
+    assert.deepEqual(model, { value: 1, error: '' });
+    t.mock.timers.tick(1); await settled();
+    assert.deepEqual(model, { value: 1, error: 'Refresh response timed out' });
+    assert.equal(signals[1].aborted, true); assert.equal(timers.pending.size, 1);
+    const next = timers.takeNext(); assert.equal(next.delay, 25); next.callback(); await settled();
+    assert.equal(calls, 3); assert.deepEqual(model, { value: 3, error: '' });
+    assert.notEqual(signals[2], signals[1]); assert.equal(signals[2].aborted, false);
+    held.resolve(999); await settled();
+    assert.deepEqual(model, { value: 3, error: '' }); assert.equal(timers.pending.size, 1);
+  } finally { poller.stop(); held.resolve(0); await settled(); }
+});
+
+for (const outcome of ['success', 'error'] as const) for (const retryFirst of [false, true]) {
+  test(`a timed-out refresh ignores late ${outcome} ${retryFirst ? 'after the next refresh succeeds' : 'before its retry interval'}`,
+    async t => {
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+      const timers = new Timers(), old = deferred<number>();
+      const values: number[] = [], errors: unknown[] = [];
+      let calls = 0;
+      const poller = startPolling({ load: () => ++calls === 1 ? old.promise : Promise.resolve(2),
+        onValue: value => values.push(value), onError: error => errors.push(error), scheduler: timers, timeoutMs: 20 });
+      try {
+        t.mock.timers.tick(20); await settled();
+        assert.equal(errors.length, 1); assert.equal(timers.pending.size, 1);
+        if (retryFirst) { timers.runNext(); await settled(); }
+        const before = { calls, values: [...values], errors: [...errors], timers: timers.pending.size };
+        if (outcome === 'success') old.resolve(999); else old.reject(new Error('Obsolete refresh failure'));
+        await settled();
+        assert.deepEqual({ calls, values, errors, timers: timers.pending.size }, before);
+        if (!retryFirst) { timers.runNext(); await settled(); }
+        assert.equal(calls, 2); assert.deepEqual(values, [2]); assert.equal(errors.length, 1);
+        assert.equal(timers.pending.size, 1);
+      } finally { poller.stop(); old.resolve(0); await settled(); }
+    });
+}
+
+test('a completed refresh clears its deadline without aborting or reporting a later timeout', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const timers = new Timers(), values: number[] = [], errors: unknown[] = [];
+  let signal: AbortSignal | undefined, calls = 0;
+  const poller = startPolling({ load: active => {
+    calls++; signal = active; return Promise.resolve(42);
+  }, onValue: value => values.push(value), onError: error => errors.push(error), scheduler: timers, timeoutMs: 20 });
+  try {
+    await settled(); assert.deepEqual(values, [42]); assert.equal(timers.pending.size, 1);
+    t.mock.timers.tick(20000); await settled();
+    assert.equal(signal?.aborted, false); assert.deepEqual(values, [42]); assert.deepEqual(errors, []);
+    assert.equal(calls, 1); assert.equal(timers.pending.size, 1);
+  } finally { poller.stop(); }
+});
+
+test('a timeout diagnostic callback that throws still permits the next scheduled refresh', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const timers = new Timers(), held = deferred<number>(), values: number[] = [];
+  let calls = 0, errors = 0;
+  const poller = startPolling({ load: () => ++calls === 1 ? held.promise : Promise.resolve(2),
+    onValue: value => values.push(value), onError: () => { errors++; throw new Error('Diagnostic failure'); },
+    scheduler: timers, timeoutMs: 20 });
+  try {
+    t.mock.timers.tick(20); await settled();
+    assert.equal(errors, 1); assert.equal(timers.pending.size, 1);
+    timers.runNext(); await settled();
+    assert.equal(calls, 2); assert.deepEqual(values, [2]); assert.equal(timers.pending.size, 1);
+  } finally { poller.stop(); held.resolve(0); await settled(); }
+});
+
+test('invalid resource deadlines are rejected before loading, publishing or scheduling', () => {
+  for (const timeoutMs of [0, -1, 1.5, NaN, Infinity, 2147483648]) {
+    let calls = 0, values = 0, errors = 0;
+    const timers = new Timers();
+    assert.throws(() => startPolling({ timeoutMs, scheduler: timers,
+      load: async () => { calls++; return 0; }, onValue: () => { values++; }, onError: () => { errors++; } }), RangeError);
+    assert.equal(calls, 0); assert.equal(values, 0); assert.equal(errors, 0); assert.equal(timers.pending.size, 0);
+  }
+});
 
 test('a resource polls immediately and serially, scheduling only after its current load completes', async () => {
   const timers = new Timers(), first = deferred<number>(), second = deferred<number>();
@@ -95,7 +205,8 @@ test('an error retains last-good state and later success clears the per-resource
 });
 
 for (const outcome of ['success', 'error'] as const) {
-  test('stop aborts pending transport and suppresses a late ' + outcome + ' and reschedule', async () => {
+  test('stop aborts pending transport and suppresses a late ' + outcome + ' and reschedule', async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
     const timers = new Timers(), waiting = deferred<number>();
     let signal: AbortSignal | undefined;
     const values: number[] = [], errors: unknown[] = [];
@@ -104,6 +215,10 @@ for (const outcome of ['success', 'error'] as const) {
     assert.equal(signal?.aborted, false);
     poller.stop(); poller.stop();
     assert.equal(signal?.aborted, true);
+    const reason = signal?.reason;
+    t.mock.timers.tick(20000); await settled();
+    assert.deepEqual(values, []); assert.deepEqual(errors, []); assert.equal(timers.pending.size, 0);
+    assert.equal(signal?.reason, reason);
     if (outcome === 'success') waiting.resolve(42); else waiting.reject(new Error('Late obsolete error'));
     await settled();
     assert.deepEqual(values, []); assert.deepEqual(errors, []); assert.equal(timers.pending.size, 0);
@@ -141,16 +256,22 @@ test('a replacement context ignores an old loader that does not honor cancellati
   } finally { previous.stop(); current.stop(); }
 });
 
-test('a synchronous loader failure and throwing diagnostic callback still permit the next refresh', async () => {
+test('a synchronous loader failure and throwing diagnostic callback still permit the next refresh', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   const timers = new Timers();
-  let calls = 0;
-  const values: number[] = [];
-  const poller = startPolling({ load: () => {
+  let calls = 0, errors = 0;
+  const values: number[] = [], signals: AbortSignal[] = [];
+  const poller = startPolling({ load: signal => {
+    signals.push(signal);
     if (++calls === 1) throw new Error('Synchronous load failure');
     return Promise.resolve(2);
-  }, onValue: value => values.push(value), onError: () => { throw new Error('Diagnostic failure'); }, scheduler: timers });
+  }, onValue: value => values.push(value), onError: () => { errors++; throw new Error('Diagnostic failure'); }, scheduler: timers });
   try {
+    await settled();
     assert.equal(timers.pending.size, 1);
+    t.mock.timers.tick(20000); await settled();
+    assert.equal(errors, 1); assert.equal(timers.pending.size, 1);
+    assert.equal(signals[0].aborted, false, 'A synchronous loader failure must clear its abandoned deadline');
     timers.runNext(); await settled();
     assert.equal(calls, 2); assert.deepEqual(values, [2]); assert.equal(timers.pending.size, 1);
   } finally { poller.stop(); }
