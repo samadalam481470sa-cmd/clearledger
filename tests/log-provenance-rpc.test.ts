@@ -9,13 +9,14 @@ import { compile } from '../scripts/compile.ts';
 import { localChain } from '../scripts/local-chain.ts';
 import { connectRouter } from '../src/chain.ts';
 import { createRpcProvider } from '../src/rpc.ts';
+import { computeReceiptLogsBloom } from '../src/receipt-bloom.ts';
 import { Store } from '../src/store.ts';
 import { PaymentService } from '../src/service.ts';
 import { paymentTypes, type Payment } from '../src/payment.ts';
 
 type Provenance = 'transactionHash' | 'blockHash' | 'blockNumber' | 'transactionIndex' | 'logIndex' | 'siblingLogIndex';
 type RpcFault = Provenance | BlockFault | 'duplicate' | 'conflictingAmount' | 'malformedData' |
-  'extraDataWord' | 'extraTopic' | 'status' | 'status-no-logs' | typeof receiptFields[number];
+  'extraDataWord' | 'extraTopic' | 'foreignFiveTopics' | 'status' | 'status-no-logs' | typeof receiptFields[number];
 const fields: Provenance[] = ['transactionHash', 'blockHash', 'blockNumber', 'transactionIndex', 'logIndex', 'siblingLogIndex'];
 const receiptFields = ['gasUsed', 'zeroBloom', 'strippedSuccessLogs', 'missingBloomBit', 'extraBloomBit',
   'cumulativeGasUsedBelowGasUsed', 'cumulativeGasUsedAboveGasUsed', 'receiptType', 'omittedReceiptType',
@@ -30,6 +31,7 @@ const extraWord = 'ab'.repeat(32);
 const zeroBloom = '0x' + '00'.repeat(256);
 const injectedContractAddress = '0x' + '11'.repeat(20);
 const injectedBlobValue = 1n;
+const foreignTopics = Array.from({ length: 5 }, (_, index) => id('foreign-log-topic-' + index));
 const differentHash = (value: string) => '0x' + (value.toLowerCase() === '0x' + 'fa'.repeat(32) ? 'fb' : 'fa').repeat(32);
 
 /** Changes only the selected block, receipt or router log. All requests reach Ganache. */
@@ -81,6 +83,17 @@ async function receiptProxy(upstream: string, routerAddress: string, topic: stri
           for (const log of receipt.logs) {
             if (log.address.toLowerCase() !== routerAddress.toLowerCase() || log.topics[0]?.toLowerCase() !== topic.toLowerCase()) continue;
             target ??= receipt.transactionHash.toLowerCase();
+            if (fault === 'foreignFiveTopics') {
+              const foreign = { ...log, address: tokenAddress, topics: foreignTopics, data: '0x',
+                logIndex: toQuantity(Math.max(...receipt.logs.map((entry: { logIndex: string }) => Number(BigInt(entry.logIndex)))) + 1) };
+              // Splitting the five topics into valid LOG1 entries preserves their bloom union.
+              const logsBloom = computeReceiptLogsBloom([...receipt.logs,
+                ...foreignTopics.map(topic => ({ address: tokenAddress, topics: [topic] }))]);
+              assert.ok(logsBloom);
+              receipt.logs.push(foreign); receipt.logsBloom = logsBloom;
+              altered++;
+              break;
+            }
             if (fault === 'zeroBloom' || fault === 'strippedSuccessLogs') {
               assert.equal(receipt.status, '0x1');
               if (fault === 'zeroBloom') receipt.logsBloom = zeroBloom;
@@ -256,7 +269,7 @@ function matchingLog(receipt: TransactionReceipt) {
 
 // Real HTTP JSON-RPC and ethers formatting are exercised. Service ticks are
 // explicitly driven; this does not claim autonomous CLI or Besu validation.
-for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData', 'extraDataWord', 'extraTopic',
+for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData', 'extraDataWord', 'extraTopic', 'foreignFiveTopics',
   ...receiptFields, ...blockFields] as const) test(
   'actual RPC ' + (isBlockFault(field) ? 'block ' : receiptFields.some(receiptField => receiptField === field) ? 'receipt ' : 'log ') +
     field + ' contradiction blocks confirmation and later flags reconciliation', {
@@ -432,13 +445,28 @@ for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData
     assert.deepEqual(appended, expectedLog, 'ethers must retain the appended router log');
     t.diagnostic(JSON.stringify({ firstStatus: reserved.status, successorStatus: store.get(second.id)?.status,
       journalRows: store.journals().length, nativeSends: proxy.sends.length, appendedRouterLogs: 1 }));
+  } else if (field === 'foreignFiveTopics') {
+    assert.equal(presented.logs.length, genuine.logs.length + 1);
+    const foreign = presented.logs.at(-1)!;
+    assert.deepEqual(foreign.topics, foreignTopics, 'ethers must retain all five foreign log topics');
+    assert.equal(foreign.address.toLowerCase(), String(chain.token.target).toLowerCase());
+    assert.equal(foreign.index, Math.max(...genuine.logs.map(entry => entry.index)) + 1);
+    assert.equal(foreign.data, '0x');
+    assert.equal(foreign.transactionHash, genuineLog.transactionHash);
+    assert.equal(foreign.transactionIndex, genuineLog.transactionIndex);
+    assert.equal(foreign.blockHash, genuineLog.blockHash);
+    assert.equal(foreign.blockNumber, genuineLog.blockNumber);
+    const expectedBloom = computeReceiptLogsBloom([...genuine.logs,
+      ...foreignTopics.map(topic => ({ address: String(chain.token.target), topics: [topic] }))]);
+    assert.equal(presented.logsBloom, expectedBloom, 'The reported bloom must include the foreign emitter and all five topics');
+    repairedPresentation.logs.pop(); repairedPresentation.logsBloom = genuine.logsBloom;
   } else if (field === 'extraDataWord' || field === 'extraTopic') {
     assert.equal(presented.logs.length, genuine.logs.length);
     if (field === 'extraDataWord') {
       assert.equal(log.data, genuineLog.data + extraWord, 'ethers must retain the trailing data word');
       repairedPresentation.logs[index].data = genuineLog.data;
     } else {
-      assert.deepEqual(log.topics, [...genuineLog.topics, '0x' + extraWord], 'ethers must retain the fifth topic');
+      assert.deepEqual(log.topics, [...genuineLog.topics, '0x' + extraWord], 'ethers must retain the extra topic');
       repairedPresentation.logs[index].topics = genuineLog.topics;
     }
     const event = chain.router.interface.parseLog(log);

@@ -220,7 +220,7 @@ test('a sole malformed settlement event with the reserved indexed identity keeps
   assert.equal(blockReads, 2);
 });
 
-for (const excess of ['trailing data', 'a fifth topic'] as const) {
+for (const excess of ['trailing data', 'an extra topic'] as const) {
   test('matching settlement event with ' + excess + ' keeps the original reservation', async () => {
     const coherent = settlementLog();
     const malformed = excess === 'trailing data'
@@ -255,6 +255,43 @@ for (const siblingFirst of [false, true]) {
     receipt.logs = siblingFirst ? [sibling, coherent] : [coherent, sibling];
     await remainsUncertain();
     assert.equal(blockReads, 2);
+  });
+}
+
+for (const siblingFirst of [true, false]) {
+  test('a foreign five-topic log ' + (siblingFirst ? 'before' : 'after') +
+    ' the matching event preserves the reservation until coherent evidence returns', async () => {
+    const matching = { ...settlementLog(), index: siblingFirst ? 1 : 0 };
+    const foreign = { ...settlementLog(), address: token, index: siblingFirst ? 0 : 1, data: '0x',
+      topics: Array.from({ length: 5 }, (_, index) => '0x' + String(index + 1).padStart(64, '0')) };
+    // Splitting an emitter's topics into LOG1 entries preserves the bloom's bit union.
+    const logsBloom = withFixtureLogsBloom({ logs: [matching,
+      ...foreign.topics.map(topic => ({ ...foreign, topics: [topic] }))] }).logsBloom;
+    receipt = { ...receipt, logs: siblingFirst ? [foreign, matching] : [matching, foreign], logsBloom };
+    const worker = await remainsUncertain();
+    assert.equal(blockReads, 2);
+
+    foreign.topics = foreign.topics.slice(0, 4);
+    receipt = withFixtureLogsBloom(receipt);
+    await assert.rejects(worker.tick(), /Queued nonce was allocated too early/);
+    assert.equal(store.get(firstId)!.status, 'settled');
+    assert.equal(store.get(firstId)!.raw_tx, raw); assert.equal(store.get(firstId)!.tx_hash, txHash);
+    assert.equal(store.get(secondId!)!.status, 'queued');
+    assert.equal(store.journal(firstId)?.tx_hash, txHash); assert.equal(store.journals().length, 1);
+    assert.equal(store.events().filter(event => event.action === 'settled').length, 1);
+    assert.equal(preflights, 1); assert.equal(signing, 0);
+  });
+}
+
+for (const topicCount of [0, 4]) {
+  test('a valid foreign ' + topicCount + '-topic log does not block confirmation', async () => {
+    const matching = settlementLog();
+    const foreign = { ...matching, address: token, index: 1, data: '0x',
+      topics: Array.from({ length: topicCount }, (_, index) => '0x' + String(index + 1).padStart(64, '0')) };
+    receipt = withFixtureLogsBloom({ ...receipt, logs: [matching, foreign] });
+    await service().tick();
+    assert.equal(store.get(firstId)!.status, 'settled'); assert.equal(store.journals().length, 1);
+    assert.equal(store.get(firstId)!.raw_tx, raw); assert.equal(store.get(firstId)!.tx_hash, txHash);
   });
 }
 

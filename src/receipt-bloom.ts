@@ -3,7 +3,8 @@ import { getBytes, hexlify, isHexString, keccak256, type Log } from 'ethers';
 export function computeReceiptLogsBloom(logs: readonly Pick<Log, 'address' | 'topics'>[]): string | undefined {
   const bloom = new Uint8Array(256);
   for (const log of logs) {
-    if (!isHexString(log?.address, 20) || !Array.isArray(log.topics)) return;
+    // EVM LOG0 through LOG4 permit at most four topics per log.
+    if (!isHexString(log?.address, 20) || !Array.isArray(log.topics) || log.topics.length > 4) return;
     for (const topic of log.topics) if (!isHexString(topic, 32)) return;
 
     // Ethereum's receipt bloom hashes each emitter and topic into three bit positions.

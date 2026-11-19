@@ -365,7 +365,7 @@ for (const missingBlock of [false, true]) {
   });
 }
 
-for (const excess of ['trailing data', 'a fifth topic'] as const) {
+for (const excess of ['trailing data', 'an extra topic'] as const) {
   test('matching settlement event with ' + excess + ' triggers review and retains its journal', async () => {
     const coherent = settlementLog();
     const malformed = excess === 'trailing data'
@@ -553,6 +553,41 @@ for (const missingBlock of [false, true]) {
     if (missingBlock) canonical = null;
     receipt.logsBloom = '0x' + '00'.repeat(256);
     await flagged();
+  });
+}
+
+for (const siblingFirst of [true, false]) {
+  test('a foreign five-topic log ' + (siblingFirst ? 'before' : 'after') +
+    ' the matching event triggers one retained-evidence review', async () => {
+    const matching = { ...settlementLog(), index: siblingFirst ? 1 : 0 };
+    const foreign = { ...settlementLog(), address: token, index: siblingFirst ? 0 : 1, data: '0x',
+      topics: Array.from({ length: 5 }, (_, index) => '0x' + String(index + 1).padStart(64, '0')) };
+    // Valid LOG1 entries produce the same bloom bits as the impossible five-topic log.
+    const logsBloom = withFixtureLogsBloom({ logs: [matching,
+      ...foreign.topics.map(topic => ({ ...foreign, topics: [topic] }))] }).logsBloom;
+    receipt = { ...receipt, logs: siblingFirst ? [foreign, matching] : [matching, foreign], logsBloom };
+    const auditBefore = store.events();
+    await flagged();
+    const reviewed = { row: store.get(paymentId), journal: store.journal(paymentId), audit: store.events() };
+    assert.deepEqual(reviewed.audit.slice(1), auditBefore);
+    const repeated = await service().reconcile();
+    assert.equal(repeated.checked, 0); assert.deepEqual(repeated.exceptions, []);
+    assert.equal(repeated.outstandingReviews, 1);
+    assert.deepEqual({ row: store.get(paymentId), journal: store.journal(paymentId), audit: store.events() }, reviewed);
+  });
+}
+
+for (const topicCount of [0, 4]) {
+  test('a valid foreign ' + topicCount + '-topic log does not flag a settled payment', async () => {
+    const matching = settlementLog();
+    const foreign = { ...matching, address: token, index: 1, data: '0x',
+      topics: Array.from({ length: topicCount }, (_, index) => '0x' + String(index + 1).padStart(64, '0')) };
+    receipt = withFixtureLogsBloom({ ...receipt, logs: [matching, foreign] });
+    const before = { row: store.get(paymentId), journal: store.journal(paymentId), audit: store.events() };
+    const result = await service().reconcile();
+    assert.equal(result.checked, 1); assert.deepEqual(result.exceptions, []);
+    assert.equal(result.outstandingReviews, 0);
+    assert.deepEqual({ row: store.get(paymentId), journal: store.journal(paymentId), audit: store.events() }, before);
   });
 }
 
