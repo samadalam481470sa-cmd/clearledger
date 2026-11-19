@@ -25,6 +25,7 @@ The count is 643,077 nonblank source lines, comprising 20,165 application-area l
 
 ## Further application work
 
+- Reject impossible receipt log shapes with more than four topics while preserving the existing treatment of unrelated log provenance. [EVM logging operations](https://ethereum.github.io/execution-specs/src/ethereum/forks/gray_glacier/vm/instructions/log.py.html).
 - Replace the legacy development EVM with a maintained runner and review remaining dependency findings. [Dependency record](docs/DEPENDENCIES.md).
 - Verify wallet-specific integrations and policy rotation beyond the generic ERC-1271 checker, including multisignature, ERC-6492 and ERC-4337 behavior.
 - Add durable jobs and a distributed relayer lease before supporting multiple workers or databases sharing a signer.

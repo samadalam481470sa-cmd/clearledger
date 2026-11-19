@@ -146,14 +146,14 @@ test('two authorized HTTP callers share one held scan while authentication and f
   assert.deepEqual({ row: context.store.get(context.paymentId), journal: context.store.journal(context.paymentId),
     audit: context.store.events() }, before);
 
-  // A later completed request must inspect new evidence rather than reuse its
-  // preceding result. Corrupt only the synthetic projection after both finish.
+  // A fresh request must inspect the new local projection, without consulting
+  // RPC or reusing the preceding result. Corrupt it only after both finish.
   context.store.db.prepare('UPDATE journals SET amount=? WHERE payment_id=?').run('1', context.paymentId);
   context.recover();
   const fresh = await within(context.post());
   assert.equal(fresh.status, 200); assert.equal(fresh.body.checked, 1);
   assert.deepEqual(fresh.body.exceptions, [context.paymentId]);
-  assert.deepEqual(context.counts(), { receiptReads: 2, blockReads: 2, invocations: 3 });
+  assert.deepEqual(context.counts(), { receiptReads: 1, blockReads: 1, invocations: 3 });
   assert.equal(context.store.get(context.paymentId)!.status, 'review');
   assert.equal(context.store.journal(context.paymentId)!.amount, '1');
   assert.equal(context.store.events().filter(event => event.action === 'review').length, 1);

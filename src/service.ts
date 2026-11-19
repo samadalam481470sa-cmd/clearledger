@@ -294,6 +294,14 @@ export class PaymentService {
     return this.reconciling.then(result => ({ ...result, exceptions: [...result.exceptions] }));
   }
 
+  private journalMatchesSettlement(row: RecordRow, p: Payment): boolean {
+    const journal = this.store.journal(row.id);
+    return !!journal && journal.payment_id === row.id && journal.token === p.token &&
+      journal.debit_account === p.payer && journal.credit_account === p.payee &&
+      journal.amount === p.amount && journal.tx_hash === row.tx_hash &&
+      journal.block_number === row.block_number && journal.block_hash === row.block_hash;
+  }
+
   private async scanReconciliation(): Promise<ReconciliationResult> {
     let checked = 0;
     const exceptions: string[] = [];
@@ -309,16 +317,13 @@ export class PaymentService {
         const txHash = row.tx_hash;
         let matches = false;
         if (p && transaction && isHash(txHash) && isHash(row.block_hash) &&
-          Number.isSafeInteger(row.block_number) && row.block_number! >= 0) {
+          Number.isSafeInteger(row.block_number) && row.block_number! >= 0 &&
+          this.journalMatchesSettlement(row, p)) {
           // RPC errors abort the scan; unavailable transport is not evidence of corruption.
           const receipt = await this.provider.getTransactionReceipt(txHash);
           const block = await this.provider.getBlock(row.block_number!);
           // Read the projection after the RPC awaits, and retain it unchanged on review.
-          const journal = this.store.journal(row.id);
-          const journalMatches = !!journal && journal.payment_id === row.id && journal.token === p.token &&
-            journal.debit_account === p.payer && journal.credit_account === p.payee &&
-            journal.amount === p.amount && journal.tx_hash === txHash &&
-            journal.block_number === row.block_number && journal.block_hash === row.block_hash;
+          const journalMatches = this.journalMatchesSettlement(row, p);
           // A block consistent with the recorded settlement leaves a missing receipt inconclusive.
           if (receipt === null && journalMatches && block &&
             block.number === row.block_number && sameHash(block.hash, row.block_hash) &&

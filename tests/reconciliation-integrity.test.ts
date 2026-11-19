@@ -72,12 +72,20 @@ async function flagged() {
   assert.equal(store.events().filter(event => event.action === 'review').length, 1);
 }
 
-async function locallyFlagged(error: string) {
+async function locallyFlagged(error: string, unavailableAt?: 'getTransactionReceipt' | 'getBlock') {
   const before = { row: store.get(paymentId)!, journal: store.journal(paymentId), audit: store.events() };
   let rpcReads = 0;
   const reconciling = service({
-    getTransactionReceipt: async () => { rpcReads++; return receipt; },
-    getBlock: async () => { rpcReads++; return canonical; }
+    getTransactionReceipt: async () => {
+      rpcReads++;
+      if (unavailableAt === 'getTransactionReceipt') throw new Error('Synthetic receipt RPC unavailable');
+      return receipt;
+    },
+    getBlock: async () => {
+      rpcReads++;
+      if (unavailableAt === 'getBlock') throw new Error('Synthetic block RPC unavailable');
+      return canonical;
+    }
   });
   const result = await reconciling.reconcile();
   assert.equal(result.checked, 1);
@@ -608,6 +616,100 @@ for (const [description, corrupt] of [
   });
 }
 
+for (const [description, change] of [
+  ['a missing journal', () => { store.db.prepare('DELETE FROM journals WHERE payment_id=?').run(paymentId); }],
+  ['a mismatched journal token', () => {
+    store.db.prepare('UPDATE journals SET token=? WHERE payment_id=?').run('0x' + '77'.repeat(20), paymentId);
+  }],
+  ['a mismatched journal payer', () => {
+    store.db.prepare('UPDATE journals SET debit_account=? WHERE payment_id=?').run('0x' + '77'.repeat(20), paymentId);
+  }],
+  ['a mismatched journal payee', () => {
+    store.db.prepare('UPDATE journals SET credit_account=? WHERE payment_id=?').run('0x' + '77'.repeat(20), paymentId);
+  }],
+  ['a mismatched journal amount', () => {
+    store.db.prepare('UPDATE journals SET amount=? WHERE payment_id=?').run('1', paymentId);
+  }],
+  ['a mismatched journal transaction hash', () => {
+    store.db.prepare('UPDATE journals SET tx_hash=? WHERE payment_id=?').run('0x' + '77'.repeat(32), paymentId);
+  }],
+  ['a mismatched journal block number', () => {
+    store.db.prepare('UPDATE journals SET block_number=? WHERE payment_id=?').run(18, paymentId);
+  }],
+  ['a mismatched journal block hash', () => {
+    store.db.prepare('UPDATE journals SET block_hash=? WHERE payment_id=?').run('0x' + '77'.repeat(32), paymentId);
+  }]
+] as const) {
+  for (const [method, label] of [['getTransactionReceipt', 'receipt'], ['getBlock', 'block']] as const) {
+    test(description + ' is reviewed locally before unavailable ' + label + ' lookup', async () => {
+      change();
+      await locallyFlagged('Recorded settlement no longer matches canonical receipt and journal', method);
+    });
+  }
+}
+
+for (const [description, change] of [
+  ['removed', () => { store.db.prepare('DELETE FROM journals WHERE payment_id=?').run(paymentId); }],
+  ['changed', () => { store.db.prepare('UPDATE journals SET amount=? WHERE payment_id=?').run('1', paymentId); }]
+] as const) {
+  test('a journal ' + description + ' during the receipt await is checked again before reconciliation completes', async () => {
+    const beforeRow = store.get(paymentId)!;
+    const beforeAudit = store.events();
+    let receiptReads = 0, blockReads = 0;
+    let changedJournal: ReturnType<Store['journal']>;
+    const result = await service({
+      getTransactionReceipt: async () => {
+        receiptReads++;
+        await Promise.resolve();
+        change(); changedJournal = store.journal(paymentId);
+        return receipt;
+      },
+      getBlock: async () => { blockReads++; return canonical; }
+    }).reconcile();
+    assert.equal(result.checked, 1);
+    assert.deepEqual(result.exceptions, [paymentId]);
+    assert.deepEqual({ receiptReads, blockReads }, { receiptReads: 1, blockReads: 1 });
+    const reviewed = store.get(paymentId)!;
+    assert.deepEqual(reviewed, { ...beforeRow, status: 'review',
+      error: 'Recorded settlement no longer matches canonical receipt and journal', updated_at: reviewed.updated_at });
+    assert.deepEqual(store.journal(paymentId), changedJournal!);
+    const audit = store.events();
+    assert.deepEqual(audit.slice(1), beforeAudit);
+    assert.equal(audit[0].action, 'review'); assert.equal(audit[0].payment_id, paymentId);
+  });
+}
+
+test('an earlier local journal review remains committed when a later coherent row encounters an RPC failure', async () => {
+  const otherPayment = { ...payment, paymentId: '0x' + 'cd'.repeat(32), nonce: '1' };
+  const other = store.accept(otherPayment, digest(otherPayment, signingDomain), '0x').row;
+  const signed = signedSettlement(otherPayment, '0x', routerAddress, 1);
+  store.broadcast(other.id, signed.raw, signed.hash); store.finalize(other.id, 18, blockHash);
+  store.db.prepare('UPDATE journals SET amount=? WHERE payment_id=?').run('1', other.id);
+  assert.deepEqual(store.pagePayments({ status: 'settled' }).items.map(row => row.id), [other.id, paymentId]);
+  const beforeRow = store.get(paymentId), beforeJournal = store.journal(paymentId), beforeAudit = store.events();
+  const corruptRow = store.get(other.id)!, corruptJournal = store.journal(other.id);
+  let receiptReads = 0, blockReads = 0;
+  const failure = new Error('Synthetic later receipt RPC unavailable');
+  const reconciling = service({
+    getTransactionReceipt: async (hash: string) => {
+      receiptReads++; assert.equal(hash, txHash); throw failure;
+    },
+    getBlock: async () => { blockReads++; return canonical; }
+  });
+  await assert.rejects(reconciling.reconcile(), error => error === failure);
+  assert.deepEqual({ receiptReads, blockReads }, { receiptReads: 1, blockReads: 0 });
+  assert.deepEqual(store.get(paymentId), beforeRow); assert.deepEqual(store.journal(paymentId), beforeJournal);
+  const reviewed = store.get(other.id)!;
+  assert.deepEqual(reviewed, { ...corruptRow, status: 'review',
+    error: 'Recorded settlement no longer matches canonical receipt and journal', updated_at: reviewed.updated_at });
+  assert.deepEqual(store.journal(other.id), corruptJournal);
+  const audit = store.events();
+  assert.deepEqual(audit.slice(1), beforeAudit);
+  assert.equal(audit[0].action, 'review'); assert.equal(audit[0].payment_id, other.id);
+  await assert.rejects(reconciling.reconcile(), error => error === failure);
+  assert.deepEqual(store.events(), audit, 'Retry must not duplicate the earlier completed review');
+});
+
 for (const method of ['getTransactionReceipt', 'getBlock']) {
   test(method + ' transport failure propagates without inventing a review outcome', async () => {
     const failure = new Error('Synthetic RPC unavailable');
@@ -620,7 +722,12 @@ for (const method of ['getTransactionReceipt', 'getBlock']) {
 test('a journal storage query failure propagates instead of being mislabeled as a corrupt settlement', async () => {
   const before = { row: store.get(paymentId), audit: store.events() };
   store.db.exec('DROP TABLE journals');
-  await assert.rejects(() => service().reconcile(), /no such table: journals/);
+  let rpcReads = 0;
+  await assert.rejects(() => service({
+    getTransactionReceipt: async () => { rpcReads++; return receipt; },
+    getBlock: async () => { rpcReads++; return canonical; }
+  }).reconcile(), /no such table: journals/);
+  assert.equal(rpcReads, 0);
   assert.deepEqual({ row: store.get(paymentId), audit: store.events() }, before);
 });
 
