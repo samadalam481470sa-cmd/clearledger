@@ -298,7 +298,7 @@ Every HTTP request retains its authentication/rate checks and awaits the shared 
 
 ## Shutdown
 
-RPC and demo entrypoints handle SIGINT and SIGTERM through one guarded, idempotent shutdown path with a default 20-second cooperative budget. New requests receive 503 and `Connection: close` while shutdown stops the listener, waits for the serialized worker's active tick, and drains actual HTTP handler promises before closing the provider/chain and SQLite. A disconnected client does not cancel a handler awaiting RPC; that operation remains part of the drain until its last possible write has completed.
+RPC and demo entrypoints handle SIGINT and SIGTERM through one guarded, idempotent shutdown path with a default 20-second cooperative budget. New requests receive 503 and `Connection: close` while shutdown stops the listener, waits for the serialized worker's active tick, and drains actual HTTP handler promises before closing the provider/chain and SQLite. A disconnected client does not cancel a handler awaiting RPC; that operation remains part of the drain until its last possible write has completed. Each HTTP operation is registered before its handler starts, so a synchronous handler callback that requests draining is included in that drain. Completion follows the exact handler through its response or error path. [Reentrant HTTP drain verification](../STATUS.md#http-drain-requested-during-handler-entry).
 
 A disconnected response does not establish whether acceptance committed. Inspect authenticated `GET /api/payments` history before retrying the original signed instruction. The bounded actual-CLI disconnect/restart and POSIX signal-drain results are recorded in [validation](VALIDATION.md#disconnected-acceptance-recovery).
 

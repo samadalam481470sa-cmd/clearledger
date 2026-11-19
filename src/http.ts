@@ -163,12 +163,18 @@ export function makeServer(options: HttpOptions) {
     }
     // Socket closure does not cancel an async handler waiting on RPC. Track the
     // operation itself so SQLite stays open until its last possible write.
-    const operation = handle(req, res);
+    let resolveOperation!: () => void;
+    let rejectOperation!: (reason: unknown) => void;
+    // Register before handler entry: its synchronous prefix may request draining.
+    const operation = new Promise<void>((resolve, reject) => {
+      resolveOperation = resolve; rejectOperation = reject;
+    });
     active.add(operation);
     void operation.finally(() => active.delete(operation)).catch(() => {
       if (!res.headersSent && !res.destroyed && !res.writableEnded)
         json(res, 500, { error: 'Request failed' });
     });
+    void handle(req, res).then(resolveOperation, rejectOperation);
   });
   server.requestTimeout = 15000;
   server.headersTimeout = 10000;
