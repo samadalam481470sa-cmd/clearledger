@@ -197,7 +197,7 @@ test('reconciliation of a missing settled journal retains block evidence and kee
   assert.ok(reviewed.raw_tx === first.raw_tx && reviewed.payload === first.payload);
   assert.equal(store.journal(first.id), undefined); assert.deepEqual(store.journal(second.id), retainedJournal);
   assert.equal(store.events().filter(event => event.payment_id === first.id && event.action === 'review').length, 1);
-  assert.equal(rpcCalls, 4, 'Only the explicit synthetic reconciliation may query receipt/canonical evidence');
+  assert.equal(rpcCalls, 2, 'Only the coherent settlement queries receipt/canonical evidence; the missing journal is reviewed locally');
   const afterReview = await readUnchanged();
   assert.deepEqual(afterReview, { status: 200, body: unavailable });
   model = reduceTotals(model, { type: 'report', report: afterReview.body });
