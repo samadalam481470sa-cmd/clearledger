@@ -1,6 +1,6 @@
 # ClearLedger status
 
-Updated: November 18, 2026 (America/Chicago).
+Updated: November 19, 2026 (America/Chicago).
 
 ## Scope and constraints
 
@@ -475,6 +475,15 @@ Project writes are confined to the new `outputs/clearledger/` directory and task
 
 - Extended Linux job `132765327224` passed all 10 steps on source `a0c13705da1434864e3f899eb15bf30dee398e64` and tree `60114eb751b60d0ddf1a937593040f0477867b99`. Its focused case passed in 653,219.816626 ms. Before and after restart it observed 322,696 and 322,559 ms respectively, with 60 bursts, 720 HTTP 200 responses, 296 invariant observations and 318 failed receipt attempts per window. Each window logged 21 failed receipts after its boundary. Combined active observation was 645,255 ms within a 646,229 ms receipt-route outage. The 871 ms closed-to-ready gap and one startup receipt attempt were excluded. All 1,440 reads passed the existing response and ledger assertions. Both payments settled with two journals and reconciliation 2/0. [Extended outage CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/43698870254).
 - Regular Linux job `132765327427` passed all 1,130 tests in 553,315.576838 ms with zero failures or skips on the same source. The default case passed in 189,736.254183 ms with 432 HTTP 200 responses and 183,006 ms of active observation. Fresh install, strict typecheck, Solidity 0.8.30 targeting Paris, the 35-module dashboard build and source count passed. The latest Besu result remains tied to the prior gas allowance revision. [Regular CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/43698870256).
+
+## Dashboard page response deadline
+
+- Payment and journal page controllers now bound each load to a 15,000 ms client wait, including response-body parsing. A timeout aborts the transport, clears loading and displays a retryable error while preserving the committed rows, page and cursor history. Explicit navigation retries the same destination. Superseding or disposing a request settles the obsolete wait even when its loader ignores cancellation, and late replies cannot replace the current view.
+- The existing timeout helper was moved to a shared module. Exact payment lookup and demo submission retain their previous deadline and cancellation behavior. The pager validates its optional deadline before any load or state update, preserves immediate loader entry and clears timers after completion or cancellation.
+- Before the fix, the new next-page regression failed after its independent one-second guard because the silent response remained pending (1,005.579 ms case). After the fix, all 24 pager tests passed. Thirteen new cases cover initial, next, previous, reload and return-to-latest timeouts, retained history, explicit retries, late success/failure, the simulated default 15-second boundary, synchronous loader behavior, invalid deadlines and timer cleanup. Existing cancellation tests now require the obsolete wait to settle before its loader is released.
+- All 101 focused dashboard, native HTTP, lookup and demo tests passed with zero failures or skips in 6,741.7095 ms on Windows/Node 24.22.1. The new native HTTP case streamed headers and half a JSON page, then held the body across an injected 500 ms client deadline. It passed in 540.817 ms, recorded an aborted read and identical filtered-cursor retry, and traversed all 61 queued records from 65 synthetic records without duplicates. Four page requests preserved the full SQLite schema/private-row/journal/audit/sequence/total_changes digest and made zero RPC calls. Strict TypeScript checking passed. Solidity 0.8.30/Paris and the Vite 7.3.7 dashboard build passed with 36 transformed modules.
+- Source-report verification passed at 642,634 nonblank lines: application area 124 files/20,660 physical/19,722 nonblank; attributed Besu 4,484 files/714,385 physical/622,912 nonblank. Counts include comments and tests. Independent read-only reviews found no blocker. Remote CI for this increment is not yet recorded here.
+- The controller adds no automatic retry. The existing App loop reloads a committed latest page five seconds after completion; committed historical pages remain manual. After a failed navigation, that policy follows the retained page. Client cancellation can stop its wait while the server continues reading. These controller/native HTTP fixtures do not establish mounted React interaction, browser layout, accessibility, event-loop preemption or a server-wide deadline. Browser origins remain denied, and the previous Besu result stays tied to its recorded source.
 
 ## HTTP drain requested during handler entry
 

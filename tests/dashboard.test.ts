@@ -9,6 +9,14 @@ function deferred<T>() {
   const promise = new Promise<T>((success, failure) => { resolve = success; reject = failure; });
   return { promise, resolve, reject };
 }
+async function within<T>(pending: Promise<T>, label: string) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([pending, new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(label + ' remained pending')), 1000);
+    })]);
+  } finally { clearTimeout(timer); }
+}
 const assetA = '0x' + 'ab'.repeat(20);
 const assetB = '0x' + 'cd'.repeat(20);
 
@@ -92,6 +100,220 @@ test('failed next-page load retains current items and cursor so retry neither sk
   } finally { pager.dispose(); }
 });
 
+test('a next-page response timeout retains rows and retries the same cursor only on explicit navigation', {
+  timeout: 3000
+}, async () => {
+  const held = deferred<CursorPage<number>>();
+  const cursors: (string | undefined)[] = [], signals: AbortSignal[] = [];
+  const pager = new CursorPager<number>(async (cursor, signal) => {
+    cursors.push(cursor); signals.push(signal);
+    if (!cursor) return { items: [1], nextCursor: 'cursor-2' };
+    return cursors.length === 2 ? held.promise : { items: [2], nextCursor: 'cursor-3' };
+  }, () => {}, 20);
+  let pending: Promise<boolean> | undefined;
+  try {
+    assert.equal(await pager.refresh(), true);
+    pending = pager.next();
+    assert.equal(await within(pending, 'Silent next-page response'), false);
+    assert.deepEqual(pager.state, {
+      items: [1], nextCursor: 'cursor-2', page: 1, loading: false,
+      error: 'Page response timed out. Try loading this page again.'
+    });
+    assert.equal(signals[1].aborted, true);
+    await Promise.resolve(); await Promise.resolve();
+    assert.deepEqual(cursors, [undefined, 'cursor-2']);
+    assert.equal(await within(pager.next(), 'Explicit next-page retry'), true);
+    assert.deepEqual(cursors, [undefined, 'cursor-2', 'cursor-2']);
+    assert.deepEqual(pager.state.items, [2]);
+    assert.equal(pager.state.page, 2);
+    assert.equal(pager.state.error, '');
+    assert.equal(signals[2].aborted, false);
+  } finally {
+    pager.dispose(); held.resolve({ items: [999], nextCursor: null });
+    await Promise.allSettled(pending ? [pending] : []);
+  }
+});
+
+test('a first-page response timeout exposes an error instead of an empty successful page', { timeout: 3000 }, async () => {
+  const held = deferred<CursorPage<number>>();
+  let calls = 0;
+  const signals: AbortSignal[] = [];
+  const pager = new CursorPager<number>(async (_cursor, signal) => {
+    signals.push(signal);
+    return ++calls === 1 ? held.promise : { items: [1], nextCursor: null };
+  }, () => {}, 20);
+  const pending = pager.refresh();
+  try {
+    assert.equal(await within(pending, 'Silent first-page response'), false);
+    assert.deepEqual(pager.state, {
+      items: [], nextCursor: null, page: 1, loading: false,
+      error: 'Page response timed out. Try loading this page again.'
+    });
+    assert.equal(signals[0].aborted, true);
+    assert.equal(calls, 1);
+    assert.equal(await within(pager.refresh(), 'First-page retry'), true);
+    assert.deepEqual(pager.state.items, [1]);
+    assert.equal(calls, 2);
+  } finally {
+    pager.dispose(); held.resolve({ items: [999], nextCursor: null });
+    await Promise.allSettled([pending]);
+  }
+});
+
+for (const action of ['previous', 'reload', 'refresh'] as const)
+  test(`a ${action} response timeout retains the committed historical page until an explicit retry succeeds`, {
+    timeout: 3000
+  }, async () => {
+    const held = deferred<CursorPage<number>>();
+    let holdNext = false;
+    const cursors: (string | undefined)[] = [];
+    const pager = new CursorPager<number>(async cursor => {
+      cursors.push(cursor);
+      if (holdNext) { holdNext = false; return held.promise; }
+      return cursor === 'cursor-3' ? { items: [3], nextCursor: null } :
+        cursor === 'cursor-2' ? { items: [2], nextCursor: 'cursor-3' } :
+          { items: [1], nextCursor: 'cursor-2' };
+    }, () => {}, 20);
+    let pending: Promise<boolean> | undefined;
+    try {
+      assert.equal(await pager.refresh(), true);
+      assert.equal(await pager.next(), true);
+      if (action === 'previous') assert.equal(await pager.next(), true);
+      const committed = { ...pager.state }, calls = cursors.length;
+      const expectedCursor = action === 'refresh' ? undefined : 'cursor-2';
+      holdNext = true;
+      pending = pager[action]();
+      assert.equal(await within(pending, 'Silent ' + action + ' response'), false);
+      assert.deepEqual(pager.state, {
+        ...committed, loading: false, error: 'Page response timed out. Try loading this page again.'
+      });
+      assert.equal(cursors.length, calls + 1);
+      assert.equal(cursors.at(-1), expectedCursor);
+      assert.equal(await within(pager[action](), action + ' retry'), true);
+      assert.deepEqual(cursors.slice(calls), [expectedCursor, expectedCursor]);
+      assert.equal(pager.state.page, action === 'refresh' ? 1 : 2);
+      assert.deepEqual(pager.state.items, action === 'refresh' ? [1] : [2]);
+      assert.equal(pager.state.error, '');
+      if (action === 'refresh') {
+        assert.equal(await pager.previous(), false);
+        assert.equal(await pager.next(), true);
+      }
+      assert.equal(await pager.previous(), true);
+      assert.equal(pager.state.page, 1);
+      assert.deepEqual(pager.state.items, [1]);
+    } finally {
+      pager.dispose(); held.resolve({ items: [999], nextCursor: null });
+      await Promise.allSettled(pending ? [pending] : []);
+    }
+  });
+
+for (const outcome of ['success', 'error'] as const)
+  for (const retryFirst of [false, true])
+    test(`a timed-out page ignores late ${outcome} ${retryFirst ? 'after retry success' : 'before explicit retry'}`, {
+      timeout: 3000
+    }, async () => {
+      const held = deferred<CursorPage<number>>();
+      let calls = 0;
+      const changes: PagerState<number>[] = [];
+      const pager = new CursorPager<number>(async () => ++calls === 1 ? held.promise : { items: [2], nextCursor: null },
+        state => changes.push(state), 20);
+      const pending = pager.refresh();
+      try {
+        assert.equal(await within(pending, 'Page before late ' + outcome), false);
+        if (retryFirst) assert.equal(await within(pager.refresh(), 'Replacement page'), true);
+        const committed = JSON.stringify(pager.state), updates = changes.length;
+        if (outcome === 'success') held.resolve({ items: [999], nextCursor: 'obsolete-cursor' });
+        else held.reject(new Error('Late obsolete page failure'));
+        for (let turn = 0; turn < 8; turn++) await Promise.resolve();
+        assert.equal(JSON.stringify(pager.state), committed);
+        assert.equal(changes.length, updates);
+        assert.equal(calls, retryFirst ? 2 : 1);
+        if (!retryFirst) assert.equal(await within(pager.refresh(), 'Explicit page retry'), true);
+        assert.deepEqual(pager.state.items, [2]);
+        assert.equal(pager.state.error, '');
+      } finally {
+        pager.dispose(); held.resolve({ items: [999], nextCursor: null });
+        await Promise.allSettled([pending]);
+      }
+    });
+
+test('the default page response deadline is 15 seconds even when the loader ignores cancellation', {
+  timeout: 3000
+}, async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const held = deferred<CursorPage<number>>();
+  let signal: AbortSignal | undefined;
+  const pager = new CursorPager<number>(async (_cursor, active) => { signal = active; return held.promise; }, () => {});
+  const pending = pager.refresh();
+  try {
+    t.mock.timers.tick(14999);
+    for (let turn = 0; turn < 8; turn++) await Promise.resolve();
+    assert.equal(pager.state.loading, true);
+    assert.equal(signal?.aborted, false);
+    t.mock.timers.tick(1);
+    for (let turn = 0; turn < 8; turn++) await Promise.resolve();
+    assert.equal(pager.state.loading, false);
+    assert.equal(pager.state.error, 'Page response timed out. Try loading this page again.');
+    assert.equal(signal?.aborted, true);
+    assert.equal(await pending, false);
+  } finally {
+    pager.dispose(); held.resolve({ items: [999], nextCursor: null });
+    await Promise.allSettled([pending]);
+  }
+});
+
+test('a synchronous page loader still starts immediately and a completed load clears its deadline', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let calls = 0, signal: AbortSignal | undefined;
+  const changes: PagerState<number>[] = [];
+  const pager = new CursorPager<number>((_cursor, active) => {
+    calls++; signal = active; return Promise.resolve({ items: [1], nextCursor: null });
+  }, state => changes.push(state), 20);
+  try {
+    const pending = pager.refresh();
+    assert.equal(calls, 1, 'Starting a page must not defer its loader to a later microtask');
+    assert.equal(await pending, true);
+    const committed = JSON.stringify(pager.state), updates = changes.length;
+    t.mock.timers.tick(20000);
+    for (let turn = 0; turn < 8; turn++) await Promise.resolve();
+    assert.equal(JSON.stringify(pager.state), committed);
+    assert.equal(changes.length, updates);
+    assert.equal(signal?.aborted, false);
+  } finally { pager.dispose(); }
+});
+
+test('a synchronous loader throw retains its real error and permits an explicit retry', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let calls = 0;
+  const pager = new CursorPager<number>(() => {
+    if (++calls === 1) throw new Error('Synchronous page read failed');
+    return Promise.resolve({ items: [1], nextCursor: null });
+  }, () => {}, 20);
+  try {
+    const pending = pager.refresh();
+    assert.equal(calls, 1);
+    assert.equal(await pending, false);
+    assert.equal(pager.state.error, 'Synchronous page read failed');
+    assert.equal(pager.state.loading, false);
+    t.mock.timers.tick(20000);
+    for (let turn = 0; turn < 8; turn++) await Promise.resolve();
+    assert.equal(pager.state.error, 'Synchronous page read failed');
+    assert.equal(await pager.refresh(), true);
+    assert.deepEqual(pager.state.items, [1]);
+    assert.equal(pager.state.error, '');
+  } finally { pager.dispose(); }
+});
+
+test('invalid page deadlines are rejected before loading or publishing a state', () => {
+  for (const timeoutMs of [NaN, Infinity, 0, -1, 0.5, 2147483648]) {
+    let calls = 0, updates = 0;
+    assert.throws(() => new CursorPager<number>(async () => { calls++; return { items: [], nextCursor: null }; },
+      () => { updates++; }, timeoutMs), RangeError);
+    assert.equal(calls, 0);
+    assert.equal(updates, 0);
+  }
+});
+
 test('failed previous-page load preserves navigation history for retry', async () => {
   let failFirst = false;
   const pager = new CursorPager<number>(async cursor => {
@@ -142,6 +364,8 @@ test('refresh aborts an old request and ignores a late response even if the load
     const current = pager.refresh();
     assert.equal(signals[0].aborted, true);
     assert.equal(signals[1].aborted, false);
+    assert.equal(await within(obsolete, 'Superseded page cancellation'), false,
+      'Refresh must release the old wait before an ignored-abort loader finishes');
     fresh.resolve({ items: ['fresh'], nextCursor: null });
     assert.equal(await current, true);
     const eventsBeforeOld = changes.length;
@@ -183,6 +407,8 @@ test('dispose aborts transport and prevents all later state updates or loads', a
   pager.dispose();
   assert.equal(signal.aborted, true);
   const count = changes.length;
+  assert.equal(await within(request, 'Disposed page cancellation'), false,
+    'Disposal must release the old wait before an ignored-abort loader finishes');
   waiting.resolve({ items: [99], nextCursor: null });
   assert.equal(await request, false);
   assert.equal(await pager.refresh(), false);

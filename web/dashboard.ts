@@ -1,4 +1,5 @@
 import { ASSET_SYMBOL_PATTERN, MAX_ASSET_METADATA, type AssetMetadata } from '../shared/asset-metadata.ts';
+import { requestWithTimeout } from './request.ts';
 
 export const PAGE_SIZE = 25;
 export type PaymentStatus = 'queued' | 'broadcast' | 'settled' | 'failed' | 'review';
@@ -108,7 +109,11 @@ export class CursorPager<T> {
   private disposed = false;
   private view: PagerState<T> = { items: [], nextCursor: null, page: 1, loading: false, error: '' };
   constructor(private readonly loader: (cursor: string | undefined, signal: AbortSignal) => Promise<CursorPage<T>>,
-    private readonly onChange: (state: PagerState<T>) => void) {}
+    private readonly onChange: (state: PagerState<T>) => void,
+    private readonly timeoutMs = 15_000) {
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2147483647)
+      throw new RangeError('Page timeout must be an integer from 1 to 2147483647 milliseconds');
+  }
   get state() { return this.view; }
   private publish(state: PagerState<T>) { this.view = state; this.onChange(state); }
   refresh() { return this.load([undefined]); }
@@ -130,7 +135,8 @@ export class CursorPager<T> {
     this.current = controller;
     this.publish({ ...this.view, loading: true, error: '' });
     try {
-      const page = await this.loader(history[history.length - 1], controller.signal);
+      const page = await requestWithTimeout(signal => this.loader(history[history.length - 1], signal),
+        controller.signal, this.timeoutMs, 'Page response timed out. Try loading this page again.');
       if (this.disposed || version !== this.version) return false;
       if (!Array.isArray(page.items) || page.items.length > PAGE_SIZE ||
         (page.nextCursor !== null && (typeof page.nextCursor !== 'string' || !page.nextCursor ||

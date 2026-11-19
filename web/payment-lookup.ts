@@ -1,4 +1,5 @@
 import type { Overview, PaymentRow } from './dashboard.ts';
+import { requestWithTimeout } from './request.ts';
 
 export interface PaymentLookupSnapshot { row: PaymentRow; capturedAt: string }
 export interface PaymentLookupState {
@@ -83,30 +84,6 @@ export function newDemoPaymentAttempt(amount: string, payer: string | undefined,
   const paymentId = '0x' + Array.from(random, byte => byte.toString(16).padStart(2, '0')).join('');
   if (paymentId === '0x' + '00'.repeat(32)) throw new Error('The payment ID could not be generated');
   return { request: { amount, paymentId }, recordId: payer.toLowerCase() + ':' + paymentId };
-}
-
-async function requestWithTimeout<T>(send: (signal: AbortSignal) => Promise<T>,
-  parentSignal: AbortSignal, timeoutMs: number, timeoutMessage: string): Promise<T> {
-  if (parentSignal.aborted) throw parentSignal.reason;
-  const controller = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let cancel!: () => void;
-  const interrupted = new Promise<never>((_, reject) => {
-    const stop = (reason: unknown) => {
-      reject(reason);
-      controller.abort(reason);
-    };
-    cancel = () => stop(parentSignal.reason);
-    parentSignal.addEventListener('abort', cancel, { once: true });
-    timer = setTimeout(() => stop(new Error(timeoutMessage)), timeoutMs);
-  });
-  try {
-    const response = new Promise<T>(resolve => { resolve(send(controller.signal)); });
-    return await Promise.race([interrupted, response]);
-  } finally {
-    clearTimeout(timer);
-    parentSignal.removeEventListener('abort', cancel);
-  }
 }
 
 /** Bound the client wait without changing the attempt or cancelling server-side work. */
