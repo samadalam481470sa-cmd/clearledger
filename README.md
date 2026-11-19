@@ -76,8 +76,8 @@ The results below belong to the stated source revisions. Documentation-only comm
 
 | Verification | Reviewed source | Completed evidence |
 | --- | --- | --- |
-| Regular Linux suite | `a8de541` | 1,285 tests passed with zero failures or skips. Vendored Besu tree verification, fresh install, strict typecheck, Solidity compilation, dashboard build and source-report verification passed. [CI run](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/44331886137) |
-| Four-validator Besu | `a8de541` | All 11 checks passed on one Docker host in 314,327 ms, including EOA and contract-wallet quorum recovery, revocation and reconciliation of three journals. [CI run](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/44331886236) |
+| Regular Linux suite | `2f88d77` | 1,292 tests passed with zero failures or skips. Vendored Besu tree verification, fresh install, strict typecheck, Solidity compilation, dashboard build and source-report verification passed. [CI run](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/44416078000) |
+| Four-validator Besu | `2f88d77` | All 11 checks passed on one Docker host in 359,421 ms, including EOA and contract-wallet quorum recovery, revocation and reconciliation of three journals. [CI run](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/44416077647) |
 | CLI crash and rollback recovery | `86460563` | The CLI recovered the original signed reservation after a controlled Ganache rollback, then settled two payments on the final chain with two journals and reconciliation 2/0. [Evidence](STATUS.md#cli-recovery-after-a-rolled-back-settlement) |
 | Longer receipt outage | `a0c13705` | Two five-minute observation windows recorded 645,255 ms of active checks and 1,440 authenticated HTTP 200 history responses in bursts of 12 concurrent requests across abrupt restart. Two payments recovered with two journals and reconciliation 2/0. [Dedicated CI run](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/43698870254) |
 
