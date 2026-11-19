@@ -4,7 +4,7 @@ Prioritize verified payment correctness and demonstrable engineering over source
 
 ## Verified baseline
 
-Source `bba37eebc77b48fcf93a6cb61eaa1a61b6300f3c` passed all 1,313 regular Linux tests with zero failures or skips, plus vendored Besu tree verification, strict typecheck, build and source-report verification. [Regular CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/44471435015).
+Source `a38199cc32a16e4be0e6a32b6b3fdbc5281f2e76` passed all 1,331 regular Linux tests with zero failures or skips, plus vendored Besu tree verification, strict typecheck, build and source-report verification. [Regular CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/44475239196).
 
 Source `2f88d77a34fa2b6fc0d6b81ab3f2b858e393d276` passed all 11 Besu checks, including EOA and contract-wallet quorum recovery, revocation and reconciliation of three journals. [Besu CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/44416077647).
 
@@ -12,7 +12,7 @@ The CLI rollback case is included in the regular suite. The extended receipt out
 
 Reconciliation reports distinguish new flags from all outstanding reviews. Totals validate posting relationships, retained transfer fields, inclusion metadata and transaction hash uniqueness across posted journals. The dashboard supports cursor pages with bounded client waits, exact payment lookup and separate journaled settled/review volume. Browser layout, mounted interaction and accessibility remain unverified under the existing origin denial.
 
-The count is 642,634 nonblank source lines, comprising 19,722 application-area lines and 622,912 attributed Besu lines, including comments and tests. The application area includes the attributed signature-check adaptation. Historical measurements and earlier failures remain tied to their recorded revisions in [STATUS.md](STATUS.md) and [VALIDATION.md](docs/VALIDATION.md).
+The count is 642,797 nonblank source lines, comprising 19,885 application-area lines and 622,912 attributed Besu lines, including comments and tests. The application area includes the attributed signature-check adaptation. Historical measurements and earlier failures remain tied to their recorded revisions in [STATUS.md](STATUS.md) and [VALIDATION.md](docs/VALIDATION.md).
 
 ## Next increments
 
@@ -25,7 +25,6 @@ The count is 642,634 nonblank source lines, comprising 19,722 application-area l
 
 ## Further application work
 
-- Replace native malformed-JSON parser messages with fixed request diagnostics and verify both mutation routes with authenticated body tests.
 - Replace the legacy development EVM with a maintained runner and review remaining dependency findings. [Dependency record](docs/DEPENDENCIES.md).
 - Verify wallet-specific integrations and policy rotation beyond the generic ERC-1271 checker, including multisignature, ERC-6492 and ERC-4337 behavior.
 - Add durable jobs and a distributed relayer lease before supporting multiple workers or databases sharing a signer.
