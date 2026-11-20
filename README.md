@@ -77,10 +77,10 @@ The results below belong to the stated source revisions. Documentation-only comm
 
 | Verification | Reviewed source | Completed evidence |
 | --- | --- | --- |
-| Regular Linux suite | `e494107` | 1,380 tests passed with zero failures or skips. Vendored Besu tree verification, fresh install, strict typecheck, Solidity compilation, dashboard build and source-report verification passed. [CI run](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/44678809249) |
+| Regular Linux suite | `b3b41aa` | 1,380 tests passed with zero failures or skips. Vendored Besu tree verification, fresh install, strict typecheck, Solidity compilation, dashboard build and source-report verification passed. [CI run](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/44682301872) |
 | Four-validator Besu | `e494107` | All 12 checks passed on one Docker host in 366,063 ms, including file-backed fixture-worker SIGKILL recovery, EOA and contract-wallet quorum recovery, revocation and reconciliation of three journals. [CI run](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/44678809244) |
 | CLI crash and rollback recovery | `86460563` | The CLI recovered the original signed reservation after a controlled Ganache rollback, then settled two payments on the final chain with two journals and reconciliation 2/0. [Evidence](STATUS.md#cli-recovery-after-a-rolled-back-settlement) |
-| Longer receipt outage | `a0c13705` | Two five-minute observation windows recorded 645,255 ms of active checks and 1,440 authenticated HTTP 200 history responses in bursts of 12 concurrent requests across abrupt restart. Two payments recovered with two journals and reconciliation 2/0. [Dedicated CI run](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/43698870254) |
+| Longer receipt outage | `b3b41aa` | With 26 historical settlements retained, two five-minute windows recorded 639,305 ms of active checks and 1,920 authenticated HTTP 200 history responses in bursts of 16 across abrupt CLI restart. Healing recovered two payments, preserving the frozen journal page and producing 28 journals with reconciliation 28/0. [Dedicated CI run](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/44682301775) |
 
 The dedicated outage workflow runs when its own definition or the outage test changes. Other source revisions can use manual dispatch. Its fault affects the receipt route, and the parent retains direct chain access. Active observation excludes startup and restart downtime. [Outage procedure and limits](docs/API.md#recovery).
 
@@ -90,13 +90,13 @@ Detailed regression results and earlier failures retain their original source re
 
 ## More than 100,000 source lines
 
-The [machine-readable count](docs/source-count.json) records **643,773 nonblank source lines**, including comments and tests.
+The [machine-readable count](docs/source-count.json) records **643,871 nonblank source lines**, including comments and tests.
 
 | Source area | Files | Nonblank lines |
 | --- | --- | --- |
-| ClearLedger application area | 129 | 20,861 |
+| ClearLedger application area | 129 | 20,959 |
 | Attributed Besu snapshot | 4,484 | 622,912 |
-| Combined | 4,613 | 643,773 |
+| Combined | 4,613 | 643,871 |
 
 Package installs, lockfiles, JSON, documentation, generated output and databases are excluded. Application-area counting includes the clearly attributed OpenZeppelin-derived signature-check adaptation. Application code is MIT-licensed. Besu and dependencies retain their own licenses, and the consensus implementation belongs to Besu. [Provenance and licenses](docs/PROVENANCE.md).
 
