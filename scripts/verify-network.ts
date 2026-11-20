@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomBytes } from 'node:crypto';
-import { ContractFactory, Wallet, id, parseEther, parseUnits, type JsonRpcProvider } from 'ethers';
+import { ContractFactory, Wallet, id, keccak256, parseEther, parseUnits, Transaction, type JsonRpcProvider } from 'ethers';
 import { createRpcProvider } from '../src/rpc.ts';
 import { deploy } from '../src/chain.ts';
-import { Store } from '../src/store.ts';
+import { Store, type RecordRow } from '../src/store.ts';
 import { PaymentService } from '../src/service.ts';
 import { paymentTypes } from '../src/payment.ts';
 import { compile } from './compile.ts';
@@ -25,6 +25,25 @@ interface Agreement { height: number; hash: string; heads: number[] }
 interface GeneratedAddresses { chainId: number; deployer: string; validators: string[] }
 class AcceptanceFailure extends Error {}
 type StoppableValidator = 'validator3' | 'validator4';
+interface LedgerSnapshot {
+  row: RecordRow;
+  payments: Record<string, unknown>[];
+  journals: Record<string, unknown>[];
+  audit: Record<string, unknown>[];
+  sequence: Record<string, unknown>[];
+}
+interface WorkerReply { type?: string; id?: number; snapshot?: LedgerSnapshot }
+interface WorkerExit { code: number | null; signal: NodeJS.Signals | null }
+
+function ledgerSnapshot(store: Store, paymentId: string): LedgerSnapshot {
+  const row = store.get(paymentId);
+  assert.ok(row, 'Checkpoint payment is unavailable');
+  const rows = (sql: string) => store.db.prepare(sql).all().map(item => ({ ...item }));
+  return { row, payments: rows('SELECT * FROM payments ORDER BY rowid'),
+    journals: rows('SELECT * FROM journals ORDER BY rowid'),
+    audit: rows('SELECT * FROM audit ORDER BY sequence'),
+    sequence: rows('SELECT * FROM sqlite_sequence ORDER BY name') };
+}
 
 function sameValidatorSet(actual: unknown, expected: string[]): boolean {
   if (!Array.isArray(actual) || actual.some(value => typeof value !== 'string')) return false;
@@ -51,8 +70,58 @@ export async function verifyNetwork() {
   let phase = 'configuration';
   const possiblyStopped = new Set<StoppableValidator>();
   let lastProbeLog = 0;
+  // Keep acceptance data in a new task-owned directory, separate from generated keys.
+  const ledgerDirectory = mkdtempSync(join(resolve('network/generated'), 'acceptance-ledger-'));
+  const ledgerPath = join(ledgerDirectory, 'journal.sqlite');
+  let store = new Store(ledgerPath), storeOpen = true;
   const providers = PORTS.map(port => createRpcProvider('http://127.0.0.1:' + port, 3000));
-  const store = new Store();
+  let crashWorker: ChildProcess | undefined;
+  let crashWorkerClosed: Promise<WorkerExit> | undefined;
+  let crashWorkerExited = false;
+
+  function closeStore() {
+    if (storeOpen) { store.close(); storeOpen = false; }
+  }
+  async function terminateCrashWorker(): Promise<WorkerExit | undefined> {
+    const child = crashWorker, closed = crashWorkerClosed;
+    if (!child || !closed) return;
+    if (!crashWorkerExited && child.pid) {
+      try { child.kill('SIGKILL'); }
+      catch { throw new Error('Acceptance worker termination failed'); }
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await Promise.race([closed, new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Acceptance worker termination timed out')), 5000);
+      })]);
+      crashWorker = undefined; crashWorkerClosed = undefined;
+      return result;
+    } finally { clearTimeout(timer); }
+  }
+  async function workerCommand(command: Record<string, unknown>, expected: 'ready' | 'tick', label: string) {
+    const child = crashWorker;
+    if (!child || !child.connected) throw new Error('Acceptance worker is unavailable');
+    let detach = () => {};
+    try {
+      return await bounded(label, () => new Promise<WorkerReply>((resolveReply, reject) => {
+        const finish = (error?: Error, reply?: WorkerReply) => {
+          detach();
+          if (error) reject(error); else resolveReply(reply!);
+        };
+        const onMessage = (message: unknown) => {
+          if (!message || typeof message !== 'object') return;
+          const reply = message as WorkerReply;
+          if (reply.type === 'fatal') finish(new Error('Acceptance worker command failed'));
+          else if (reply.type === expected && (command.id === undefined || reply.id === command.id)) finish(undefined, reply);
+        };
+        const onError = () => finish(new Error('Acceptance worker process failed'));
+        const onClose = () => finish(new Error('Acceptance worker exited before its checkpoint'));
+        detach = () => { child.off('message', onMessage); child.off('error', onError); child.off('close', onClose); };
+        child.on('message', onMessage); child.once('error', onError); child.once('close', onClose);
+        child.send(command, error => { if (error) finish(new Error('Acceptance worker command could not be sent')); });
+      }), 20000);
+    } finally { detach(); }
+  }
 
   async function bounded<T>(label: string, operation: () => Promise<T>, timeoutMs: number): Promise<T> {
     const remaining = Math.min(timeoutMs, deadline - Date.now());
@@ -150,7 +219,8 @@ export async function verifyNetwork() {
     }, 150000);
 
     phase = 'signed demo settlement';
-    const service = new PaymentService(store, provider, relayer, router, CHAIN_ID, await router.getAddress(), 2);
+    const routerAddress = await router.getAddress();
+    let service = new PaymentService(store, provider, relayer, router, CHAIN_ID, routerAddress, 2);
     const latest = await bounded(phase, () => provider.getBlock('latest'), 10000);
     assert.ok(latest, 'Latest block is unavailable');
     const amount = parseUnits('125', 6);
@@ -201,7 +271,49 @@ export async function verifyNetwork() {
       amount: laterAmount.toString(), nonce: '1', deadline: String(laterBlock.timestamp + 3600) };
     const laterSignature = await payer.signTypedData(service.signingDomain, paymentTypes, laterPayment);
     const laterAccepted = await bounded(phase, () => service.accept({ payment: laterPayment, signature: laterSignature }), 10000);
-    await bounded(phase, () => service.tick(), 20000);
+    assert.equal(laterAccepted.row.status, 'queued', 'Parent must hand off an undispatched payment');
+    assert.equal(laterAccepted.row.raw_tx, null);
+    assert.equal(laterAccepted.row.tx_hash, null);
+    const beforeWorker = ledgerSnapshot(store, laterAccepted.row.id);
+    const relayerNonceBeforeCrash = await bounded(phase,
+      () => provider.getTransactionCount(relayer.address, 'latest'), 10000);
+    closeStore();
+
+    phase = 'child worker reservation and broadcast without quorum';
+    const child = crashWorker = spawn(process.execPath, ['--import', 'tsx', 'tests/fixtures/outage-worker.ts'], {
+      cwd: process.cwd(), windowsHide: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+      env: { ...process.env, TSX_DISABLE_CACHE: '1', NODE_DISABLE_COMPILE_CACHE: '1',
+        TMP: ledgerDirectory, TEMP: ledgerDirectory, TMPDIR: ledgerDirectory }
+    });
+    crashWorkerExited = false;
+    crashWorkerClosed = new Promise(resolveExit => child.once('close', (code, signal) => resolveExit({ code, signal })));
+    child.once('exit', () => { crashWorkerExited = true; });
+    child.on('error', () => { /* Command handling reports only fixed diagnostics. */ });
+    await workerCommand({ type: 'start', db: ledgerPath, rpc: 'http://127.0.0.1:' + PORTS[0],
+      key: relayer.privateKey, router: routerAddress, chainId: CHAIN_ID, confirmations: 2 }, 'ready', phase);
+    const workerPid = child.pid;
+    assert.ok(workerPid && workerPid !== process.pid, 'Recovery checkpoint must run in a distinct process');
+    const reply = await workerCommand({ type: 'tick', id: 1, paymentId: laterAccepted.row.id }, 'tick', phase);
+    const checkpoint = reply.snapshot;
+    assert.ok(checkpoint, 'Worker must return its committed ledger checkpoint');
+    assert.equal(checkpoint.row.status, 'broadcast');
+    assert.ok(checkpoint.row.raw_tx && checkpoint.row.tx_hash, 'Child must persist the native reservation before acknowledging');
+    assert.equal(keccak256(checkpoint.row.raw_tx), checkpoint.row.tx_hash);
+    const archivedTransaction = Transaction.from(checkpoint.row.raw_tx);
+    assert.equal(archivedTransaction.chainId, BigInt(CHAIN_ID));
+    assert.equal(archivedTransaction.nonce, relayerNonceBeforeCrash);
+    assert.deepEqual(checkpoint.journals, beforeWorker.journals, 'Dispatch must retain the first settlement journal');
+    assert.deepEqual(checkpoint.payments.filter(row => row.id !== laterAccepted.row.id),
+      beforeWorker.payments.filter(row => row.id !== laterAccepted.row.id));
+
+    phase = 'forced child termination and SQLite reopen';
+    const workerExit = await terminateCrashWorker();
+    assert.ok(workerExit, 'Writer termination must be observed');
+    assert.equal(workerExit.signal, 'SIGKILL', 'Writer must terminate without its shutdown path');
+    store = new Store(ledgerPath); storeOpen = true;
+    service = new PaymentService(store, provider, relayer, router, CHAIN_ID, routerAddress, 2);
+    assert.deepEqual(ledgerSnapshot(store, laterAccepted.row.id), checkpoint,
+      'Process recovery must preserve every checkpoint row, journal, audit and sequence');
     const pending = store.get(laterAccepted.row.id)!;
     assert.equal(pending.status, 'broadcast', 'No-quorum payment must have durable signed bytes');
     assert.ok(pending.tx_hash && pending.raw_tx, 'Pending transaction provenance is required');
@@ -260,7 +372,17 @@ export async function verifyNetwork() {
     assert.equal(await token.balanceOf(payee.address), amount + laterAmount, 'Recovered transfer balance mismatch');
     assert.equal(await router.nonces(payer.address), 2n, 'Recovered payer nonce mismatch');
     assert.equal(store.journals().length, 2, 'Recovered payment must add exactly one journal');
-    assert.deepEqual((await bounded('recovered receipt reconciliation', () => service.reconcile(), 10000)).exceptions, []);
+    const recoveredReconciliation = await bounded('recovered receipt reconciliation', () => service.reconcile(), 10000);
+    assert.deepEqual(recoveredReconciliation.exceptions, []);
+    const relayerNonceAfterCrash = await bounded(phase,
+      () => provider.getTransactionCount(relayer.address, 'latest'), 10000);
+    assert.equal(relayerNonceAfterCrash, relayerNonceBeforeCrash + 1, 'Crash recovery must consume exactly one native nonce');
+    assert.equal(store.events().filter(event => event.payment_id === laterAccepted.row.id && event.action === 'settled').length, 1);
+    console.log(JSON.stringify({ check: 'sqlite-worker-crash-recovery', fileBacked: true,
+      writerPid: workerPid, recoveryPid: process.pid, exitSignal: workerExit.signal,
+      checkpointRetained: true, transactionHash: pendingHash, nativeNonceBefore: relayerNonceBeforeCrash,
+      nativeNonceAfter: relayerNonceAfterCrash, journalEntries: 2, settledAudits: 1,
+      reconciliationChecked: recoveredReconciliation.checked, reconciliationExceptions: recoveredReconciliation.exceptions.length }));
     console.log(JSON.stringify({ check: 'post-quorum-settlement', settledBaseUnits: laterAmount.toString(),
       transactionHash: laterSettled.tx_hash, block: laterSettled.block_number, journalEntries: 2 }));
 
@@ -446,19 +568,26 @@ export async function verifyNetwork() {
       reconciliationExceptions: reconciliation.exceptions.length, ...walletAgreement }));
     console.log(JSON.stringify({ result: 'passed', elapsedMs: Date.now() - started,
       checks: ['four-validator-agreement', 'signed-settlement', 'one-validator-failure',
-        'two-validator-quorum-loss', 'quorum-restoration', 'post-quorum-settlement', 'validator-recovery',
+        'two-validator-quorum-loss', 'quorum-restoration', 'sqlite-worker-crash-recovery', 'post-quorum-settlement', 'validator-recovery',
         'erc1271-quorum-loss', 'erc1271-settlement', 'erc1271-quorum-recovery', 'erc1271-revocation'] }));
   } catch (error) {
     // Avoid dumping transaction arguments, generated keys, or wallet objects into CI logs.
     const reason = error instanceof AcceptanceFailure || error instanceof QuorumObservationError ? ' (' + error.message + ')' : '';
     throw new Error('Besu acceptance failed during ' + phase + reason + '; inspect the validator logs');
   } finally {
+    try { await terminateCrashWorker(); }
+    catch {
+      console.error('Cleanup could not confirm acceptance worker termination; ledger retained');
+      process.exitCode = 1;
+      // A failed cleanup must not let an orphan IPC handle keep this driver alive.
+      crashWorker?.unref(); crashWorker?.channel?.unref();
+    }
     for (const validator of possiblyStopped) {
       try { await compose('start', validator); }
       catch { console.error('Cleanup could not restart clearledger-dev ' + validator); process.exitCode = 1; }
     }
     for (const provider of providers) provider.destroy();
-    store.close();
+    closeStore();
   }
 }
 

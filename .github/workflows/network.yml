@@ -18,6 +18,7 @@ on:
       - src/receipt-bloom.ts
       - src/service.ts
       - src/store.ts
+      - tests/fixtures/outage-worker.ts
       - tests/fixtures/compile-wallet.ts
       - tests/fixtures/ContractWallet.sol
 permissions:
