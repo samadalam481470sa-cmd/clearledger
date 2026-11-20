@@ -4,15 +4,15 @@ Prioritize verified payment correctness and demonstrable engineering over source
 
 ## Verified baseline
 
-Source `05fef27c1c0d562ac32e0cfd5d0b60eeb85a0d55` passed all 1,379 regular Linux tests with zero failures or skips, plus vendored Besu tree verification, strict typecheck, build and source-report verification. [Regular CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/44603975647).
+Source `e4941074faf23d20bdc86f5d7972f66310e89296` passed all 1,380 regular Linux tests with zero failures or skips, plus vendored Besu tree verification, strict typecheck, build and source-report verification. [Regular CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/44678809249).
 
-Source `05fef27c1c0d562ac32e0cfd5d0b60eeb85a0d55` passed all 11 Besu checks, including EOA and contract-wallet quorum recovery, revocation and reconciliation of three journals. [Besu CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/44603975719).
+Source `e4941074faf23d20bdc86f5d7972f66310e89296` passed all 12 Besu checks, including file-backed fixture-worker SIGKILL recovery during EOA quorum loss, contract-wallet quorum recovery, revocation and reconciliation of three journals. The parent driver/providers stay alive; this is not a full RPC CLI restart. [Besu CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/44678809244) · [Recovery scope](STATUS.md#file-backed-besu-fixture-worker-crash-recovery).
 
 The CLI rollback case is included in the regular suite. The extended receipt outage test on source `a0c13705da1434864e3f899eb15bf30dee398e64` observed 645,255 ms across abrupt restart with 1,440 successful authenticated history responses in bursts of 12. [Extended outage CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/43698870254) · [Concurrent history evidence](STATUS.md#concurrent-history-reads-during-receipt-outage).
 
 Reconciliation reports distinguish new flags from all outstanding reviews. Known local journal contradictions are reviewed before RPC, with the original evidence retained. Totals validate posting relationships, retained transfer fields, inclusion metadata and transaction hash uniqueness across posted journals. The dashboard supports cursor pages with bounded client waits, exact payment lookup and separate journaled settled/review volume. Independent overview and totals refreshes now have client deadlines and retain last-good data through stalled responses. Browser layout, mounted interaction and accessibility remain unverified under the existing origin denial.
 
-The count is 643,448 nonblank source lines, comprising 20,536 application-area lines and 622,912 attributed Besu lines, including comments and tests. The application area includes the attributed signature-check adaptation. Historical measurements and earlier failures remain tied to their recorded revisions in [STATUS.md](STATUS.md) and [VALIDATION.md](docs/VALIDATION.md).
+The count is 643,773 nonblank source lines, comprising 20,861 application-area lines and 622,912 attributed Besu lines, including comments and tests. The application area includes the attributed signature-check adaptation. Historical measurements and earlier failures remain tied to their recorded revisions in [STATUS.md](STATUS.md) and [VALIDATION.md](docs/VALIDATION.md).
 
 ## Next increments
 

@@ -44,7 +44,7 @@ Node permissioning does not make transactions private. Token account eligibility
 - The extension then stops validator 3, observes healthy two-node no-finalization, restores three-node quorum to settle a pending payment once, and restarts validator 4 for all-four catch-up. Its verified bounds and results are below.
 - A later contract-wallet payment undergoes a second two-validator stop, pending-transaction observation and recovery of the same signed reservation. All four validators catch up before wallet authorization revocation and final state agreement.
 
-The script has a ten-minute budget, bounded RPC/Compose operations, tracks both test-stopped validators 3 and 4 for best-effort restart on failure, and avoids logging generated keys. It does not stop other Docker projects or services. Its journal is temporary memory state; `network:deploy` separately writes ignored reusable development-account credentials.
+The script has a ten-minute budget, bounded RPC/Compose operations, tracks both test-stopped validators 3 and 4 for best-effort restart on failure, and avoids logging generated keys. It does not stop other Docker projects or services. Its SQLite journal is file-backed in a new ignored `network/generated/acceptance-ledger-...` directory and left by the script for inspection. CI does not upload this database, and the runner is ephemeral. The acceptance driver never overwrites generated keys or previous ledgers; `network:deploy` separately writes ignored reusable development-account credentials.
 
 `.github/workflows/network.yml` runs this acceptance path on relevant pushes or manual dispatch, with a 15-minute job budget. Its cleanup removes only the workflow's ephemeral Compose network/volumes. Initial runs exposed key ownership and internal-network host-access issues; the non-root identity/data-bind configuration and separate gateway resolved those boundaries, with all gateway temporary/cache paths under `/tmp`.
 
@@ -65,7 +65,7 @@ With four configured validators, the pinned Besu implementation calculates a req
 
 1. After the existing one-validator progress check, stop validator 3 as well, leaving validators 1 and 2 active.
 2. Allow already-in-flight blocks to drain until successful RPC probes show the two healthy latest heads equal, agreeing, and stable for at least eight seconds.
-3. Submit a second valid signed authorization for 37.5 dUSD with payer nonce 1. Require that its transaction is visible as pending on both live nodes before observation. During the 20-second window, every successful probe must show the same height/hash, null receipts, recipient balance still 125 dUSD, payer nonce still 1, one existing journal, and the payment remaining broadcast with identical stored hash/raw signed bytes. RPC failure fails the observation rather than counting as evidence of a halted chain.
+3. Accept a second valid signed authorization for 37.5 dUSD with payer nonce 1, close the parent Store and dispatch it through a separate manual fixture-worker process. After that child acknowledges its committed broadcast reservation and complete logical ledger checkpoint, terminate it with SIGKILL and await process closure. Reopen the same SQLite file in the parent, recreate PaymentService and require the checkpoint to match exactly. Require that the original transaction is visible as pending on both live nodes before observation. During the 20-second window, every successful probe must show the same height/hash, null receipts, recipient balance still 125 dUSD, payer nonce still 1, one existing journal, and the payment remaining broadcast with identical stored hash/raw signed bytes. RPC failure fails the observation rather than counting as evidence of a halted chain.
 4. Restart validator 3 and allow up to 300 seconds for three-node recovery, accounting for QBFT round backoff. Require at least two blocks of progress and finalization of the same pending hash/raw bytes once: two journals, recipient balance 162.5 dUSD, payer nonce 2, and reconciliation without exceptions.
 5. Restart validator 4 and require all-four catch-up/agreement. Cleanup must restore any test-stopped validators on failure.
 
@@ -85,6 +85,14 @@ Source [`d2dd93c794645ca621516d597f60d2f59a60fc09`](https://github.com/samadalam
 The full scenario took 237,137 ms. This is total acceptance-scenario duration, not throughput or settlement latency. The same source passed [regular CI `40216704639`](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/40216704639) with 109 tests, typecheck, build, and source count. Run conclusions, all job steps, and logs were verified.
 
 A bounded 20-second window on one host does not test malicious validators, arbitrary partitions, independent-host failures, prolonged outages, or production safety/liveness.
+
+## File-backed fixture-worker crash recovery
+
+The EOA quorum-loss phase now includes an abrupt writer-process failure after the broadcast reservation is committed. The parent closes its Store before dispatch, receives the child’s complete logical checkpoint, kills only that child, waits for process closure and reopens the same database. The original signed bytes/hash and previously settled evidence must survive recovery. Restored quorum must consume one additional native nonce, add one journal and one settled audit, and reconcile both settlements without exceptions. Retransmission of the same signed bytes is permitted.
+
+Source `e4941074faf23d20bdc86f5d7972f66310e89296` passed all 12 acceptance checks in 366,063 ms, including this SIGKILL/reopen sequence and the later contract-wallet scenario. All 15 job steps passed; final reconciliation was 3/0 with all four heads at height 45. [Verified run](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/44678809244) · [Detailed evidence](../STATUS.md#file-backed-besu-fixture-worker-crash-recovery).
+
+This is a manually ticked PaymentService fixture child. The parent driver and providers remain alive; the full RPC CLI startup and database-ownership path is not exercised here. SIGKILL follows an acknowledged commit and does not test an interrupted SQLite commit, power loss or filesystem damage. Validators share one host.
 
 ## Contract-wallet quorum recovery
 

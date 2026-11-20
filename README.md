@@ -77,8 +77,8 @@ The results below belong to the stated source revisions. Documentation-only comm
 
 | Verification | Reviewed source | Completed evidence |
 | --- | --- | --- |
-| Regular Linux suite | `05fef27` | 1,379 tests passed with zero failures or skips. Vendored Besu tree verification, fresh install, strict typecheck, Solidity compilation, dashboard build and source-report verification passed. [CI run](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/44603975647) |
-| Four-validator Besu | `05fef27` | All 11 checks passed on one Docker host in 276,533 ms, including EOA and contract-wallet quorum recovery, revocation and reconciliation of three journals. [CI run](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/44603975719) |
+| Regular Linux suite | `e494107` | 1,380 tests passed with zero failures or skips. Vendored Besu tree verification, fresh install, strict typecheck, Solidity compilation, dashboard build and source-report verification passed. [CI run](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/44678809249) |
+| Four-validator Besu | `e494107` | All 12 checks passed on one Docker host in 366,063 ms, including file-backed fixture-worker SIGKILL recovery, EOA and contract-wallet quorum recovery, revocation and reconciliation of three journals. [CI run](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/44678809244) |
 | CLI crash and rollback recovery | `86460563` | The CLI recovered the original signed reservation after a controlled Ganache rollback, then settled two payments on the final chain with two journals and reconciliation 2/0. [Evidence](STATUS.md#cli-recovery-after-a-rolled-back-settlement) |
 | Longer receipt outage | `a0c13705` | Two five-minute observation windows recorded 645,255 ms of active checks and 1,440 authenticated HTTP 200 history responses in bursts of 12 concurrent requests across abrupt restart. Two payments recovered with two journals and reconciliation 2/0. [Dedicated CI run](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/43698870254) |
 
@@ -90,13 +90,13 @@ Detailed regression results and earlier failures retain their original source re
 
 ## More than 100,000 source lines
 
-The [machine-readable count](docs/source-count.json) records **643,448 nonblank source lines**, including comments and tests.
+The [machine-readable count](docs/source-count.json) records **643,773 nonblank source lines**, including comments and tests.
 
 | Source area | Files | Nonblank lines |
 | --- | --- | --- |
-| ClearLedger application area | 128 | 20,536 |
+| ClearLedger application area | 129 | 20,861 |
 | Attributed Besu snapshot | 4,484 | 622,912 |
-| Combined | 4,612 | 643,448 |
+| Combined | 4,613 | 643,773 |
 
 Package installs, lockfiles, JSON, documentation, generated output and databases are excluded. Application-area counting includes the clearly attributed OpenZeppelin-derived signature-check adaptation. Application code is MIT-licensed. Besu and dependencies retain their own licenses, and the consensus implementation belongs to Besu. [Provenance and licenses](docs/PROVENANCE.md).
 
@@ -112,7 +112,7 @@ docker compose -f network/compose.yaml up -d
 npm run network:verify
 ```
 
-`network:verify` deploys test contracts, settles 125 dUSD and checks progress after stopping validator 4. With validators 3 and 4 stopped, a second EOA payment for 37.5 dUSD must remain pending during a 20-second observation. It settles the original reservation after quorum returns.
+`network:verify` deploys test contracts, settles 125 dUSD and checks progress after stopping validator 4. With validators 3 and 4 stopped, a separate manual fixture worker dispatches a second EOA payment for 37.5 dUSD and stores its reservation in file-backed SQLite. The driver kills that worker after its committed checkpoint, reopens the ledger and requires the original reservation to remain pending during a 20-second observation. It settles the same signed transaction after quorum returns. This exercises a PaymentService fixture process; the parent driver and providers stay alive.
 
 A later 12.5 dUSD contract-wallet payment undergoes a second two-validator stop and recovery. The script then checks queued wallet revocation, three journals, recipient balance 175 dUSD and wallet balance 87.5 dUSD, followed by four-node state agreement. Both restoration polls share a 600-second script deadline. [Network procedure and measured limits](docs/NETWORK.md).
 
