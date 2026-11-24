@@ -82,7 +82,7 @@ The results below belong to the stated source revisions. Documentation-only comm
 | CLI crash and rollback recovery | `86460563` | The CLI recovered the original signed reservation after a controlled Ganache rollback, then settled two payments on the final chain with two journals and reconciliation 2/0. [Evidence](STATUS.md#cli-recovery-after-a-rolled-back-settlement) |
 | Longer receipt outage | `b3b41aa` | With 26 historical settlements retained, two five-minute windows recorded 639,305 ms of active checks and 1,920 authenticated HTTP 200 history responses in bursts of 16 across abrupt CLI restart. Healing recovered two payments, preserving the frozen journal page and producing 28 journals with reconciliation 28/0. [Dedicated CI run](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/44682301775) |
 
-The dedicated outage workflow runs when its own definition or the outage test changes. Other source revisions can use manual dispatch. Its fault affects the receipt route, and the parent retains direct chain access. Active observation excludes startup and restart downtime. [Outage procedure and limits](docs/API.md#recovery).
+The dedicated outage workflow runs when its own definition or the outage test changes. Other source revisions can use manual dispatch. The current test requires 101 historical settlements, four frozen journal continuations and a 100-row overview preview with exact lookup beyond it; healing must produce 103 postings. Its fault affects the receipt route, and the parent retains direct chain access. Active observation excludes historical setup, rate-bucket cooldown, startup and restart downtime. The table records completed evidence at its stated revisions. [Outage procedure and limits](docs/API.md#recovery).
 
 The network checks use one host and a test contract wallet. Browser layout, mounted interactions and accessibility remain unverified because browser-origin access was denied. Longer load tests, arbitrary partitions, independent-host failures and production operation remain future work.
 
@@ -90,13 +90,13 @@ Detailed regression results and earlier failures retain their original source re
 
 ## More than 100,000 source lines
 
-The [machine-readable count](docs/source-count.json) records **644,613 nonblank source lines**, including comments and tests.
+The [machine-readable count](docs/source-count.json) records **644,698 nonblank source lines**, including comments and tests.
 
 | Source area | Files | Nonblank lines |
 | --- | --- | --- |
-| ClearLedger application area | 131 | 21,701 |
+| ClearLedger application area | 131 | 21,786 |
 | Attributed Besu snapshot | 4,484 | 622,912 |
-| Combined | 4,615 | 644,613 |
+| Combined | 4,615 | 644,698 |
 
 Package installs, lockfiles, JSON, documentation, generated output and databases are excluded. Application-area counting includes the clearly attributed OpenZeppelin-derived signature-check adaptation. Application code is MIT-licensed. Besu and dependencies retain their own licenses, and the consensus implementation belongs to Besu. [Provenance and licenses](docs/PROVENANCE.md).
 
