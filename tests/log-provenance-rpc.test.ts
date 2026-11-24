@@ -13,6 +13,7 @@ import { computeReceiptLogsBloom } from '../src/receipt-bloom.ts';
 import { Store } from '../src/store.ts';
 import { PaymentService } from '../src/service.ts';
 import { paymentTypes, type Payment } from '../src/payment.ts';
+import { receiptData } from './fixtures/receipt-data.ts';
 
 type Provenance = 'transactionHash' | 'blockHash' | 'blockNumber' | 'transactionIndex' | 'logIndex' | 'siblingLogIndex';
 type RpcFault = Provenance | BlockFault | 'duplicate' | 'conflictingAmount' | 'malformedData' |
@@ -296,8 +297,7 @@ for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData
   const { log: genuineLog, index } = matchingLog(genuine);
   const log = presented.logs[index];
   const genuineBlock = isBlockFault(field) ? await chain.provider.getBlock(genuine.blockNumber) : null;
-  // ethers omits the receipt type from its JSON representation.
-  const repairedPresentation = { ...JSON.parse(JSON.stringify(presented)), type: presented.type };
+  const genuineData = receiptData(genuine), repairedPresentation = receiptData(presented);
   if (isBlockFault(field)) {
     const presentedBlock = await provider.getBlock(genuine.blockNumber);
     assert.ok(genuineBlock && presentedBlock);
@@ -334,7 +334,7 @@ for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData
     } else {
       assert.equal(presented.logs.length, 0);
       assert.equal(presented.logsBloom, genuine.logsBloom);
-      repairedPresentation.logs = JSON.parse(JSON.stringify(genuine.logs));
+      repairedPresentation.logs = genuineData.logs;
     }
     t.diagnostic(JSON.stringify({ firstStatus: reserved.status, successorStatus: store.get(second.id)?.status,
       journalRows: store.journals().length, nativeSends: proxy.sends.length,
@@ -355,8 +355,8 @@ for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData
     assert.equal(presented.gasUsed, envelope.gasLimit + 1n, 'ethers must retain the over-limit gas usage');
     assert.equal(presented.cumulativeGasUsed - presented.gasUsed, genuine.cumulativeGasUsed - genuine.gasUsed,
       'The reported gas increase must preserve the preceding cumulative gas');
-    repairedPresentation.gasUsed = genuine.toJSON().gasUsed;
-    repairedPresentation.cumulativeGasUsed = genuine.toJSON().cumulativeGasUsed;
+    repairedPresentation.gasUsed = genuineData.gasUsed;
+    repairedPresentation.cumulativeGasUsed = genuineData.cumulativeGasUsed;
     t.diagnostic(JSON.stringify({ genuineGasUsed: genuine.gasUsed.toString(),
       reportedGasUsed: presented.gasUsed.toString(), signedGasLimit: envelope.gasLimit.toString(),
       firstStatus: reserved.status, successorStatus: store.get(second.id)?.status,
@@ -366,7 +366,7 @@ for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData
     assert.ok(envelope.type === 2 && signedFeeCap !== null);
     assert.ok(genuine.gasPrice >= 0n && genuine.gasPrice <= signedFeeCap);
     assert.equal(presented.gasPrice, signedFeeCap + 1n, 'ethers must retain the effective gas price above the signed cap');
-    repairedPresentation.gasPrice = genuine.toJSON().gasPrice;
+    repairedPresentation.gasPrice = genuineData.gasPrice;
     t.diagnostic(JSON.stringify({ signedFeeCap: signedFeeCap.toString(), genuineGasPrice: genuine.gasPrice.toString(),
       reportedGasPrice: presented.gasPrice.toString(), firstStatus: reserved.status,
       successorStatus: store.get(second.id)?.status, journalRows: store.journals().length, nativeSends: proxy.sends.length }));
@@ -387,7 +387,7 @@ for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData
     assert.equal(presented.gasPrice, expectedGasPrice - 1n, 'ethers must retain the understated effective gas price');
     assert.ok(presented.gasPrice >= maxPriorityFeePerGas && presented.gasPrice <= maxFeePerGas);
     assert.ok(presented.gasPrice >= baseFeePerGas && presented.gasPrice - baseFeePerGas <= maxPriorityFeePerGas);
-    repairedPresentation.gasPrice = genuine.toJSON().gasPrice;
+    repairedPresentation.gasPrice = genuineData.gasPrice;
     t.diagnostic(JSON.stringify({ baseFeePerGas: baseFeePerGas.toString(), maxFeePerGas: maxFeePerGas.toString(),
       maxPriorityFeePerGas: maxPriorityFeePerGas.toString(), genuineGasPrice: genuine.gasPrice.toString(),
       reportedGasPrice: presented.gasPrice.toString(), firstStatus: reserved.status,
@@ -398,7 +398,7 @@ for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData
     assert.equal(genuine.cumulativeGasUsed, genuine.gasUsed, 'The first transaction must account for all gas used so far');
     const expectedCumulativeGasUsed = genuine.gasUsed + (field === 'cumulativeGasUsedBelowGasUsed' ? -1n : 1n);
     assert.equal(presented.cumulativeGasUsed, expectedCumulativeGasUsed, 'ethers must retain the contradictory cumulative gas');
-    repairedPresentation.cumulativeGasUsed = genuine.toJSON().cumulativeGasUsed;
+    repairedPresentation.cumulativeGasUsed = genuineData.cumulativeGasUsed;
     t.diagnostic(JSON.stringify({ transactionIndex: genuine.index, gasUsed: genuine.gasUsed.toString(),
       reportedCumulativeGasUsed: presented.cumulativeGasUsed.toString(), firstStatus: reserved.status,
       successorStatus: store.get(second.id)?.status, journalRows: store.journals().length, nativeSends: proxy.sends.length }));
@@ -424,14 +424,14 @@ for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData
     assert.equal(envelope.to?.toLowerCase(), String(chain.router.target).toLowerCase());
     assert.ok(genuine[field] == null, 'The genuine ordinary call must have no blob accounting');
     assert.equal(presented[field], injectedBlobValue, 'ethers must retain the injected blob quantity as a bigint');
-    repairedPresentation[field] = genuine.toJSON()[field];
+    repairedPresentation[field] = genuineData[field];
     t.diagnostic(JSON.stringify({ signedType: envelope.type, blobField: field, reportedBlobValue: String(presented[field]),
       firstStatus: reserved.status, successorStatus: store.get(second.id)?.status,
       journalRows: store.journals().length, nativeSends: proxy.sends.length }));
   } else if (field === 'duplicate' || field === 'conflictingAmount' || field === 'malformedData') {
     assert.equal(presented.logs.length, genuine.logs.length + 1);
     const appended = repairedPresentation.logs.pop();
-    const expectedLog = JSON.parse(JSON.stringify(genuineLog));
+    const expectedLog = genuineLog.toJSON();
     if (field === 'conflictingAmount') {
       const event = chain.router.interface.parseLog(appended);
       assert.equal(event?.name, 'PaymentSettled');
@@ -508,7 +508,7 @@ for (const field of [...fields, 'duplicate', 'conflictingAmount', 'malformedData
     assert.notEqual(log[field], genuineLog[field], 'ethers must retain the contradictory RPC provenance');
     repairedPresentation.logs[index][field] = genuineLog[field];
   }
-  assert.deepEqual(repairedPresentation, { ...JSON.parse(JSON.stringify(genuine)), type: genuine.type },
+  assert.deepEqual(repairedPresentation, genuineData,
     'Only the injected fields may differ from the genuine receipt');
   assert.ok(proxy.altered() >= 2);
   assert.equal(reserved.status, 'broadcast');
@@ -611,7 +611,7 @@ test('actual RPC reverted receipts with nonzero log evidence cannot resolve a mi
   assert.ok(genuine?.status === 1 && presented?.status === 0);
   matchingLog(genuine);
   assert.notEqual(genuine.logsBloom, '0x' + '00'.repeat(256));
-  assert.deepEqual({ ...presented.toJSON(), status: genuine.status }, genuine.toJSON(),
+  assert.deepEqual({ ...receiptData(presented), status: genuine.status }, receiptData(genuine),
     'Only receipt status may differ while the genuine logs remain');
   const block = await chain.provider.getBlock(genuine.blockNumber);
   const presentedBlock = await provider.getBlock(genuine.blockNumber);
@@ -648,7 +648,7 @@ test('actual RPC reverted receipts with nonzero log evidence cannot resolve a mi
   const stripped = await provider.getTransactionReceipt(hash);
   assert.ok(stripped?.status === 0);
   assert.deepEqual(stripped.logs, []);
-  assert.deepEqual({ ...stripped.toJSON(), status: genuine.status, logs: genuine.toJSON().logs }, genuine.toJSON(),
+  assert.deepEqual({ ...receiptData(stripped), status: genuine.status, logs: receiptData(genuine).logs }, receiptData(genuine),
     'Only status and the log array may change while the genuine bloom remains');
   const strippedBeforeRetry = proxy.altered();
   for (let attempt = 0; attempt < 2; attempt++) {

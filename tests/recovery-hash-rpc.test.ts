@@ -14,6 +14,7 @@ import { Store } from '../src/store.ts';
 import { PaymentService } from '../src/service.ts';
 import { paymentTypes, type Payment } from '../src/payment.ts';
 import { rpcProxy } from './fixtures/rpc-proxy.ts';
+import { receiptData } from './fixtures/receipt-data.ts';
 
 let chain: Awaited<ReturnType<typeof localChain>>;
 let snapshot: string | undefined;
@@ -177,7 +178,9 @@ test('a genuine receipt waits for matching signed bytes before confirmation', { 
   const sent = await chain.provider.broadcastTransaction(original.raw);
   const mined = await sent.wait();
   assert.ok(mined?.status === 1 && mined.hash === original.hash);
-  assert.deepEqual((await provider!.getTransactionReceipt(original.hash))?.toJSON(), mined.toJSON());
+  const presented = await provider!.getTransactionReceipt(original.hash);
+  assert.ok(presented);
+  assert.deepEqual(receiptData(presented), receiptData(mined));
   store!.db.prepare('UPDATE payments SET raw_tx=? WHERE id=?').run(other.raw, original.id);
   reopenStore();
   const ledgerSnapshot = () => JSON.stringify({ rows: store!.list(), audit: store!.events(), journals: store!.journals(),

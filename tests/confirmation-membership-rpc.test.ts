@@ -12,6 +12,7 @@ import { createRpcProvider } from '../src/rpc.ts';
 import { Store } from '../src/store.ts';
 import { PaymentService } from '../src/service.ts';
 import { paymentTypes, type Payment } from '../src/payment.ts';
+import { receiptData } from './fixtures/receipt-data.ts';
 
 const replacementHash = id('conflicting block transaction membership');
 type RpcCall = { id: number | string; method: string; params: string[] };
@@ -162,7 +163,7 @@ for (const fault of ['replacement', 'duplicate'] as const) test(
   const receipt = await local.provider.getTransactionReceipt(hash);
   const presentedReceipt = await rpc.getTransactionReceipt(hash);
   assert.ok(receipt?.status === 1 && presentedReceipt);
-  assert.deepEqual(presentedReceipt.toJSON(), receipt.toJSON(), 'Only block membership may change');
+  assert.deepEqual(receiptData(presentedReceipt), receiptData(receipt), 'Only block membership may change');
   const block = await local.provider.getBlock(receipt.blockNumber);
   const presentedBlock = await rpc.getBlock(receipt.blockNumber);
   assert.ok(block && presentedBlock);
@@ -261,7 +262,9 @@ for (const fault of ['replacement', 'duplicate'] as const) test(
 
     relay.withholdBlock(receipt.blockHash);
     assert.equal(await rpc.getBlock(receipt.blockNumber), null);
-    assert.deepEqual((await rpc.getTransactionReceipt(hash))?.toJSON(), receipt.toJSON());
+    const availableReceipt = await rpc.getTransactionReceipt(hash);
+    assert.ok(availableReceipt);
+    assert.deepEqual(receiptData(availableReceipt), receiptData(receipt));
     const unavailableBlock = await operation(requestReconciliation());
     t.diagnostic(JSON.stringify({ missingBlockHttpStatus: unavailableBlock.status,
       withheldCanonicalBlocks: relay.withheldBlocks(), affectedPaymentStatus: ledger.get(first.id)?.status }));
@@ -363,7 +366,7 @@ test('actual RPC receipt endpoint contradictions hold confirmation and flag the 
     const presented = await rpc.getTransactionReceipt(hash);
     assert.ok(presented);
     assert.equal(presented[field], wrong);
-    assert.deepEqual({ ...presented.toJSON(), [field]: receipt![field] }, receipt!.toJSON());
+    assert.deepEqual({ ...receiptData(presented), [field]: receipt![field] }, receiptData(receipt!));
     assert.deepEqual((await rpc.getBlock(receipt!.blockNumber))?.toJSON(), block!.toJSON());
   }
   await assertPresentedEndpoint('from');

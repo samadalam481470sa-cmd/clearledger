@@ -11,6 +11,7 @@ import { createRpcProvider } from '../src/rpc.ts';
 import { Store } from '../src/store.ts';
 import { PaymentService } from '../src/service.ts';
 import { paymentTypes, type Payment } from '../src/payment.ts';
+import { receiptData } from './fixtures/receipt-data.ts';
 
 type RpcCall = { id: number | string; method: string; params: string[] };
 type RpcReply = { id: number | string; result?: { transactions?: string[]; gasUsed?: string } | null };
@@ -138,7 +139,7 @@ test('actual RPC conservative two-dimension gas ceiling preserves confirmation a
     const presentedReceipt = await operation(rpc.getTransactionReceipt(hash));
     const presentedBlock = await operation(rpc.getBlock(receipt.blockNumber));
     assert.ok(presentedReceipt && presentedBlock);
-    assert.deepEqual(presentedReceipt.toJSON(), receipt.toJSON(), 'The receipt must remain genuine');
+    assert.deepEqual(receiptData(presentedReceipt), receiptData(receipt), 'The receipt must remain genuine');
     assert.equal(presentedBlock.gasUsed, alteredGasUsed);
     assert.deepEqual({ ...presentedBlock.toJSON(), gasUsed: block.gasUsed.toString() }, block.toJSON(),
       'Only the block gas total may change');
