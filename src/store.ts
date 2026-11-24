@@ -179,9 +179,12 @@ export class Store {
     if (status !== null && !['queued', 'broadcast', 'settled', 'failed', 'review'].includes(status))
       throw new PaginationError('Invalid payment status');
     if (options.cursor !== undefined) return decodeCursor(options.cursor, kind, status);
-    const maximum = this.db.prepare('SELECT COALESCE(MAX(rowid),0) AS maximum FROM ' + kind).get()!.maximum;
+    const query = this.db.prepare('SELECT COALESCE(MAX(rowid),0) AS maximum FROM ' + kind);
+    query.setReadBigInts(true);
+    const maximum = query.get()!.maximum;
+    if (typeof maximum !== 'bigint' || maximum < 0n || maximum > BigInt(Number.MAX_SAFE_INTEGER) - 1n)
+      throw new PaginationError('Collection exceeds supported cursor range');
     const upper = Number(maximum);
-    if (!Number.isSafeInteger(upper + 1)) throw new PaginationError('Collection exceeds supported cursor range');
     return { version: 1 as const, kind, status, upper, before: upper + 1 };
   }
   pagePayments(options: PageOptions = {}) {

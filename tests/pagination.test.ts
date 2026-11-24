@@ -2,7 +2,7 @@ import { beforeEach, afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { getAddress, Interface, type JsonRpcProvider } from 'ethers';
-import { Store, type Status } from '../src/store.ts';
+import { Store, PaginationError, type Status } from '../src/store.ts';
 import { PaymentService } from '../src/service.ts';
 import { makeServer } from '../src/http.ts';
 import { digest, domain, type Payment } from '../src/payment.ts';
@@ -97,6 +97,131 @@ test('empty keyset pages have no continuation cursor', () => {
   assert.deepEqual(store.pagePayments({}), { items: [], nextCursor: null });
   assert.deepEqual(store.pageJournals({}), { items: [], nextCursor: null });
 });
+
+type Collection = 'payments' | 'journals';
+const collectionRangeMessage = 'Collection exceeds supported cursor range';
+const maximumCursorRowid = BigInt(Number.MAX_SAFE_INTEGER) - 1n;
+const unsupportedMaxima = [
+  ['first unsupported', BigInt(Number.MAX_SAFE_INTEGER)],
+  ['above Number precision', 2n ** 53n],
+  ['SQLite signed maximum', 2n ** 63n - 1n],
+  ['negative-only', -1n],
+  ['SQLite signed minimum', -(2n ** 63n)]
+] as const;
+function pageCollection(kind: Collection, options: { limit?: number; cursor?: string } = {}) {
+  return kind === 'payments' ? store.pagePayments(options) : store.pageJournals(options);
+}
+function pageIds(page: ReturnType<typeof pageCollection>) {
+  return page.items.map(row => 'id' in row ? row.id : row.payment_id);
+}
+function setCollectionRowid(kind: Collection, paymentId: string, rowid: bigint) {
+  const key = kind === 'payments' ? 'id' : 'payment_id';
+  store.db.prepare('UPDATE ' + kind + ' SET rowid=? WHERE ' + key + '=?').run(rowid, paymentId);
+}
+function exactProjection() {
+  function rows(sql: string) {
+    const statement = store.db.prepare(sql);
+    statement.setReadBigInts(true);
+    return statement.all();
+  }
+  return {
+    payments: rows('SELECT rowid AS preserved_rowid,* FROM payments ORDER BY rowid'),
+    journals: rows('SELECT rowid AS preserved_rowid,* FROM journals ORDER BY rowid'),
+    audit: rows('SELECT * FROM audit ORDER BY sequence'),
+    sequence: rows('SELECT * FROM sqlite_sequence ORDER BY name'),
+    schema: rows('SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name'),
+    changes: rows('SELECT total_changes() AS count')
+  };
+}
+
+for (const kind of ['payments', 'journals'] as const) {
+  test(kind + ' pages preserve exact order and cursor roundtrip at the largest supported rowid', () => {
+    const older = seed(1, 'settled'), newer = seed(2, 'settled');
+    setCollectionRowid(kind, older.id, maximumCursorRowid - 1n);
+    setCollectionRowid(kind, newer.id, maximumCursorRowid);
+    const before = exactProjection();
+    const first = pageCollection(kind, { limit: 1 });
+    assert.deepEqual(pageIds(first), [newer.id]);
+    assert.ok(first.nextCursor);
+    const cursor = JSON.parse(Buffer.from(first.nextCursor, 'base64url').toString('utf8'));
+    assert.equal(cursor.upper, Number.MAX_SAFE_INTEGER - 1);
+    assert.equal(cursor.before, Number.MAX_SAFE_INTEGER - 1);
+    const second = pageCollection(kind, { limit: 1, cursor: first.nextCursor });
+    assert.deepEqual(pageIds(second), [older.id]);
+    assert.equal(second.nextCursor, null);
+    assert.deepEqual(exactProjection(), before, 'Boundary reads must preserve exact SQLite evidence and write count');
+  });
+
+  test(kind + ' HTTP pages roundtrip the largest supported rowid without exposing private fields', async () => {
+    const older = seed(1, 'settled'), newer = seed(2, 'settled');
+    setCollectionRowid(kind, older.id, maximumCursorRowid - 1n);
+    setCollectionRowid(kind, newer.id, maximumCursorRowid);
+    const before = exactProjection();
+    await withApi(async (url, headers) => {
+      const firstResponse = await fetch(url + '/api/' + kind + '?limit=1', { headers, signal: AbortSignal.timeout(3000) });
+      assert.equal(firstResponse.status, 200);
+      const first = await firstResponse.json() as any;
+      assert.deepEqual(first.items.map((row: any) => kind === 'payments' ? row.id : row.payment_id), [newer.id]);
+      assert.equal(typeof first.nextCursor, 'string');
+      assert.ok(!JSON.stringify(first).includes('private-'));
+      assert.ok(!JSON.stringify(first).includes('cursor_rowid'));
+      const secondResponse = await fetch(url + '/api/' + kind + '?limit=1&cursor=' + encodeURIComponent(first.nextCursor),
+        { headers, signal: AbortSignal.timeout(3000) });
+      assert.equal(secondResponse.status, 200);
+      const second = await secondResponse.json() as any;
+      assert.deepEqual(second.items.map((row: any) => kind === 'payments' ? row.id : row.payment_id), [older.id]);
+      assert.equal(second.nextCursor, null);
+      assert.ok(!JSON.stringify(second).includes('private-'));
+      assert.ok(!JSON.stringify(second).includes('cursor_rowid'));
+    });
+    assert.deepEqual(exactProjection(), before);
+  });
+
+  test(kind + ' frozen continuation survives a later oversized row while a fresh scan rejects it', () => {
+    const older = seed(1, 'settled'), newer = seed(2, 'settled');
+    setCollectionRowid(kind, older.id, maximumCursorRowid - 1n);
+    setCollectionRowid(kind, newer.id, maximumCursorRowid);
+    const first = pageCollection(kind, { limit: 1 });
+    assert.deepEqual(pageIds(first), [newer.id]);
+    assert.ok(first.nextCursor);
+    const later = seed(3, 'settled');
+    setCollectionRowid(kind, later.id, 2n ** 53n);
+    const before = exactProjection();
+    const continuation = pageCollection(kind, { limit: 1, cursor: first.nextCursor });
+    assert.deepEqual(pageIds(continuation), [older.id]);
+    assert.equal(continuation.nextCursor, null);
+    assert.throws(() => pageCollection(kind), error => error instanceof PaginationError &&
+      error.message === collectionRangeMessage);
+    assert.deepEqual(exactProjection(), before);
+  });
+
+  for (const [description, maximum] of unsupportedMaxima) {
+    test(kind + ' ' + description + ' rowid uses a fixed write-free pagination range error', () => {
+      const row = seed(1, 'settled');
+      setCollectionRowid(kind, row.id, maximum);
+      const before = exactProjection();
+      for (let retry = 0; retry < 2; retry++) {
+        assert.throws(() => pageCollection(kind), error => error instanceof PaginationError &&
+          error.message === collectionRangeMessage);
+        assert.deepEqual(exactProjection(), before, 'Unsupported metadata must not be rounded or rewritten');
+      }
+    });
+
+    test(kind + ' HTTP rejects ' + description + ' rowid with the fixed 400 response', async () => {
+      const row = seed(1, 'settled');
+      setCollectionRowid(kind, row.id, maximum);
+      const before = exactProjection();
+      await withApi(async (url, headers) => {
+        for (let retry = 0; retry < 2; retry++) {
+          const response = await fetch(url + '/api/' + kind, { headers, signal: AbortSignal.timeout(3000) });
+          assert.equal(response.status, 400);
+          assert.deepEqual(await response.json(), { error: collectionRangeMessage });
+        }
+      });
+      assert.deepEqual(exactProjection(), before);
+    });
+  }
+}
 
 test('default page size is 50 and the supported upper limit is 100', () => {
   for (let i = 1; i <= 51; i++) seed(i, 'settled');
