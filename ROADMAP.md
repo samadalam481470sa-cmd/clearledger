@@ -4,9 +4,9 @@ Prioritize verified payment correctness and demonstrable engineering over source
 
 ## Verified baseline
 
-Source `5dddca4f04acea8d269be865e749361479d8931d` passed all 1,446 regular Linux tests with zero failures or skips, plus vendored Besu tree verification, strict typecheck, build and source-report verification. [Regular CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/45360429352).
+Source `f541e9a233d26c199f3a02a8e86f6070949288b1` passed all 1,449 regular Linux tests with zero failures or skips, plus vendored Besu tree verification, strict typecheck, build and source-report verification. The new native CLI case covers non-default chain binding, two confirmations, abrupt restart and OS ownership. [Regular CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/45366671026).
 
-Source `5dddca4f04acea8d269be865e749361479d8931d` passed all 12 Besu checks, including file-backed fixture-worker SIGKILL recovery during EOA quorum loss, contract-wallet quorum recovery, revocation and reconciliation of three journals. The parent driver/providers stay alive; this is not a full RPC CLI restart. [Besu CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/45360429677) · [Recovery scope](STATUS.md#file-backed-besu-fixture-worker-crash-recovery).
+Source `f541e9a233d26c199f3a02a8e86f6070949288b1` passed all 12 Besu checks in 295,884 ms, including actual autonomous RPC CLI SIGKILL/restart during EOA quorum loss with deployment context, exclusive ownership, read-only checkpoint retention and authenticated reconciliation. Contract-wallet quorum recovery, revocation and reconciliation of three journals also passed. The parent driver/providers stay alive, later wallet phases remain manually driven, and validators share one host. [Besu CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/45366670939) · [Recovery scope](STATUS.md#autonomous-rpc-cli-recovery-on-besu).
 
 The CLI rollback case is included in the regular suite. The extended receipt outage test on source `b3b41aa70face0855987227d6e099b86206383ab` retained 26 historical settlements and a frozen journal continuation across abrupt CLI restart. It measured 639,305 ms of active observation and 1,920 successful authenticated history responses in bursts of 16. Healing produced 28 journals, fresh pages 25+3 and reconciliation 28/0. [Extended outage CI](https://github.com/samadalam481470sa-cmd/clearledger/actions/runs/44682301775) · [Historical journal evidence](STATUS.md#historical-journal-pages-during-receipt-outage).
 
@@ -16,7 +16,7 @@ A conservative cumulative-gas check now retains unresolved reservations or flags
 
 Fresh payment and journal cursors reject unsupported insertion maxima with fixed HTTP 400 errors while previously issued cursors retain their captured range. This preserves the ledger and does not add arbitrary 64-bit or mixed-nonpositive insertion support. [Boundary verification](STATUS.md#exact-pagination-range-boundaries).
 
-The count is 644,314 nonblank source lines, comprising 21,402 application-area lines and 622,912 attributed Besu lines, including comments and tests. The application area includes the attributed signature-check adaptation. Historical measurements and earlier failures remain tied to their recorded revisions in [STATUS.md](STATUS.md) and [VALIDATION.md](docs/VALIDATION.md).
+The count is 644,613 nonblank source lines, comprising 21,701 application-area lines and 622,912 attributed Besu lines, including comments and tests. The application area includes the attributed signature-check adaptation. Historical measurements and earlier failures remain tied to their recorded revisions in [STATUS.md](STATUS.md) and [VALIDATION.md](docs/VALIDATION.md).
 
 ## Next increments
 
