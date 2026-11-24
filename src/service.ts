@@ -36,15 +36,18 @@ function hasValidBlockGasBudget(block: Block): boolean {
 }
 function matchesCanonicalBlock(receipt: TransactionReceipt, block: Block): boolean {
   if (block.number !== receipt.blockNumber || !sameHash(block.hash, receipt.blockHash) ||
-    !Number.isSafeInteger(receipt.index) || receipt.index < 0) return false;
+    !hasValidBlockTimestamp(block) || !Number.isSafeInteger(receipt.index) || receipt.index < 0) return false;
   // The snapshot's 2D accounting charges receipts for both dimensions while
   // block gas meters their maximum. Keep a conservative bound without fork inference.
   return uniqueTransactionIndex(block, receipt.hash) === receipt.index && hasValidBlockGasBudget(block) &&
     typeof receipt.cumulativeGasUsed === 'bigint' && receipt.cumulativeGasUsed <= 2n * block.gasUsed;
 }
+// Reverts may be mined after expiry; both outcomes still need a valid block timestamp.
+function hasValidBlockTimestamp(block: Block): boolean {
+  return Number.isSafeInteger(block.timestamp) && block.timestamp >= 0;
+}
 function blockMeetsDeadline(block: Block, deadline: string): boolean {
-  const { timestamp } = block;
-  return Number.isSafeInteger(timestamp) && timestamp >= 0 && BigInt(timestamp) <= BigInt(deadline);
+  return hasValidBlockTimestamp(block) && BigInt(block.timestamp) <= BigInt(deadline);
 }
 
 function blockGasPriceEvidence(receipt: TransactionReceipt, block: Block | null, transaction: Transaction):

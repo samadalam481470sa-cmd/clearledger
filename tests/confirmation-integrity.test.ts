@@ -74,6 +74,14 @@ function queueAnother() {
   const second = { ...payment, paymentId: '0x' + '34'.repeat(32), amount: '7000000', nonce: '1' };
   secondId = store.accept(second, digest(second, signingDomain), signature).row.id;
 }
+function privateProjection() {
+  return JSON.stringify({ payments: store.db.prepare('SELECT * FROM payments ORDER BY rowid').all(),
+    journals: store.db.prepare('SELECT * FROM journals ORDER BY rowid').all(),
+    audit: store.db.prepare('SELECT * FROM audit ORDER BY sequence').all(),
+    sequence: store.db.prepare('SELECT * FROM sqlite_sequence ORDER BY name').all(),
+    schema: store.db.prepare('SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name').all(),
+    changes: store.db.prepare('SELECT total_changes() AS changes').get() });
+}
 function service(overrides: Record<string, unknown> = {}, confirmations = 2) {
   const provider = {
     getTransactionReceipt: async () => receipt,
@@ -398,6 +406,70 @@ for (const [description, timestamp] of [
     assert.equal(store.journals().length, 1);
     assert.equal(store.events().filter(event => event.action === 'settled').length, 1);
     assert.equal(blockReads, 3);
+  });
+}
+
+for (const [description, timestamp] of [
+  ['missing', undefined], ['null', null], ['negative', -1], ['fractional', deadline - 0.5],
+  ['unsafe', Number.MAX_SAFE_INTEGER + 1], ['NaN', NaN], ['infinite', Infinity],
+  ['string-valued', String(deadline)], ['bigint-valued', BigInt(deadline)], ['boolean-valued', true]
+] as const) {
+  test('a ' + description + ' canonical revert block timestamp retains the exact reservation until valid late evidence returns', async t => {
+    setReceiptStatus(0);
+    if (timestamp === undefined) delete canonical.timestamp;
+    else canonical.timestamp = timestamp;
+    queueAnother();
+    const before = privateProjection(), original = store.get(firstId)!;
+    const worker = service();
+    let rejectedTicks = 0;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try { await worker.tick(); } catch { rejectedTicks++; }
+    }
+    t.diagnostic(JSON.stringify({ evidence: 'synthetic', receiptStatus: 0, canonicalTimestamp: description,
+      statusAfterTwoTicks: store.get(firstId)!.status, failedAuditEvents: store.events().filter(event => event.action === 'failed').length,
+      queuedStatus: store.get(secondId!)!.status, preflights, signing, rejectedTicks }));
+    assert.equal(store.get(firstId)!.status, 'broadcast');
+    assert.ok(privateProjection() === before, 'Incomplete canonical evidence changed the private SQLite projection');
+    assert.equal(store.get(firstId)!.raw_tx, original.raw_tx); assert.equal(store.get(firstId)!.tx_hash, original.tx_hash);
+    assert.equal(store.get(secondId!)!.status, 'queued');
+    assert.equal(store.get(secondId!)!.raw_tx, null); assert.equal(store.get(secondId!)!.tx_hash, null);
+    assert.equal(store.journals().length, 0); assert.equal(preflights, 0); assert.equal(signing, 0); assert.equal(rejectedTicks, 0);
+    assert.equal(blockReads, 2);
+
+    canonical.timestamp = deadline + 1;
+    await assert.rejects(worker.tick(), /Queued nonce was allocated too early/);
+    const failed = store.get(firstId)!;
+    assert.equal(failed.status, 'failed'); assert.equal(failed.error, 'Transaction reverted on chain');
+    assert.equal(failed.raw_tx, original.raw_tx); assert.equal(failed.tx_hash, original.tx_hash);
+    assert.equal(store.journals().length, 0);
+    assert.equal(store.events().filter(event => event.action === 'failed').length, 1);
+    assert.equal(preflights, 1); assert.equal(signing, 0); assert.equal(blockReads, 3);
+    const resolved = privateProjection();
+    await assert.rejects(worker.tick(), /Queued nonce was allocated too early/);
+    assert.ok(privateProjection() === resolved, 'Retrying the proven revert changed its resolved projection');
+    assert.equal(store.get(secondId!)!.status, 'queued');
+    assert.equal(store.get(secondId!)!.raw_tx, null); assert.equal(store.get(secondId!)!.tx_hash, null);
+    assert.equal(store.events().filter(event => event.action === 'failed').length, 1);
+    assert.equal(preflights, 2); assert.equal(signing, 0); assert.equal(blockReads, 3);
+  });
+}
+
+for (const [description, timestamp] of [['zero', 0], ['maximum safe integer', Number.MAX_SAFE_INTEGER]] as const) {
+  test('a valid ' + description + ' canonical timestamp permits a synthetic revert exactly once', async () => {
+    setReceiptStatus(0);
+    canonical.timestamp = timestamp;
+    const original = store.get(firstId)!;
+    const worker = service();
+    await worker.tick(); await worker.tick();
+    const failed = store.get(firstId)!;
+    assert.equal(failed.status, 'failed'); assert.equal(failed.error, 'Transaction reverted on chain');
+    assert.equal(failed.raw_tx, original.raw_tx); assert.equal(failed.tx_hash, original.tx_hash);
+    assert.equal(store.journals().length, 0);
+    assert.equal(store.events().filter(event => event.action === 'failed').length, 1);
+    const resolved = privateProjection();
+    await worker.tick();
+    assert.ok(privateProjection() === resolved, 'A repeated synthetic revert changed its resolved projection');
+    assert.equal(preflights, 0); assert.equal(signing, 0); assert.equal(blockReads, 1);
   });
 }
 
