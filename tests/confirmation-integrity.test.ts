@@ -608,6 +608,90 @@ for (const status of [0, 1]) {
   });
 }
 
+test('receipt cumulative gas above twice the block total preserves the successful reservation', async () => {
+  receipt.gasUsed = 125_001n;
+  receipt.cumulativeGasUsed = 125_001n;
+  canonical.gasUsed = 62_500n;
+  await remainsUncertain();
+});
+
+test('receipt cumulative gas above twice the block total cannot prove a revert', async () => {
+  setReceiptStatus(0);
+  receipt.gasUsed = 125_001n;
+  receipt.cumulativeGasUsed = 125_001n;
+  canonical.gasUsed = 62_500n;
+  await remainsUncertain();
+});
+
+function setGasEvidence(index: number, transactions: readonly string[], cumulative: bigint, total: bigint) {
+  receipt.index = index;
+  receipt.gasUsed = index === 0 ? cumulative : 125_000n;
+  receipt.cumulativeGasUsed = cumulative;
+  receipt.logs = receipt.logs.map((log: any) => ({ ...log, transactionIndex: index }));
+  canonical = { ...canonical, transactions: [...transactions], gasUsed: total,
+    gasLimit: total > 30_000_000n ? total : 30_000_000n };
+}
+
+for (const status of [0, 1]) {
+  test('a later status-' + status + ' receipt above twice the block gas total preserves queue priority', async () => {
+    setReceiptStatus(status);
+    setGasEvidence(1, [otherTxHash, txHash], 146_000n, 72_999n);
+    const worker = await remainsUncertain();
+    assert.equal(blockReads, 2);
+
+    canonical.gasUsed = receipt.cumulativeGasUsed / 2n;
+    await assert.rejects(worker.tick(), /Queued nonce was allocated too early/);
+    const outcome = status === 1 ? 'settled' : 'failed';
+    assert.equal(store.get(firstId)!.status, outcome);
+    assert.equal(store.get(firstId)!.raw_tx, raw); assert.equal(store.get(firstId)!.tx_hash, txHash);
+    assert.equal(store.journals().length, status);
+    assert.equal(store.events().filter(event => event.action === outcome).length, 1);
+  });
+
+  for (const [description, index, transactions, cumulative, total] of [
+    ['sole transaction at the total', 0, [txHash], 125_000n, 125_000n],
+    ['sole transaction below the total', 0, [txHash], 125_000n, 125_001n],
+    ['sole receipt using 70k gas with a 60k header', 0, [txHash], 70_000n, 60_000n],
+    ['sole receipt exactly twice the header total', 0, [txHash], 125_000n, 62_500n],
+    ['first transaction below the total', 0, [txHash, otherTxHash], 125_000n, 146_000n],
+    ['middle transaction below the total', 1, [otherTxHash, txHash, '0x' + '98'.repeat(32)], 146_000n, 167_000n],
+    ['last transaction at the total', 1, [otherTxHash, txHash], 146_000n, 146_000n],
+    ['last transaction below the total', 1, [otherTxHash, txHash], 146_000n, 146_001n],
+    ['last receipt exactly twice the header total', 1, [otherTxHash, txHash], 146_000n, 73_000n]
+  ] as const) {
+    test(description + ' remains eligible for status-' + status + ' confirmation', async () => {
+      setReceiptStatus(status);
+      setGasEvidence(index, transactions, cumulative, total);
+      await service().tick();
+      const outcome = status === 1 ? 'settled' : 'failed';
+      assert.equal(store.get(firstId)!.status, outcome);
+      assert.equal(store.get(firstId)!.raw_tx, raw); assert.equal(store.get(firstId)!.tx_hash, txHash);
+      assert.equal(store.journals().length, status);
+      assert.equal(store.events().filter(event => event.action === outcome).length, 1);
+    });
+  }
+
+  test('status-' + status + ' doubled gas ceiling rejects one-bigint-unit excess beyond Number precision', async () => {
+    setReceiptStatus(status);
+    const total = 2n ** 53n;
+    const bound = 2n * total;
+    assert.equal(Number(bound + 1n), Number(bound), 'Control must lose the unit if coerced to number');
+    setGasEvidence(1, [otherTxHash, txHash], bound + 1n, total);
+    await remainsUncertain();
+    assert.equal(blockReads, 2);
+  });
+
+  test('status-' + status + ' doubled gas ceiling accepts exact bigint equality beyond Number precision', async () => {
+    setReceiptStatus(status);
+    const total = 2n ** 53n;
+    setGasEvidence(1, [otherTxHash, txHash], 2n * total, total);
+    await service().tick();
+    assert.equal(store.get(firstId)!.status, status === 1 ? 'settled' : 'failed');
+    assert.equal(store.journals().length, status);
+    assert.equal(store.get(firstId)!.raw_tx, raw); assert.equal(store.get(firstId)!.tx_hash, txHash);
+  });
+}
+
 for (const status of [0, 1]) {
   for (const [label, type] of [['legacy', 0], ['access-list', 1], ['unsupported', 3], ['missing', undefined]] as const) {
     test(label + ' receipt type cannot resolve a signed type-2 status-' + status + ' reservation', async () => {

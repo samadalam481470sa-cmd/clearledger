@@ -291,6 +291,57 @@ for (const availability of ['matching', 'missing'] as const) {
   });
 }
 
+function setGasEvidence(index: number, transactions: readonly string[], cumulative: bigint, total: bigint) {
+  receipt.index = index;
+  receipt.gasUsed = index === 0 ? cumulative : 125_000n;
+  receipt.cumulativeGasUsed = cumulative;
+  receipt.logs = receipt.logs.map((log: any) => ({ ...log, transactionIndex: index }));
+  canonical = { ...canonical, transactions: [...transactions], gasUsed: total,
+    gasLimit: total > 30_000_000n ? total : 30_000_000n };
+}
+
+for (const [description, index, transactions, cumulative, total] of [
+  ['index-zero receipt', 0, [txHash], 125_001n, 62_500n],
+  ['later receipt', 1, ['0x' + '99'.repeat(32), txHash], 146_001n, 73_000n],
+  ['one-bigint-unit excess beyond Number precision', 1, ['0x' + '99'.repeat(32), txHash], 2n ** 54n + 1n, 2n ** 53n]
+] as const) {
+  test(description + ' above twice the block gas total records one retained-evidence review', async () => {
+    setGasEvidence(index, transactions, cumulative, total);
+    const auditBefore = store.events();
+    await flagged();
+    const reviewed = { row: store.get(paymentId), journal: store.journal(paymentId), audit: store.events() };
+    assert.deepEqual(reviewed.audit.slice(1), auditBefore);
+    const repeat = await service().reconcile();
+    assert.equal(repeat.checked, 0); assert.deepEqual(repeat.exceptions, []);
+    assert.equal(repeat.outstandingReviews, 1);
+    assert.deepEqual({ row: store.get(paymentId), journal: store.journal(paymentId), audit: store.events() }, reviewed);
+  });
+}
+
+for (const [description, index, transactions, cumulative, total] of [
+  ['sole transaction at the total', 0, [txHash], 125_000n, 125_000n],
+  ['sole transaction below the total', 0, [txHash], 125_000n, 125_001n],
+  ['sole receipt using 70k gas with a 60k header', 0, [txHash], 70_000n, 60_000n],
+  ['sole receipt exactly twice the header total', 0, [txHash], 125_000n, 62_500n],
+  ['first transaction below the total', 0, [txHash, '0x' + '99'.repeat(32)], 125_000n, 146_000n],
+  ['middle transaction below the total', 1, ['0x' + '99'.repeat(32), txHash, '0x' + '98'.repeat(32)], 146_000n, 167_000n],
+  ['last transaction at the total', 1, ['0x' + '99'.repeat(32), txHash], 146_000n, 146_000n],
+  ['last transaction below the total', 1, ['0x' + '99'.repeat(32), txHash], 146_000n, 146_001n],
+  ['last receipt exactly twice the header total', 1, ['0x' + '99'.repeat(32), txHash], 146_000n, 73_000n],
+  ['doubled bigint ceiling above Number precision', 1, ['0x' + '99'.repeat(32), txHash], 2n ** 54n, 2n ** 53n]
+] as const) {
+  test(description + ' remains settled without rewriting evidence', async () => {
+    setGasEvidence(index, transactions, cumulative, total);
+    const before = { row: store.get(paymentId), journal: store.journal(paymentId), audit: store.events() };
+    const changes = store.db.prepare('SELECT total_changes() AS n').get()!.n;
+    const result = await service().reconcile();
+    assert.equal(result.checked, 1); assert.deepEqual(result.exceptions, []);
+    assert.equal(result.outstandingReviews, 0);
+    assert.deepEqual({ row: store.get(paymentId), journal: store.journal(paymentId), audit: store.events() }, before);
+    assert.equal(store.db.prepare('SELECT total_changes() AS n').get()!.n, changes);
+  });
+}
+
 for (const availability of ['matching', 'missing'] as const) {
   test('a block timestamp after the signed deadline triggers review with a ' + availability + ' receipt', async () => {
     canonical.timestamp = deadline + 1;
