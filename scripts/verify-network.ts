@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import { execFile, spawn, type ChildProcess } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
 import { randomBytes } from 'node:crypto';
 import { ContractFactory, Wallet, id, keccak256, parseEther, parseUnits, Transaction, type JsonRpcProvider } from 'ethers';
@@ -10,9 +11,12 @@ import { deploy } from '../src/chain.ts';
 import { Store, type RecordRow } from '../src/store.ts';
 import { PaymentService } from '../src/service.ts';
 import { paymentTypes } from '../src/payment.ts';
+import { bindDatabaseContext } from '../src/database-context.ts';
+import { acquireDatabaseOwnership, DatabaseOwnershipError } from '../src/database-ownership.ts';
 import { compile } from './compile.ts';
 import { observeHalted, QuorumObservationError } from './quorum-observation.ts';
 import { compileTestWallet } from '../tests/fixtures/compile-wallet.ts';
+import { startCli, type CliHandle } from '../tests/fixtures/cli-server.ts';
 
 const CHAIN_ID = 20261024;
 const COMPOSE_FILE = resolve('network/compose.yaml');
@@ -31,18 +35,26 @@ interface LedgerSnapshot {
   journals: Record<string, unknown>[];
   audit: Record<string, unknown>[];
   sequence: Record<string, unknown>[];
+  context: Record<string, unknown>[];
+  schema: Record<string, unknown>[];
 }
-interface WorkerReply { type?: string; id?: number; snapshot?: LedgerSnapshot }
-interface WorkerExit { code: number | null; signal: NodeJS.Signals | null }
 
-function ledgerSnapshot(store: Store, paymentId: string): LedgerSnapshot {
-  const row = store.get(paymentId);
-  assert.ok(row, 'Checkpoint payment is unavailable');
-  const rows = (sql: string) => store.db.prepare(sql).all().map(item => ({ ...item }));
-  return { row, payments: rows('SELECT * FROM payments ORDER BY rowid'),
-    journals: rows('SELECT * FROM journals ORDER BY rowid'),
-    audit: rows('SELECT * FROM audit ORDER BY sequence'),
-    sequence: rows('SELECT * FROM sqlite_sequence ORDER BY name') };
+function ledgerSnapshot(db: DatabaseSync, paymentId: string): LedgerSnapshot {
+  // One read transaction observes a committed logical checkpoint across every table.
+  db.exec('BEGIN');
+  try {
+    const rows = (sql: string) => db.prepare(sql).all().map(item => ({ ...item }));
+    const payments = rows('SELECT * FROM payments ORDER BY rowid');
+    const row = payments.find(item => item.id === paymentId) as unknown as RecordRow | undefined;
+    assert.ok(row, 'Checkpoint payment is unavailable');
+    const snapshot = { row, payments, journals: rows('SELECT * FROM journals ORDER BY rowid'),
+      audit: rows('SELECT * FROM audit ORDER BY sequence'),
+      sequence: rows('SELECT * FROM sqlite_sequence ORDER BY name'),
+      context: rows('SELECT * FROM deployment_context ORDER BY singleton'),
+      schema: rows('SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name') };
+    db.exec('COMMIT');
+    return snapshot;
+  } catch (error) { db.exec('ROLLBACK'); throw error; }
 }
 
 function sameValidatorSet(actual: unknown, expected: string[]): boolean {
@@ -75,52 +87,56 @@ export async function verifyNetwork() {
   const ledgerPath = join(ledgerDirectory, 'journal.sqlite');
   let store = new Store(ledgerPath), storeOpen = true;
   const providers = PORTS.map(port => createRpcProvider('http://127.0.0.1:' + port, 3000));
-  let crashWorker: ChildProcess | undefined;
-  let crashWorkerClosed: Promise<WorkerExit> | undefined;
-  let crashWorkerExited = false;
+  const cliHandles: CliHandle[] = [];
+  const closedCliHandles = new Set<CliHandle>();
+  let observer: DatabaseSync | undefined;
 
   function closeStore() {
     if (storeOpen) { store.close(); storeOpen = false; }
   }
-  async function terminateCrashWorker(): Promise<WorkerExit | undefined> {
-    const child = crashWorker, closed = crashWorkerClosed;
-    if (!child || !closed) return;
-    if (!crashWorkerExited && child.pid) {
-      try { child.kill('SIGKILL'); }
-      catch { throw new Error('Acceptance worker termination failed'); }
-    }
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      const result = await Promise.race([closed, new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error('Acceptance worker termination timed out')), 5000);
-      })]);
-      crashWorker = undefined; crashWorkerClosed = undefined;
-      return result;
-    } finally { clearTimeout(timer); }
+  function closeObserver() {
+    if (observer) { observer.close(); observer = undefined; }
   }
-  async function workerCommand(command: Record<string, unknown>, expected: 'ready' | 'tick', label: string) {
-    const child = crashWorker;
-    if (!child || !child.connected) throw new Error('Acceptance worker is unavailable');
-    let detach = () => {};
-    try {
-      return await bounded(label, () => new Promise<WorkerReply>((resolveReply, reject) => {
-        const finish = (error?: Error, reply?: WorkerReply) => {
-          detach();
-          if (error) reject(error); else resolveReply(reply!);
-        };
-        const onMessage = (message: unknown) => {
-          if (!message || typeof message !== 'object') return;
-          const reply = message as WorkerReply;
-          if (reply.type === 'fatal') finish(new Error('Acceptance worker command failed'));
-          else if (reply.type === expected && (command.id === undefined || reply.id === command.id)) finish(undefined, reply);
-        };
-        const onError = () => finish(new Error('Acceptance worker process failed'));
-        const onClose = () => finish(new Error('Acceptance worker exited before its checkpoint'));
-        detach = () => { child.off('message', onMessage); child.off('error', onError); child.off('close', onClose); };
-        child.on('message', onMessage); child.once('error', onError); child.once('close', onClose);
-        child.send(command, error => { if (error) finish(new Error('Acceptance worker command could not be sent')); });
-      }), 20000);
-    } finally { detach(); }
+  function registerCli(handle: CliHandle) {
+    cliHandles.push(handle);
+    void handle.exited.then(() => { closedCliHandles.add(handle); });
+  }
+  function requireLiveCli(handle: CliHandle) {
+    if (closedCliHandles.has(handle) || handle.child.exitCode !== null || handle.child.signalCode !== null)
+      throw new AcceptanceFailure('RPC CLI exited before completing recovery');
+  }
+  function requireCliOwnership() {
+    let unexpected: ReturnType<typeof acquireDatabaseOwnership>;
+    try { unexpected = acquireDatabaseOwnership(ledgerPath); }
+    catch (error) {
+      assert.ok(error instanceof DatabaseOwnershipError);
+      assert.equal(error.message, 'Database is already owned by another ClearLedger RPC process');
+      return;
+    }
+    unexpected.release();
+    assert.fail('A live RPC CLI must retain database ownership');
+  }
+  function requireReleasedOwnership() {
+    const ownership = acquireDatabaseOwnership(ledgerPath);
+    ownership.release();
+  }
+  async function cliRequest<T>(handle: CliHandle, path: '/api/overview' | '/api/reconcile', method = 'GET'): Promise<T> {
+    requireLiveCli(handle);
+    const response = await fetch(handle.url + path, { method,
+      headers: { Authorization: 'Bearer ' + handle.apiKey }, signal: AbortSignal.timeout(5000) });
+    assert.equal(response.status, 200, 'Authenticated RPC CLI request must succeed');
+    const result = await response.json() as T;
+    requireLiveCli(handle);
+    return result;
+  }
+  async function verifyCliConfiguration(handle: CliHandle, routerAddress: string) {
+    const overview = await cliRequest<{ mode: string; chainId: number; router: string; confirmations: number;
+      block: { number: number; hash: string } | null }>(handle, '/api/overview');
+    assert.equal(overview.mode, 'rpc');
+    assert.equal(overview.chainId, CHAIN_ID);
+    assert.equal(overview.confirmations, 2);
+    assert.equal(overview.router, routerAddress);
+    assert.ok(overview.block?.hash && overview.block.number > 0, 'RPC CLI must serve a ready chain overview');
   }
 
   async function bounded<T>(label: string, operation: () => Promise<T>, timeoutMs: number): Promise<T> {
@@ -220,6 +236,10 @@ export async function verifyNetwork() {
 
     phase = 'signed demo settlement';
     const routerAddress = await router.getAddress();
+    const genesis = await bounded('deployment genesis binding', () => provider.getBlock(0), 10000);
+    assert.ok(genesis?.hash && genesis.number === 0, 'Deployment genesis is unavailable');
+    bindDatabaseContext(store.db, { chainId: CHAIN_ID, genesisHash: genesis.hash,
+      router: routerAddress, relayer: relayer.address });
     let service = new PaymentService(store, provider, relayer, router, CHAIN_ID, routerAddress, 2);
     const latest = await bounded(phase, () => provider.getBlock('latest'), 10000);
     assert.ok(latest, 'Latest block is unavailable');
@@ -274,73 +294,83 @@ export async function verifyNetwork() {
     assert.equal(laterAccepted.row.status, 'queued', 'Parent must hand off an undispatched payment');
     assert.equal(laterAccepted.row.raw_tx, null);
     assert.equal(laterAccepted.row.tx_hash, null);
-    const beforeWorker = ledgerSnapshot(store, laterAccepted.row.id);
+    const beforeWorker = ledgerSnapshot(store.db, laterAccepted.row.id);
     const relayerNonceBeforeCrash = await bounded(phase,
       () => provider.getTransactionCount(relayer.address, 'latest'), 10000);
     closeStore();
 
-    phase = 'child worker reservation and broadcast without quorum';
-    const child = crashWorker = spawn(process.execPath, ['--import', 'tsx', 'tests/fixtures/outage-worker.ts'], {
-      cwd: process.cwd(), windowsHide: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
-      env: { ...process.env, TSX_DISABLE_CACHE: '1', NODE_DISABLE_COMPILE_CACHE: '1',
-        TMP: ledgerDirectory, TEMP: ledgerDirectory, TMPDIR: ledgerDirectory }
-    });
-    crashWorkerExited = false;
-    crashWorkerClosed = new Promise(resolveExit => child.once('close', (code, signal) => resolveExit({ code, signal })));
-    child.once('exit', () => { crashWorkerExited = true; });
-    child.on('error', () => { /* Command handling reports only fixed diagnostics. */ });
-    await workerCommand({ type: 'start', db: ledgerPath, rpc: 'http://127.0.0.1:' + PORTS[0],
-      key: relayer.privateKey, router: routerAddress, chainId: CHAIN_ID, confirmations: 2 }, 'ready', phase);
-    const workerPid = child.pid;
-    assert.ok(workerPid && workerPid !== process.pid, 'Recovery checkpoint must run in a distinct process');
-    const reply = await workerCommand({ type: 'tick', id: 1, paymentId: laterAccepted.row.id }, 'tick', phase);
-    const checkpoint = reply.snapshot;
-    assert.ok(checkpoint, 'Worker must return its committed ledger checkpoint');
-    assert.equal(checkpoint.row.status, 'broadcast');
-    assert.ok(checkpoint.row.raw_tx && checkpoint.row.tx_hash, 'Child must persist the native reservation before acknowledging');
-    assert.equal(keccak256(checkpoint.row.raw_tx), checkpoint.row.tx_hash);
-    const archivedTransaction = Transaction.from(checkpoint.row.raw_tx);
+    phase = 'autonomous RPC CLI reservation and broadcast without quorum';
+    const cliOptions = { db: ledgerPath, rpc: 'http://127.0.0.1:' + PORTS[0], key: relayer.privateKey,
+      router: routerAddress, chainId: CHAIN_ID, confirmations: 2, onSpawn: registerCli };
+    const writer = await bounded(phase, () => startCli(cliOptions), 25000);
+    const writerPid = writer.child.pid;
+    assert.ok(writerPid && writerPid !== process.pid, 'RPC writer must run in a distinct process');
+    await bounded('writer RPC CLI configuration and readiness', () => verifyCliConfiguration(writer, routerAddress), 10000);
+    requireCliOwnership();
+    // Store constructors mutate schema and PRAGMAs, so observe both CLI lifetimes natively read-only.
+    observer = new DatabaseSync(ledgerPath, { readOnly: true });
+    const dispatched = await poll(phase, async () => {
+      requireLiveCli(writer);
+      const snapshot = ledgerSnapshot(observer!, laterAccepted.row.id);
+      if (snapshot.row.status === 'failed' || snapshot.row.status === 'review')
+        throw new AcceptanceFailure('RPC writer payment entered ' + snapshot.row.status + ' state');
+      return snapshot.row.status === 'broadcast' && snapshot.row.raw_tx && snapshot.row.tx_hash ? snapshot : undefined;
+    }, 30000);
+    assert.ok(dispatched.row.raw_tx && dispatched.row.tx_hash, 'RPC CLI must persist a native reservation');
+    const pendingHash = dispatched.row.tx_hash, pendingRaw = dispatched.row.raw_tx;
+    assert.equal(keccak256(pendingRaw), pendingHash);
+    const archivedTransaction = Transaction.from(pendingRaw);
     assert.equal(archivedTransaction.chainId, BigInt(CHAIN_ID));
     assert.equal(archivedTransaction.nonce, relayerNonceBeforeCrash);
-    assert.deepEqual(checkpoint.journals, beforeWorker.journals, 'Dispatch must retain the first settlement journal');
-    assert.deepEqual(checkpoint.payments.filter(row => row.id !== laterAccepted.row.id),
-      beforeWorker.payments.filter(row => row.id !== laterAccepted.row.id));
-
-    phase = 'forced child termination and SQLite reopen';
-    const workerExit = await terminateCrashWorker();
-    assert.ok(workerExit, 'Writer termination must be observed');
-    assert.equal(workerExit.signal, 'SIGKILL', 'Writer must terminate without its shutdown path');
-    store = new Store(ledgerPath); storeOpen = true;
-    service = new PaymentService(store, provider, relayer, router, CHAIN_ID, routerAddress, 2);
-    assert.deepEqual(ledgerSnapshot(store, laterAccepted.row.id), checkpoint,
-      'Process recovery must preserve every checkpoint row, journal, audit and sequence');
-    const pending = store.get(laterAccepted.row.id)!;
-    assert.equal(pending.status, 'broadcast', 'No-quorum payment must have durable signed bytes');
-    assert.ok(pending.tx_hash && pending.raw_tx, 'Pending transaction provenance is required');
-    const pendingHash = pending.tx_hash, pendingRaw = pending.raw_tx;
     await poll('both live nodes accepted the pending transaction', async () => {
+      requireLiveCli(writer);
       const transactions = await Promise.all(pair.map(node => node.getTransaction(pendingHash)));
       if (transactions.some(transaction => !transaction)) return;
       assert.ok(transactions.every(transaction => transaction!.hash === pendingHash && transaction!.blockNumber === null),
         'Quorum-loss transaction must be pending on both live nodes');
       return true;
     }, 20000);
+    // This is an observed committed checkpoint, not an acknowledgement from a fixture worker.
+    const checkpoint = ledgerSnapshot(observer, laterAccepted.row.id);
+    assert.deepEqual(checkpoint, dispatched, 'No-quorum dispatch must leave the committed reservation unchanged');
+    assert.deepEqual(checkpoint.journals, beforeWorker.journals, 'Dispatch must retain the first settlement journal');
+    assert.deepEqual(checkpoint.payments.filter(row => row.id !== laterAccepted.row.id),
+      beforeWorker.payments.filter(row => row.id !== laterAccepted.row.id));
+    assert.deepEqual(checkpoint.context, beforeWorker.context, 'RPC startup must retain the deployment binding');
+
+    phase = 'forced RPC writer termination and autonomous CLI restart';
+    requireLiveCli(writer);
+    await bounded('RPC writer SIGKILL and confirmed close', () => writer.kill(), 6000);
+    const writerExit = await writer.exited;
+    assert.equal(writerExit.signal, 'SIGKILL', 'RPC writer must terminate without its shutdown path');
+    assert.deepEqual(ledgerSnapshot(observer, laterAccepted.row.id), checkpoint,
+      'Writer termination must preserve every payment, journal, audit, sequence and deployment-context row');
+    requireReleasedOwnership();
+    const restarted = await bounded(phase, () => startCli({ ...cliOptions, apiKey: writer.apiKey }), 25000);
+    const restartedPid = restarted.child.pid;
+    assert.ok(restartedPid && restartedPid !== writerPid && restartedPid !== process.pid,
+      'Recovery must use a new RPC CLI process');
+    await bounded('restarted RPC CLI configuration and readiness',
+      () => verifyCliConfiguration(restarted, routerAddress), 10000);
+    requireCliOwnership();
+    assert.deepEqual(ledgerSnapshot(observer, laterAccepted.row.id), checkpoint,
+      'CLI restart without quorum must retain the complete committed checkpoint');
 
     phase = 'two-validator quorum observation';
     const halted = await bounded(phase, () => observeHalted(async () => {
-      await service.tick();
+      requireLiveCli(restarted);
       const sample = await agreement(pair, generated.validators);
       if (!sample) throw new AcceptanceFailure('Surviving RPC nodes do not agree');
-      const [receipts, balance, nonce] = await Promise.all([
+      const [receipts, transactions, balance, nonce] = await Promise.all([
         Promise.all(pair.map(node => node.getTransactionReceipt(pendingHash))),
+        Promise.all(pair.map(node => node.getTransaction(pendingHash))),
         token.balanceOf(payee.address), router.nonces(payer.address)
       ]);
       assert.ok(receipts.every(receipt => receipt === null), 'No-quorum transaction unexpectedly has a receipt');
-      const row = store.get(laterAccepted.row.id)!;
-      assert.equal(row.status, 'broadcast', 'No-quorum payment finalized prematurely');
-      assert.equal(row.tx_hash, pendingHash, 'Pending transaction hash changed');
-      assert.equal(row.raw_tx, pendingRaw, 'Pending signed bytes changed');
-      assert.equal(store.journals().length, 1, 'No-quorum payment must not create a journal');
+      assert.ok(transactions.every(transaction => transaction?.hash === pendingHash && transaction.blockNumber === null),
+        'The original transaction must remain pending on both live nodes');
+      assert.deepEqual(ledgerSnapshot(observer!, laterAccepted.row.id), checkpoint,
+        'Autonomous CLI quorum loss changed the reservation, journals, audit, sequence or deployment context');
       assert.equal(balance, amount, 'Recipient balance changed without quorum');
       assert.equal(nonce, 1n, 'Payer nonce changed without quorum');
       return sample;
@@ -360,27 +390,46 @@ export async function verifyNetwork() {
 
     phase = 'settle original pending transaction after quorum restoration';
     const laterSettled = await poll(phase, async () => {
-      await service.tick();
-      const row = store.get(laterAccepted.row.id)!;
+      requireLiveCli(restarted);
+      const row = ledgerSnapshot(observer!, laterAccepted.row.id).row;
       if (row.status === 'failed' || row.status === 'review')
         throw new AcceptanceFailure('Recovered payment entered ' + row.status + ' state');
       return row.status === 'settled' ? row : undefined;
     }, 60000);
     assert.equal(laterSettled.tx_hash, pendingHash, 'Recovery must settle the original transaction');
     assert.equal(laterSettled.raw_tx, pendingRaw, 'Recovery must retain original signed bytes');
-    await bounded(phase, () => service.tick(), 10000);
     assert.equal(await token.balanceOf(payee.address), amount + laterAmount, 'Recovered transfer balance mismatch');
     assert.equal(await router.nonces(payer.address), 2n, 'Recovered payer nonce mismatch');
-    assert.equal(store.journals().length, 2, 'Recovered payment must add exactly one journal');
-    const recoveredReconciliation = await bounded('recovered receipt reconciliation', () => service.reconcile(), 10000);
+    const recoveredReconciliation = await bounded('RPC CLI recovered receipt reconciliation',
+      () => cliRequest<{ checked: number; exceptions: unknown[] }>(restarted, '/api/reconcile', 'POST'), 15000);
+    assert.equal(recoveredReconciliation.checked, 2);
     assert.deepEqual(recoveredReconciliation.exceptions, []);
     const relayerNonceAfterCrash = await bounded(phase,
       () => provider.getTransactionCount(relayer.address, 'latest'), 10000);
     assert.equal(relayerNonceAfterCrash, relayerNonceBeforeCrash + 1, 'Crash recovery must consume exactly one native nonce');
-    assert.equal(store.events().filter(event => event.payment_id === laterAccepted.row.id && event.action === 'settled').length, 1);
-    console.log(JSON.stringify({ check: 'sqlite-worker-crash-recovery', fileBacked: true,
-      writerPid: workerPid, recoveryPid: process.pid, exitSignal: workerExit.signal,
-      checkpointRetained: true, transactionHash: pendingHash, nativeNonceBefore: relayerNonceBeforeCrash,
+    const recoveredCheckpoint = ledgerSnapshot(observer, laterAccepted.row.id);
+    assert.equal(recoveredCheckpoint.journals.length, 2, 'Recovered payment must add exactly one journal');
+    assert.equal(recoveredCheckpoint.audit.filter(event => event.payment_id === laterAccepted.row.id && event.action === 'settled').length, 1);
+    assert.deepEqual(recoveredCheckpoint.context, checkpoint.context);
+    requireLiveCli(restarted);
+    requireCliOwnership();
+    await bounded('restarted RPC CLI stop and confirmed close', () => restarted.kill(), 6000);
+    const restartedExit = await restarted.exited;
+    assert.equal(restartedExit.signal, 'SIGKILL');
+    assert.deepEqual(ledgerSnapshot(observer, laterAccepted.row.id), recoveredCheckpoint);
+    closeObserver();
+    requireReleasedOwnership();
+    // Resume manual wallet acceptance only after both actual CLI writers have closed.
+    assert.ok(cliHandles.every(handle => closedCliHandles.has(handle)), 'Parent must not reopen beside a live CLI');
+    store = new Store(ledgerPath); storeOpen = true;
+    service = new PaymentService(store, provider, relayer, router, CHAIN_ID, routerAddress, 2);
+    assert.deepEqual(ledgerSnapshot(store.db, laterAccepted.row.id), recoveredCheckpoint,
+      'Parent reopen must retain the autonomous CLI recovery checkpoint');
+    console.log(JSON.stringify({ check: 'rpc-cli-crash-recovery', fileBacked: true,
+      writerPid, recoveryPid: restartedPid, writerExitSignal: writerExit.signal,
+      recoveryExitSignal: restartedExit.signal, checkpointRetained: true, deploymentContextRetained: true,
+      ownershipVerified: true, ownershipReleasedAfterClose: true, chainId: CHAIN_ID, confirmations: 2,
+      autonomousRecovery: true, originalReservation: true, transactionHash: pendingHash, nativeNonceBefore: relayerNonceBeforeCrash,
       nativeNonceAfter: relayerNonceAfterCrash, journalEntries: 2, settledAudits: 1,
       reconciliationChecked: recoveredReconciliation.checked, reconciliationExceptions: recoveredReconciliation.exceptions.length }));
     console.log(JSON.stringify({ check: 'post-quorum-settlement', settledBaseUnits: laterAmount.toString(),
@@ -568,26 +617,37 @@ export async function verifyNetwork() {
       reconciliationExceptions: reconciliation.exceptions.length, ...walletAgreement }));
     console.log(JSON.stringify({ result: 'passed', elapsedMs: Date.now() - started,
       checks: ['four-validator-agreement', 'signed-settlement', 'one-validator-failure',
-        'two-validator-quorum-loss', 'quorum-restoration', 'sqlite-worker-crash-recovery', 'post-quorum-settlement', 'validator-recovery',
+        'two-validator-quorum-loss', 'quorum-restoration', 'rpc-cli-crash-recovery', 'post-quorum-settlement', 'validator-recovery',
         'erc1271-quorum-loss', 'erc1271-settlement', 'erc1271-quorum-recovery', 'erc1271-revocation'] }));
   } catch (error) {
     // Avoid dumping transaction arguments, generated keys, or wallet objects into CI logs.
     const reason = error instanceof AcceptanceFailure || error instanceof QuorumObservationError ? ' (' + error.message + ')' : '';
     throw new Error('Besu acceptance failed during ' + phase + reason + '; inspect the validator logs');
   } finally {
-    try { await terminateCrashWorker(); }
-    catch {
-      console.error('Cleanup could not confirm acceptance worker termination; ledger retained');
-      process.exitCode = 1;
-      // A failed cleanup must not let an orphan IPC handle keep this driver alive.
-      crashWorker?.unref(); crashWorker?.channel?.unref();
+    for (const handle of cliHandles) {
+      try { await handle.kill(); }
+      catch {
+        console.error('Cleanup could not confirm RPC CLI termination; ledger retained');
+        process.exitCode = 1;
+        // Only these registered task children and their pipes may be detached.
+        handle.child.unref(); handle.child.stdout?.destroy(); handle.child.stderr?.destroy();
+      }
     }
-    for (const validator of possiblyStopped) {
-      try { await compose('start', validator); }
-      catch { console.error('Cleanup could not restart clearledger-dev ' + validator); process.exitCode = 1; }
+    try { closeObserver(); }
+    catch { console.error('Cleanup could not close the read-only ledger observer; ledger retained'); process.exitCode = 1; }
+    if (cliHandles.some(handle => !closedCliHandles.has(handle))) {
+      // An unconfirmed autonomous writer must not regain quorum against the retained ledger.
+      console.error('Cleanup skipped validator restoration because RPC CLI termination is unconfirmed; ledger retained');
+      process.exitCode = 1;
+    } else {
+      for (const validator of possiblyStopped) {
+        try { await compose('start', validator); }
+        catch { console.error('Cleanup could not restart clearledger-dev ' + validator); process.exitCode = 1; }
+      }
     }
     for (const provider of providers) provider.destroy();
-    closeStore();
+    try { closeStore(); }
+    catch { console.error('Cleanup could not close the acceptance ledger; ledger retained'); process.exitCode = 1; }
   }
 }
 

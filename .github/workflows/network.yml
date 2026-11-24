@@ -14,11 +14,9 @@ on:
       - scripts/quorum-observation.ts
       - scripts/deploy-network.ts
       - contracts/**
-      - src/chain.ts
-      - src/receipt-bloom.ts
-      - src/service.ts
-      - src/store.ts
-      - tests/fixtures/outage-worker.ts
+      - src/**
+      - shared/**
+      - tests/fixtures/cli-server.ts
       - tests/fixtures/compile-wallet.ts
       - tests/fixtures/ContractWallet.sol
 permissions:

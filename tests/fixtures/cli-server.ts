@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 interface CliOptions {
   db: string; rpc: string; key: string; router: string; apiKey?: string; port?: number;
+  chainId?: number; confirmations?: number;
   onSpawn?: (handle: CliHandle) => void;
 }
 export interface CliHandle {
@@ -20,15 +21,21 @@ export interface CliHandle {
 /** Launch the real RPC entry point; no fixture worker, IPC, or manual ticks. */
 export async function startCli(options: CliOptions): Promise<CliHandle> {
   if (!isAbsolute(options.db)) throw new Error('CLI test database path must be absolute');
+  const chainId = options.chainId === undefined ? 31337 : options.chainId;
+  const confirmations = options.confirmations === undefined ? 1 : options.confirmations;
+  if (!Number.isSafeInteger(chainId) || chainId < 1)
+    throw new Error('CLI test chain ID must be a positive safe integer');
+  if (!Number.isSafeInteger(confirmations) || confirmations < 1)
+    throw new Error('CLI test confirmation count must be a positive safe integer');
   const apiKey = options.apiKey ?? randomBytes(24).toString('hex');
   if (apiKey.length < 32) throw new Error('CLI test API key must have at least 32 characters');
   const runtimeTemp = join(dirname(options.db), 'runtime-tmp');
   mkdirSync(runtimeTemp, { recursive: true });
   const child = spawn(process.execPath, ['--import', 'tsx', 'src/server.ts'], {
     cwd: resolve(dirname(fileURLToPath(import.meta.url)), '../..'),
-    env: { ...process.env, RPC_URL: options.rpc, CHAIN_ID: '31337', RELAYER_PRIVATE_KEY: options.key,
+    env: { ...process.env, RPC_URL: options.rpc, CHAIN_ID: String(chainId), RELAYER_PRIVATE_KEY: options.key,
       ROUTER_ADDRESS: options.router, API_KEY: apiKey, DB_PATH: options.db, PORT: String(options.port ?? 0),
-      CONFIRMATIONS: '1', RPC_TIMEOUT_MS: '5000', ASSET_METADATA: '[]', TSX_DISABLE_CACHE: '1',
+      CONFIRMATIONS: String(confirmations), RPC_TIMEOUT_MS: '5000', ASSET_METADATA: '[]', TSX_DISABLE_CACHE: '1',
       TEMP: runtimeTemp, TMP: runtimeTemp, TMPDIR: runtimeTemp },
     stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true
   });
