@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { getBigInt, isHexString, keccak256, Transaction, type Interface, type JsonRpcProvider, type Wallet, type TypedDataDomain, type TransactionReceipt, type Block } from 'ethers';
 import { digest, domain, paymentKey, paymentSchema, submissionSchema, type Payment } from './payment.ts';
 import { computeReceiptLogsBloom } from './receipt-bloom.ts';
@@ -308,6 +309,12 @@ export class PaymentService {
       journal.block_number === row.block_number && journal.block_hash === row.block_hash;
   }
 
+  private assertReconciliationRowUnchanged(row: RecordRow) {
+    const current = this.store.get(row.id);
+    if (!current || !isDeepStrictEqual(current, row))
+      throw new ReconciliationEvidenceUnavailable('Stored settlement changed during reconciliation; retry');
+  }
+
   private async scanReconciliation(): Promise<ReconciliationResult> {
     let checked = 0;
     const exceptions: string[] = [];
@@ -318,6 +325,7 @@ export class PaymentService {
       const page = this.store.pagePayments({ status: 'settled', limit: 100, cursor });
       for (const row of page.items) {
         checked++;
+        this.assertReconciliationRowUnchanged(row);
         const p = this.storedPayment(row);
         const transaction = p && this.storedSettlementTransaction(row, p);
         const txHash = row.tx_hash;
@@ -327,7 +335,9 @@ export class PaymentService {
           this.journalMatchesSettlement(row, p)) {
           // RPC errors abort the scan; unavailable transport is not evidence of corruption.
           const receipt = await this.provider.getTransactionReceipt(txHash);
+          this.assertReconciliationRowUnchanged(row);
           const block = await this.provider.getBlock(row.block_number!);
+          this.assertReconciliationRowUnchanged(row);
           // Read the projection after the RPC awaits, and retain it unchanged on review.
           const journalMatches = this.journalMatchesSettlement(row, p);
           // A block consistent with the recorded settlement leaves a missing receipt inconclusive.

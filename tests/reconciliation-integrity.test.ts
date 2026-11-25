@@ -59,6 +59,201 @@ function service(overrides: Record<string, unknown> = {}) {
   return new PaymentService(store, provider as unknown as JsonRpcProvider, fixtureRelayer,
     router, 31337, routerAddress);
 }
+function reconciliationSnapshot() {
+  return JSON.stringify({ payments: store.db.prepare('SELECT * FROM payments ORDER BY rowid').all(),
+    journals: store.db.prepare('SELECT * FROM journals ORDER BY rowid').all(),
+    audit: store.db.prepare('SELECT * FROM audit ORDER BY sequence').all(),
+    sequence: store.db.prepare('SELECT * FROM sqlite_sequence ORDER BY name').all(),
+    schema: store.db.prepare('SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name').all(),
+    changes: store.db.prepare('SELECT total_changes() AS changes').get() });
+}
+const rowChangedError = 'Stored settlement changed during reconciliation; retry';
+function assertRowChanged(error: unknown) {
+  assert.ok(error instanceof ReconciliationEvidenceUnavailable && error.constructor === ReconciliationEvidenceUnavailable);
+  assert.equal(error.message, rowChangedError);
+  return true;
+}
+async function paymentMutationRace(phase: 'receipt' | 'block', change: () => void) {
+  let receiptReads = 0, blockReads = 0, afterMutation = '';
+  async function mutate() {
+    await Promise.resolve();
+    change(); afterMutation = reconciliationSnapshot();
+  }
+  const worker = service({
+    getTransactionReceipt: async () => {
+      receiptReads++;
+      if (phase === 'receipt') await mutate();
+      return receipt;
+    },
+    getBlock: async () => {
+      blockReads++;
+      if (phase === 'block') await mutate();
+      return canonical;
+    }
+  });
+  await assert.rejects(worker.reconcile(), assertRowChanged);
+  assert.equal(receiptReads, 1); assert.equal(blockReads, phase === 'receipt' ? 0 : 1);
+  assert.ok(afterMutation && reconciliationSnapshot() === afterMutation,
+    'Reconciliation wrote, repaired or rolled back the post-mutation financial projection');
+}
+
+test('a signature changed during receipt lookup aborts reconciliation before stale success', async t => {
+  let receiptReads = 0, blockReads = 0, afterMutation = '';
+  const worker = service({
+    getTransactionReceipt: async () => {
+      receiptReads++;
+      await Promise.resolve();
+      store.db.prepare('UPDATE payments SET signature=? WHERE id=?').run('0x0123Abcd', paymentId);
+      afterMutation = reconciliationSnapshot();
+      return receipt;
+    },
+    getBlock: async () => { blockReads++; return canonical; }
+  });
+  let result: unknown, failure: unknown;
+  try { result = await worker.reconcile(); } catch (error) { failure = error; }
+  t.diagnostic(JSON.stringify({ evidence: 'synthetic SQL mutation', mutatedField: 'signature',
+    returnedResult: result ?? null, rejected: failure instanceof ReconciliationEvidenceUnavailable,
+    receiptReads, blockReads, postMutationProjectionRetained: reconciliationSnapshot() === afterMutation }));
+  assert.ok(failure instanceof ReconciliationEvidenceUnavailable, 'A changed payment row must not be reported as healthy');
+  assert.equal(failure.message, rowChangedError);
+  assert.equal(receiptReads, 1); assert.equal(blockReads, 0);
+  assert.ok(reconciliationSnapshot() === afterMutation, 'Reconciliation wrote after the concurrent payment mutation');
+});
+
+const racedFields = [
+  ['signature', '0x0123Abcd'],
+  ['payload', JSON.stringify({ ...payment, amount: '125000001' })],
+  ['fingerprint', digest(payment, domain(31338, routerAddress))],
+  ['raw_tx', signedSettlement(payment, '0x', routerAddress, 1).raw],
+  ['tx_hash', '0x' + '99'.repeat(32)], ['block_number', 18], ['block_hash', '0x' + '98'.repeat(32)],
+  ['error', 'Synthetic concurrent settlement note'],
+  ['created_at', '2001-01-01T00:00:00.000Z'], ['updated_at', '2002-01-01T00:00:00.000Z']
+] as const;
+for (const phase of ['receipt', 'block'] as const) {
+  for (const [field, value] of racedFields) {
+    if (phase === 'receipt' && field === 'signature') continue; // The focused baseline above covers this pair.
+    test('synthetic SQL ' + field + ' mutation during the ' + phase + ' await rejects stale reconciliation evidence', async () => {
+      await paymentMutationRace(phase, () => {
+        store.db.prepare('UPDATE payments SET ' + field + '=? WHERE id=?').run(value, paymentId);
+      });
+    });
+  }
+  test('a supported settled-to-review transition during the ' + phase + ' await remains committed and aborts the scan', async () => {
+    const journal = store.journal(paymentId), audit = store.events();
+    await paymentMutationRace(phase, () => { store.setStatus(paymentId, 'review', 'Concurrent operator verification'); });
+    assert.equal(store.get(paymentId)!.status, 'review');
+    assert.equal(store.get(paymentId)!.error, 'Concurrent operator verification');
+    assert.deepEqual(store.journal(paymentId), journal);
+    assert.deepEqual(store.events().slice(1), audit);
+    assert.equal(store.events()[0].action, 'review');
+    assert.equal(store.events().filter(event => event.action === 'review').length, 1);
+  });
+  test('synthetic SQL payment deletion during the ' + phase + ' await preserves the remaining journal and aborts the scan', async () => {
+    // Explicitly bypass fixture foreign keys to model a corrupt out-of-band
+    // deletion; the supported Store API does not offer this operation.
+    store.db.exec('PRAGMA foreign_keys=OFF');
+    const journal = store.journal(paymentId), audit = store.events();
+    await paymentMutationRace(phase, () => { store.db.prepare('DELETE FROM payments WHERE id=?').run(paymentId); });
+    assert.equal(store.get(paymentId), undefined);
+    assert.deepEqual(store.journal(paymentId), journal); assert.deepEqual(store.events(), audit);
+  });
+  test('a same-value payment update during the ' + phase + ' await does not invent a row race', async () => {
+    const original = store.get(paymentId), beforeChanges = Number(store.db.prepare('SELECT total_changes() AS count').get()!.count);
+    let afterUpdate = '', receiptReads = 0, blockReads = 0;
+    const update = async () => {
+      await Promise.resolve();
+      store.db.prepare('UPDATE payments SET signature=signature WHERE id=?').run(paymentId);
+      afterUpdate = reconciliationSnapshot();
+    };
+    const result = await service({
+      getTransactionReceipt: async () => { receiptReads++; if (phase === 'receipt') await update(); return receipt; },
+      getBlock: async () => { blockReads++; if (phase === 'block') await update(); return canonical; }
+    }).reconcile();
+    assert.equal(result.checked, 1); assert.deepEqual(result.exceptions, []); assert.equal(result.outstandingReviews, 0);
+    assert.deepEqual(store.get(paymentId), original);
+    assert.equal(Number(store.db.prepare('SELECT total_changes() AS count').get()!.count), beforeChanges + 1);
+    assert.ok(afterUpdate && reconciliationSnapshot() === afterUpdate);
+    assert.deepEqual({ receiptReads, blockReads }, { receiptReads: 1, blockReads: 1 });
+  });
+}
+
+test('unchanged BLOB metadata is compared by content across materialized and current payment rows', async () => {
+  store.db.prepare('UPDATE payments SET error=? WHERE id=?').run(new Uint8Array([0, 1, 255]), paymentId);
+  const first = store.get(paymentId)!.error as unknown, second = store.get(paymentId)!.error as unknown;
+  assert.ok(first instanceof Uint8Array && second instanceof Uint8Array);
+  assert.notEqual(first, second); assert.deepEqual(first, second);
+  const before = reconciliationSnapshot();
+  const result = await service().reconcile();
+  assert.equal(result.checked, 1); assert.deepEqual(result.exceptions, []); assert.equal(result.outstandingReviews, 0);
+  assert.ok(reconciliationSnapshot() === before, 'Comparing unchanged BLOB values changed the projection');
+});
+
+function newerSettlement() {
+  const newer = { ...payment, paymentId: '0x' + 'cd'.repeat(32), amount: '7000000', nonce: '1' };
+  const signed = signedSettlement(newer, '0x', routerAddress, 1);
+  const id = store.accept(newer, digest(newer, signingDomain), '0x').row.id;
+  store.broadcast(id, signed.raw, signed.hash); store.finalize(id, 17, blockHash);
+  const newerReceipt = withFixtureLogsBloom({ ...receipt, hash: signed.hash, index: 1,
+    cumulativeGasUsed: receipt.gasUsed * 2n,
+    logs: [{ ...settlementLog(newer), transactionHash: signed.hash, transactionIndex: 1, index: 1 }] });
+  canonical = { ...canonical, transactions: [txHash, signed.hash], gasUsed: newerReceipt.cumulativeGasUsed };
+  return { id, hash: signed.hash, receipt: newerReceipt };
+}
+for (const change of ['SQL signature', 'supported review', 'SQL deletion'] as const) {
+  test('a page-materialized older payment changed by ' + change + ' is rejected before its stale receipt RPC', async () => {
+    const newer = newerSettlement();
+    if (change === 'SQL deletion') store.db.exec('PRAGMA foreign_keys=OFF');
+    assert.deepEqual(store.pagePayments({ status: 'settled' }).items.map(row => row.id), [newer.id, paymentId]);
+    const newestBefore = store.get(newer.id), journalsBefore = store.journals();
+    const receiptReads: string[] = [];
+    let blockReads = 0, afterMutation = '';
+    const worker = service({
+      getTransactionReceipt: async (hash: string) => {
+        receiptReads.push(hash); assert.equal(hash, newer.hash, 'Stale older payment reached its receipt RPC');
+        await Promise.resolve();
+        if (change === 'SQL signature') store.db.prepare('UPDATE payments SET signature=? WHERE id=?').run('0x0123Abcd', paymentId);
+        else if (change === 'supported review') store.setStatus(paymentId, 'review', 'Concurrent operator verification');
+        else store.db.prepare('DELETE FROM payments WHERE id=?').run(paymentId);
+        afterMutation = reconciliationSnapshot();
+        return newer.receipt;
+      },
+      getBlock: async (number: number) => { blockReads++; assert.equal(number, 17); return canonical; }
+    });
+    await assert.rejects(worker.reconcile(), assertRowChanged);
+    assert.deepEqual(receiptReads, [newer.hash]); assert.equal(blockReads, 1);
+    assert.deepEqual(store.get(newer.id), newestBefore); assert.deepEqual(store.journals(), journalsBefore);
+    assert.ok(afterMutation && reconciliationSnapshot() === afterMutation,
+      'Page-entry rejection changed the post-mutation projection');
+  });
+}
+
+test('an earlier committed review survives a later payment-row race without rolling back the scan', async () => {
+  const newer = newerSettlement();
+  store.db.prepare('UPDATE journals SET amount=? WHERE payment_id=?').run('1', newer.id);
+  const corruptJournal = store.journal(newer.id), originalJournal = store.journal(paymentId);
+  const receiptReads: string[] = [];
+  let blockReads = 0, afterMutation = '';
+  const worker = service({
+    getTransactionReceipt: async (hash: string) => {
+      receiptReads.push(hash); assert.equal(hash, txHash);
+      assert.equal(store.get(newer.id)!.status, 'review', 'Earlier local review must commit before this await');
+      await Promise.resolve();
+      store.db.prepare('UPDATE payments SET signature=? WHERE id=?').run('0x0123Abcd', paymentId);
+      afterMutation = reconciliationSnapshot();
+      return receipt;
+    },
+    getBlock: async () => { blockReads++; return canonical; }
+  });
+  await assert.rejects(worker.reconcile(), assertRowChanged);
+  assert.deepEqual(receiptReads, [txHash]); assert.equal(blockReads, 0);
+  assert.equal(store.get(newer.id)!.status, 'review');
+  assert.equal(store.events().filter(event => event.payment_id === newer.id && event.action === 'review').length, 1);
+  assert.deepEqual(store.journal(newer.id), corruptJournal); assert.deepEqual(store.journal(paymentId), originalJournal);
+  assert.equal(store.get(paymentId)!.status, 'settled'); assert.equal(store.get(paymentId)!.signature, '0x0123Abcd');
+  assert.ok(afterMutation && reconciliationSnapshot() === afterMutation,
+    'Aborting a later row erased an earlier review or wrote after the row mutation');
+});
+
 async function flagged() {
   const beforeRow = store.get(paymentId)!;
   const beforeJournal = store.journal(paymentId);
