@@ -307,7 +307,7 @@ export async function verifyNetwork() {
     assert.ok(writerPid && writerPid !== process.pid, 'RPC writer must run in a distinct process');
     await bounded('writer RPC CLI configuration and readiness', () => verifyCliConfiguration(writer, routerAddress), 10000);
     requireCliOwnership();
-    // Store constructors mutate schema and PRAGMAs, so observe both CLI lifetimes natively read-only.
+    // Store constructors mutate schema and PRAGMAs, so observe every CLI lifetime natively read-only.
     observer = new DatabaseSync(ledgerPath, { readOnly: true });
     const dispatched = await poll(phase, async () => {
       requireLiveCli(writer);
@@ -340,6 +340,7 @@ export async function verifyNetwork() {
 
     phase = 'forced RPC writer termination and autonomous CLI restart';
     requireLiveCli(writer);
+    requireCliOwnership();
     await bounded('RPC writer SIGKILL and confirmed close', () => writer.kill(), 6000);
     const writerExit = await writer.exited;
     assert.equal(writerExit.signal, 'SIGKILL', 'RPC writer must terminate without its shutdown path');
@@ -356,15 +357,15 @@ export async function verifyNetwork() {
     assert.deepEqual(ledgerSnapshot(observer, laterAccepted.row.id), checkpoint,
       'CLI restart without quorum must retain the complete committed checkpoint');
 
-    phase = 'two-validator quorum observation';
-    const halted = await bounded(phase, () => observeHalted(async () => {
-      requireLiveCli(restarted);
+    async function observeOriginalReservation(handle: CliHandle) {
+      requireLiveCli(handle);
       const sample = await agreement(pair, generated.validators);
       if (!sample) throw new AcceptanceFailure('Surviving RPC nodes do not agree');
-      const [receipts, transactions, balance, nonce] = await Promise.all([
+      const [receipts, transactions, balance, nonce, nativeNonce] = await Promise.all([
         Promise.all(pair.map(node => node.getTransactionReceipt(pendingHash))),
         Promise.all(pair.map(node => node.getTransaction(pendingHash))),
-        token.balanceOf(payee.address), router.nonces(payer.address)
+        token.balanceOf(payee.address), router.nonces(payer.address),
+        provider.getTransactionCount(relayer.address, 'latest')
       ]);
       assert.ok(receipts.every(receipt => receipt === null), 'No-quorum transaction unexpectedly has a receipt');
       assert.ok(transactions.every(transaction => transaction?.hash === pendingHash && transaction.blockNumber === null),
@@ -373,11 +374,50 @@ export async function verifyNetwork() {
         'Autonomous CLI quorum loss changed the reservation, journals, audit, sequence or deployment context');
       assert.equal(balance, amount, 'Recipient balance changed without quorum');
       assert.equal(nonce, 1n, 'Payer nonce changed without quorum');
+      assert.equal(nativeNonce, relayerNonceBeforeCrash, 'Relayer consumed a native nonce without quorum');
       return sample;
-    }, baseline), 45000);
+    }
+    phase = 'two-validator quorum observation';
+    const halted = await bounded(phase,
+      () => observeHalted(() => observeOriginalReservation(restarted), baseline), 45000);
     console.log(JSON.stringify({ check: 'two-validator-quorum-loss', stoppedServices: ['validator3', 'validator4'],
       height: halted.height, hash: halted.hash, observedMs: halted.elapsedMs, observations: halted.observations,
       pendingTransactionHash: pendingHash, journalEntries: 1 }));
+
+    phase = 'second forced RPC CLI termination while quorum remains lost';
+    requireLiveCli(restarted);
+    requireCliOwnership();
+    const secondCheckpoint = ledgerSnapshot(observer, laterAccepted.row.id);
+    assert.deepEqual(secondCheckpoint, checkpoint, 'The first restarted CLI must retain the original complete checkpoint');
+    await bounded('second RPC CLI SIGKILL and confirmed close', () => restarted.kill(), 6000);
+    const restartedExit = await restarted.exited;
+    assert.equal(restartedExit.signal, 'SIGKILL', 'The second fault must skip the restarted CLI shutdown path');
+    assert.deepEqual(ledgerSnapshot(observer, laterAccepted.row.id), secondCheckpoint,
+      'The second forced close must retain every payment, journal, audit, sequence, context and schema row');
+    requireReleasedOwnership();
+
+    phase = 'second autonomous CLI restart without quorum';
+    const recovery = await bounded(phase, () => startCli({ ...cliOptions, apiKey: writer.apiKey }), 25000);
+    const recoveryPid = recovery.child.pid;
+    assert.ok(recoveryPid && recoveryPid !== process.pid && new Set([writerPid, restartedPid, recoveryPid]).size === 3,
+      'Repeated crash recovery must use three distinct RPC CLI processes');
+    await bounded('second restarted RPC CLI configuration and readiness',
+      () => verifyCliConfiguration(recovery, routerAddress), 10000);
+    requireCliOwnership();
+    assert.deepEqual(ledgerSnapshot(observer, laterAccepted.row.id), secondCheckpoint,
+      'The third CLI startup must retain the original reservation and complete deployment-bound checkpoint');
+    phase = 'two-validator quorum observation after second CLI crash';
+    const repeatedlyHalted = await bounded(phase,
+      () => observeHalted(() => observeOriginalReservation(recovery), baseline), 45000);
+    requireLiveCli(recovery);
+    requireCliOwnership();
+    console.log(JSON.stringify({ check: 'rpc-cli-repeated-crash', writerPid, firstRestartPid: restartedPid, recoveryPid,
+      forcedCrashCount: 2, faultExitSignals: [writerExit.signal, restartedExit.signal],
+      stoppedServices: ['validator3', 'validator4'], height: repeatedlyHalted.height, hash: repeatedlyHalted.hash,
+      firstHoldObservedMs: halted.elapsedMs, secondHoldObservedMs: repeatedlyHalted.elapsedMs,
+      firstHoldObservations: halted.observations, secondHoldObservations: repeatedlyHalted.observations,
+      checkpointRetained: true, deploymentContextRetained: true, ownershipVerified: true,
+      chainId: CHAIN_ID, confirmations: 2, originalReservation: true, transactionHash: pendingHash, journalEntries: 1 }));
 
     phase = 'restore three-validator quorum';
     await bounded(phase, () => compose('start', 'validator3'), 30000);
@@ -390,7 +430,7 @@ export async function verifyNetwork() {
 
     phase = 'settle original pending transaction after quorum restoration';
     const laterSettled = await poll(phase, async () => {
-      requireLiveCli(restarted);
+      requireLiveCli(recovery);
       const row = ledgerSnapshot(observer!, laterAccepted.row.id).row;
       if (row.status === 'failed' || row.status === 'review')
         throw new AcceptanceFailure('Recovered payment entered ' + row.status + ' state');
@@ -401,7 +441,7 @@ export async function verifyNetwork() {
     assert.equal(await token.balanceOf(payee.address), amount + laterAmount, 'Recovered transfer balance mismatch');
     assert.equal(await router.nonces(payer.address), 2n, 'Recovered payer nonce mismatch');
     const recoveredReconciliation = await bounded('RPC CLI recovered receipt reconciliation',
-      () => cliRequest<{ checked: number; exceptions: unknown[] }>(restarted, '/api/reconcile', 'POST'), 15000);
+      () => cliRequest<{ checked: number; exceptions: unknown[] }>(recovery, '/api/reconcile', 'POST'), 15000);
     assert.equal(recoveredReconciliation.checked, 2);
     assert.deepEqual(recoveredReconciliation.exceptions, []);
     const relayerNonceAfterCrash = await bounded(phase,
@@ -411,23 +451,24 @@ export async function verifyNetwork() {
     assert.equal(recoveredCheckpoint.journals.length, 2, 'Recovered payment must add exactly one journal');
     assert.equal(recoveredCheckpoint.audit.filter(event => event.payment_id === laterAccepted.row.id && event.action === 'settled').length, 1);
     assert.deepEqual(recoveredCheckpoint.context, checkpoint.context);
-    requireLiveCli(restarted);
+    requireLiveCli(recovery);
     requireCliOwnership();
-    await bounded('restarted RPC CLI stop and confirmed close', () => restarted.kill(), 6000);
-    const restartedExit = await restarted.exited;
-    assert.equal(restartedExit.signal, 'SIGKILL');
+    await bounded('verified recovery RPC CLI cleanup stop and confirmed close', () => recovery.kill(), 6000);
+    const recoveryExit = await recovery.exited;
+    assert.equal(recoveryExit.signal, 'SIGKILL');
     assert.deepEqual(ledgerSnapshot(observer, laterAccepted.row.id), recoveredCheckpoint);
     closeObserver();
     requireReleasedOwnership();
-    // Resume manual wallet acceptance only after both actual CLI writers have closed.
+    // Resume manual wallet acceptance only after all three actual CLI writers have closed.
     assert.ok(cliHandles.every(handle => closedCliHandles.has(handle)), 'Parent must not reopen beside a live CLI');
     store = new Store(ledgerPath); storeOpen = true;
     service = new PaymentService(store, provider, relayer, router, CHAIN_ID, routerAddress, 2);
     assert.deepEqual(ledgerSnapshot(store.db, laterAccepted.row.id), recoveredCheckpoint,
       'Parent reopen must retain the autonomous CLI recovery checkpoint');
     console.log(JSON.stringify({ check: 'rpc-cli-crash-recovery', fileBacked: true,
-      writerPid, recoveryPid: restartedPid, writerExitSignal: writerExit.signal,
-      recoveryExitSignal: restartedExit.signal, checkpointRetained: true, deploymentContextRetained: true,
+      writerPid, firstRestartPid: restartedPid, recoveryPid, forcedCrashCount: 2,
+      writerExitSignal: writerExit.signal, firstRestartExitSignal: restartedExit.signal,
+      recoveryStopSignal: recoveryExit.signal, checkpointRetained: true, deploymentContextRetained: true,
       ownershipVerified: true, ownershipReleasedAfterClose: true, chainId: CHAIN_ID, confirmations: 2,
       autonomousRecovery: true, originalReservation: true, transactionHash: pendingHash, nativeNonceBefore: relayerNonceBeforeCrash,
       nativeNonceAfter: relayerNonceAfterCrash, journalEntries: 2, settledAudits: 1,
@@ -617,7 +658,8 @@ export async function verifyNetwork() {
       reconciliationExceptions: reconciliation.exceptions.length, ...walletAgreement }));
     console.log(JSON.stringify({ result: 'passed', elapsedMs: Date.now() - started,
       checks: ['four-validator-agreement', 'signed-settlement', 'one-validator-failure',
-        'two-validator-quorum-loss', 'quorum-restoration', 'rpc-cli-crash-recovery', 'post-quorum-settlement', 'validator-recovery',
+        'two-validator-quorum-loss', 'rpc-cli-repeated-crash', 'quorum-restoration', 'rpc-cli-crash-recovery',
+        'post-quorum-settlement', 'validator-recovery',
         'erc1271-quorum-loss', 'erc1271-settlement', 'erc1271-quorum-recovery', 'erc1271-revocation'] }));
   } catch (error) {
     // Avoid dumping transaction arguments, generated keys, or wallet objects into CI logs.

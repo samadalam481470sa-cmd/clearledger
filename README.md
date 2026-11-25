@@ -90,13 +90,13 @@ Detailed regression results and earlier failures retain their original source re
 
 ## More than 100,000 source lines
 
-The [machine-readable count](docs/source-count.json) records **646,752 nonblank source lines**, including comments and tests.
+The [machine-readable count](docs/source-count.json) records **646,792 nonblank source lines**, including comments and tests.
 
 | Source area | Files | Nonblank lines |
 | --- | --- | --- |
-| ClearLedger application area | 139 | 23,840 |
+| ClearLedger application area | 139 | 23,880 |
 | Attributed Besu snapshot | 4,484 | 622,912 |
-| Combined | 4,623 | 646,752 |
+| Combined | 4,623 | 646,792 |
 
 Package installs, lockfiles, JSON, documentation, generated output and databases are excluded. Application-area counting includes the clearly attributed OpenZeppelin-derived signature-check adaptation. Application code is MIT-licensed. Besu and dependencies retain their own licenses, and the consensus implementation belongs to Besu. [Provenance and licenses](docs/PROVENANCE.md).
 
@@ -112,7 +112,7 @@ docker compose -f network/compose.yaml up -d
 npm run network:verify
 ```
 
-`network:verify` deploys test contracts, binds its empty file-backed ledger to the deployment and settles 125 dUSD before checking progress with validator 4 stopped. With validators 3 and 4 stopped, the parent queues a second EOA payment for 37.5 dUSD and closes its Store. An actual autonomous RPC CLI reserves and broadcasts it; the driver observes the committed state through a read-only connection, kills that CLI and starts another against the same database. The restarted CLI retains the original reservation during a 20-second no-quorum observation and settles it after quorum returns. Startup context, exclusive ownership and authenticated reconciliation are exercised. The parent driver and providers stay alive, and later wallet phases remain manually driven.
+`network:verify` deploys test contracts, binds its empty file-backed ledger to the deployment and settles 125 dUSD before checking progress with validator 4 stopped. With validators 3 and 4 stopped, the parent queues a second EOA payment for 37.5 dUSD and closes its Store. An actual autonomous RPC CLI reserves and broadcasts it; a read-only connection observes the committed state. The driver forces two unresolved SIGKILL faults across three distinct CLI lifetimes sharing that database. Each restarted CLI must retain the original reservation through its own full 20-second no-quorum window; only the third CLI runs after quorum restoration and settles it. Startup context and exclusive ownership are checked at each handoff; authenticated reconciliation checks final recovery. The final recovery CLI stop is cleanup, separate from the two fault kills. Parent providers stay alive and later wallet phases remain manually driven. [Repeated-crash evidence and limits](STATUS.md#repeated-cli-crashes-during-besu-quorum-loss).
 
 A later 12.5 dUSD contract-wallet payment undergoes a second two-validator stop and recovery. The script then checks queued wallet revocation, three journals, recipient balance 175 dUSD and wallet balance 87.5 dUSD, followed by four-node state agreement. Both restoration polls share a 600-second script deadline. [Network procedure and measured limits](docs/NETWORK.md).
 
