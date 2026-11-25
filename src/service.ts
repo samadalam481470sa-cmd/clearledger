@@ -142,7 +142,13 @@ export class PaymentService {
     return p;
   }
 
+  private assertPreparationRowUnchanged(row: RecordRow) {
+    if (!this.paymentRowMatchesSnapshot(row))
+      throw new Error('Stored queued payment changed during preparation; retry');
+  }
+
   private async prepare(row: RecordRow) {
+    this.assertPreparationRowUnchanged(row);
     const p = this.storedPayment(row);
     if (!p) {
       this.store.setStatus(row.id, 'failed',
@@ -158,11 +164,15 @@ export class PaymentService {
       if (e.code !== 'CALL_EXCEPTION' || typeof data !== 'string' ||
         data.length < 10 || (data.length - 10) % 64 !== 0 ||
         !/^0x[0-9a-fA-F]+(?![\s\S])/.test(data)) throw e;
+      this.assertPreparationRowUnchanged(row);
       this.store.setStatus(row.id, 'failed', e.shortMessage ?? 'Contract rejected payment');
       return;
     }
+    this.assertPreparationRowUnchanged(row);
     const request = await this.router.settle.populateTransaction(p, row.signature);
+    this.assertPreparationRowUnchanged(row);
     const complete = await this.relayer.populateTransaction(request);
+    this.assertPreparationRowUnchanged(row);
     const estimate = getBigInt(complete.gasLimit ?? 0n);
     const feeCap = complete.maxFeePerGas ?? complete.gasPrice;
     if (estimate <= 0n || feeCap == null) throw new Error('Settlement gas budget is unavailable');
@@ -172,12 +182,14 @@ export class PaymentService {
       this.provider.getBlock('latest'),
       maxGasPrice > 0n ? this.provider.getBalance(this.relayer.address, 'pending') : null
     ]);
+    this.assertPreparationRowUnchanged(row);
     if (!head || typeof head.gasLimit !== 'bigint') throw new Error('Settlement gas budget is unavailable');
     const affordable = balance === null ? head.gasLimit : balance / maxGasPrice;
     const ceiling = affordable < head.gasLimit ? affordable : head.gasLimit;
     const gasLimit = estimate + DAILY_SPEND_GAS_ALLOWANCE;
     if (ceiling < gasLimit) throw new Error('Settlement gas budget is unavailable');
     const raw = await this.relayer.signTransaction({ ...complete, gasLimit });
+    this.assertPreparationRowUnchanged(row);
     // Persist BEFORE sending. Restart can retransmit exactly the same signed transaction.
     this.store.broadcast(row.id, raw, keccak256(raw));
   }
