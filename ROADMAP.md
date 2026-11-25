@@ -16,7 +16,7 @@ A conservative cumulative-gas check now retains unresolved reservations or flags
 
 Fresh payment and journal cursors reject unsupported insertion maxima with fixed HTTP 400 errors while previously issued cursors retain their captured range. This preserves the ledger and does not add arbitrary 64-bit or mixed-nonpositive insertion support. [Boundary verification](STATUS.md#exact-pagination-range-boundaries).
 
-The count is 645,829 nonblank source lines, comprising 22,917 application-area lines and 622,912 attributed Besu lines, including comments and tests. The application area includes the attributed signature-check adaptation. Historical measurements and earlier failures remain tied to their recorded revisions in [STATUS.md](STATUS.md) and [VALIDATION.md](docs/VALIDATION.md).
+The count is 646,233 nonblank source lines, comprising 23,321 application-area lines and 622,912 attributed Besu lines, including comments and tests. The application area includes the attributed signature-check adaptation. Historical measurements and earlier failures remain tied to their recorded revisions in [STATUS.md](STATUS.md) and [VALIDATION.md](docs/VALIDATION.md).
 
 ## Next increments
 

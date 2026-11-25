@@ -119,7 +119,7 @@ export class PaymentService {
         const current = this.store.get(row.id)!;
         if (current.status === 'broadcast') {
           try { await this.confirm(current); }
-          catch { break; } // RPC outages preserve signed bytes for a safe retry.
+          catch { break; } // Unavailable evidence or changed storage stops this pass.
           if (this.store.get(row.id)!.status === 'broadcast') break;
         }
       }
@@ -215,9 +215,20 @@ export class PaymentService {
       (index === 0 ? cumulativeGasUsed === gasUsed : cumulativeGasUsed > gasUsed);
   }
 
+  private paymentRowMatchesSnapshot(row: RecordRow): boolean {
+    const current = this.store.get(row.id);
+    return current !== undefined && isDeepStrictEqual(current, row);
+  }
+
+  private assertConfirmationRowUnchanged(row: RecordRow) {
+    if (!this.paymentRowMatchesSnapshot(row))
+      throw new Error('Stored transaction reservation changed during confirmation; retry');
+  }
+
   private async confirm(row: RecordRow) {
     if (!isHash(row.tx_hash)) return;
     let receipt = await this.provider.getTransactionReceipt(row.tx_hash);
+    this.assertConfirmationRowUnchanged(row);
     // A receipt cannot resolve a reservation whose stored intent and signed bytes disagree.
     const p = this.storedPayment(row);
     const transaction = p && this.storedSettlementTransaction(row, p);
@@ -225,7 +236,9 @@ export class PaymentService {
     if (!receipt) {
       try { await this.provider.broadcastTransaction(row.raw_tx!); }
       catch { /* already known, connection loss, or uncertain outcome: inspect hash */ }
+      this.assertConfirmationRowUnchanged(row);
       receipt = await this.provider.getTransactionReceipt(row.tx_hash);
+      this.assertConfirmationRowUnchanged(row);
     }
     // Inconsistent RPC evidence cannot consume a durable reservation or release
     // its nonce priority. Both success and revert decisions need the same
@@ -238,9 +251,11 @@ export class PaymentService {
     // A reverted top-level execution cannot leave receipt logs.
     if (receipt.status === 0 && receipt.logs.length !== 0) return;
     const latest = await this.provider.getBlockNumber();
+    this.assertConfirmationRowUnchanged(row);
     if (!Number.isSafeInteger(latest) || latest < receipt.blockNumber ||
       latest - receipt.blockNumber < this.confirmations - 1) return;
     const canonical = await this.provider.getBlock(receipt.blockNumber);
+    this.assertConfirmationRowUnchanged(row);
     if (!canonical || !matchesCanonicalBlock(receipt, canonical) ||
       blockGasPriceEvidence(receipt, canonical, transaction) !== 'matching') return;
     if (receipt.status === 0) {
@@ -310,8 +325,7 @@ export class PaymentService {
   }
 
   private assertReconciliationRowUnchanged(row: RecordRow) {
-    const current = this.store.get(row.id);
-    if (!current || !isDeepStrictEqual(current, row))
+    if (!this.paymentRowMatchesSnapshot(row))
       throw new ReconciliationEvidenceUnavailable('Stored settlement changed during reconciliation; retry');
   }
 

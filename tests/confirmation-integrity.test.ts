@@ -112,6 +112,206 @@ async function remainsUncertain(overrides: Record<string, unknown> = {}) {
   assert.equal(signing, 0);
   return worker;
 }
+type ConfirmationAwait = 'receipt' | 'broadcast' | 'followup' | 'head' | 'block';
+function confirmationRace(phase: ConfirmationAwait, change: () => void,
+  options: { initialNull?: boolean; failAfterMutation?: boolean } = {}) {
+  const reads = { receipt: 0, broadcast: 0, head: 0, block: 0 };
+  let enabled = true, afterMutation = '';
+  async function mutate(current: ConfirmationAwait) {
+    if (!enabled || current !== phase) return;
+    enabled = false;
+    await Promise.resolve();
+    change(); afterMutation = privateProjection();
+    if (options.failAfterMutation) throw new Error('Synthetic RPC outcome unavailable after mutation');
+  }
+  const worker = service({
+    getTransactionReceipt: async () => {
+      reads.receipt++;
+      if (reads.receipt === 1) {
+        await mutate('receipt');
+        return options.initialNull || phase === 'broadcast' || phase === 'followup' ? null : receipt;
+      }
+      await mutate('followup'); return receipt;
+    },
+    broadcastTransaction: async (bytes: string) => {
+      reads.broadcast++; assert.ok(bytes === raw, 'Retry sent bytes other than the original reservation');
+      await mutate('broadcast'); return { hash: txHash };
+    },
+    getBlockNumber: async () => { reads.head++; await mutate('head'); return latest; },
+    getBlock: async () => { reads.block++; blockReads++; await mutate('block'); return canonical; }
+  });
+  return { worker, reads, afterMutation: () => afterMutation };
+}
+function assertRaceStopped(race: ReturnType<typeof confirmationRace>, phase: ConfirmationAwait) {
+  const expected = {
+    receipt: { receipt: 1, broadcast: 0, head: 0, block: 0 },
+    broadcast: { receipt: 1, broadcast: 1, head: 0, block: 0 },
+    followup: { receipt: 2, broadcast: 1, head: 0, block: 0 },
+    head: { receipt: 1, broadcast: 0, head: 1, block: 0 },
+    block: { receipt: 1, broadcast: 0, head: 1, block: 1 }
+  }[phase];
+  assert.deepEqual(race.reads, expected);
+  assert.ok(race.afterMutation() && privateProjection() === race.afterMutation(),
+    'Confirmation wrote, repaired or rolled back the post-mutation projection');
+  assert.equal(store.journals().length, 0); assert.equal(preflights, 0); assert.equal(signing, 0);
+  assert.equal(store.get(secondId!)!.status, 'queued');
+  assert.equal(store.get(secondId!)!.raw_tx, null); assert.equal(store.get(secondId!)!.tx_hash, null);
+}
+async function assertFreshRecovery(worker: PaymentService) {
+  // Once the test restores the original row, the queued stub stops the tick
+  // only after that original reservation has legitimately settled.
+  await assert.rejects(worker.tick(), /Queued nonce was allocated too early/);
+  const settled = store.get(firstId)!;
+  assert.equal(settled.status, 'settled'); assert.ok(settled.raw_tx === raw && settled.tx_hash === txHash);
+  assert.equal(store.journal(firstId)?.amount, payment.amount); assert.equal(store.journal(firstId)?.tx_hash, txHash);
+  assert.equal(store.journals().length, 1);
+  assert.equal(store.events().filter(event => event.action === 'settled').length, 1);
+  assert.equal(preflights, 1); assert.equal(signing, 0);
+  assert.equal(store.get(secondId!)!.status, 'queued');
+  assert.equal(store.get(secondId!)!.raw_tx, null); assert.equal(store.get(secondId!)!.tx_hash, null);
+}
+
+test('a broadcast payload rewrite during canonical block lookup cannot journal an unverified amount', async t => {
+  queueAnother();
+  const original = store.get(firstId)!;
+  let afterMutation = '', rejected = false, mutate = true;
+  const worker = service({ getBlock: async () => {
+    blockReads++;
+    if (mutate) {
+      mutate = false;
+      await Promise.resolve();
+      store.db.prepare('UPDATE payments SET payload=? WHERE id=?')
+        .run(JSON.stringify({ ...payment, amount: '125000001' }), firstId);
+      afterMutation = privateProjection();
+    }
+    return canonical;
+  } });
+  try { await worker.tick(); } catch { rejected = true; }
+  t.diagnostic(JSON.stringify({ evidence: 'synthetic SQL mutation', mutatedField: 'payload.amount',
+    verifiedReceiptAmount: payment.amount, statusAfterTick: store.get(firstId)!.status,
+    journalAmountAfterTick: store.journal(firstId)?.amount ?? null, journalRows: store.journals().length,
+    preflights, signing, rejected, postMutationProjectionRetained: privateProjection() === afterMutation }));
+  assert.equal(store.get(firstId)!.status, 'broadcast');
+  assert.ok(privateProjection() === afterMutation, 'Confirmation wrote after the concurrent payload change');
+  assert.equal(store.get(firstId)!.raw_tx, original.raw_tx); assert.equal(store.get(firstId)!.tx_hash, original.tx_hash);
+  assert.equal(store.journals().length, 0); assert.equal(preflights, 0); assert.equal(signing, 0);
+  assert.equal(store.get(secondId!)!.status, 'queued');
+  assert.equal(store.get(secondId!)!.raw_tx, null); assert.equal(store.get(secondId!)!.tx_hash, null);
+  assert.equal(rejected, false);
+  store.db.prepare('UPDATE payments SET payload=? WHERE id=?').run(original.payload, firstId);
+  await assertFreshRecovery(worker);
+});
+
+for (const phase of ['receipt', 'broadcast', 'followup', 'head'] as const) {
+  test('a payload rewrite during the ' + phase + ' await holds the reservation until a fresh restored-row tick', async () => {
+    queueAnother();
+    const original = store.get(firstId)!;
+    const race = confirmationRace(phase, () => {
+      store.db.prepare('UPDATE payments SET payload=? WHERE id=?')
+        .run(JSON.stringify({ ...payment, amount: '125000001' }), firstId);
+    });
+    await race.worker.tick(); assertRaceStopped(race, phase);
+    assert.ok(store.get(firstId)!.raw_tx === raw && store.get(firstId)!.tx_hash === txHash);
+    store.db.prepare('UPDATE payments SET payload=? WHERE id=?').run(original.payload, firstId);
+    await assertFreshRecovery(race.worker);
+  });
+}
+// Cover every remaining payment field once at a selected await boundary,
+// instead of repeating the same full field matrix at all five checkpoints.
+for (const [phase, field, value] of [
+  ['receipt', 'signature', '0x0123Abcd'], ['followup', 'fingerprint', digest(payment, domain(31338, routerAddress))],
+  ['head', 'raw_tx', signedSettlement(payment, signature, routerAddress, 8).raw], ['block', 'tx_hash', otherTxHash],
+  ['receipt', 'block_number', 17], ['followup', 'block_hash', blockHash],
+  ['head', 'error', 'Synthetic concurrent broadcast note'],
+  ['block', 'created_at', '2001-01-01T00:00:00.000Z'], ['receipt', 'updated_at', '2002-01-01T00:00:00.000Z']
+] as const) {
+  test('synthetic SQL ' + field + ' change during ' + phase + ' await does not resolve a stale broadcast', async () => {
+    queueAnother();
+    const original = store.get(firstId)!;
+    const race = confirmationRace(phase, () => {
+      store.db.prepare('UPDATE payments SET ' + field + '=? WHERE id=?').run(value, firstId);
+    });
+    await race.worker.tick(); assertRaceStopped(race, phase);
+    store.db.prepare('UPDATE payments SET ' + field + '=? WHERE id=?').run(original[field], firstId);
+    await assertFreshRecovery(race.worker);
+  });
+}
+
+test('a synthetic SQL payment ID change during head lookup aborts the old reservation safely', async () => {
+  queueAnother();
+  const replacementId = firstId + '-changed';
+  const race = confirmationRace('head', () => {
+    store.db.prepare('UPDATE payments SET id=? WHERE id=?').run(replacementId, firstId);
+  });
+  await race.worker.tick(); assertRaceStopped(race, 'head');
+  assert.equal(store.get(firstId), undefined);
+  assert.ok(store.get(replacementId)!.raw_tx === raw && store.get(replacementId)!.tx_hash === txHash);
+  store.db.prepare('UPDATE payments SET id=? WHERE id=?').run(firstId, replacementId);
+  await assertFreshRecovery(race.worker);
+});
+
+for (const status of ['review', 'failed'] as const) {
+  test('a supported broadcast-to-' + status + ' transition during a null initial receipt prevents any rebroadcast', async () => {
+    queueAnother();
+    const race = confirmationRace('receipt', () => {
+      store.setStatus(firstId, status, 'Concurrent operator verification');
+    }, { initialNull: true });
+    await race.worker.tick(); assertRaceStopped(race, 'receipt');
+    assert.equal(store.get(firstId)!.status, status);
+    assert.ok(store.get(firstId)!.raw_tx === raw && store.get(firstId)!.tx_hash === txHash);
+    assert.equal(store.events().filter(event => event.action === status).length, 1);
+  });
+}
+test('a supported review during an uncertain broadcast attempt prevents a followup receipt read', async () => {
+  queueAnother();
+  const race = confirmationRace('broadcast', () => {
+    store.setStatus(firstId, 'review', 'Concurrent operator verification');
+  }, { failAfterMutation: true });
+  await race.worker.tick(); assertRaceStopped(race, 'broadcast');
+  assert.equal(store.get(firstId)!.status, 'review');
+  assert.ok(store.get(firstId)!.raw_tx === raw && store.get(firstId)!.tx_hash === txHash);
+});
+test('a supported review during canonical block lookup is preserved without dispatching the successor', async () => {
+  queueAnother();
+  const race = confirmationRace('block', () => { store.setStatus(firstId, 'review', 'Concurrent operator verification'); });
+  await race.worker.tick(); assertRaceStopped(race, 'block');
+  assert.equal(store.get(firstId)!.status, 'review');
+  assert.ok(store.get(firstId)!.raw_tx === raw && store.get(firstId)!.tx_hash === txHash);
+});
+test('a payment deleted during the initial receipt lookup aborts without recreating it or dispatching queued work', async () => {
+  queueAnother();
+  const race = confirmationRace('receipt', () => { store.db.prepare('DELETE FROM payments WHERE id=?').run(firstId); });
+  await race.worker.tick(); assertRaceStopped(race, 'receipt');
+  assert.equal(store.get(firstId), undefined);
+});
+test('a failed head RPC after a payload mutation remains an inconclusive outcome without a block lookup', async () => {
+  queueAnother();
+  const race = confirmationRace('head', () => {
+    store.db.prepare('UPDATE payments SET payload=? WHERE id=?')
+      .run(JSON.stringify({ ...payment, amount: '125000001' }), firstId);
+  }, { failAfterMutation: true });
+  await race.worker.tick(); assertRaceStopped(race, 'head');
+  assert.ok(store.get(firstId)!.raw_tx === raw && store.get(firstId)!.tx_hash === txHash);
+});
+test('a same-value update during the followup receipt preserves normal rebroadcast recovery', async () => {
+  queueAnother();
+  const beforeChanges = Number(store.db.prepare('SELECT total_changes() AS count').get()!.count);
+  const race = confirmationRace('followup', () => {
+    store.db.prepare('UPDATE payments SET signature=signature WHERE id=?').run(firstId);
+  });
+  await assertFreshRecovery(race.worker);
+  assert.deepEqual(race.reads, { receipt: 2, broadcast: 1, head: 1, block: 1 });
+  assert.equal(Number(store.db.prepare('SELECT total_changes() AS count').get()!.count), beforeChanges + 4);
+});
+test('unchanged BLOB metadata does not cause reference-identity rejection during healthy confirmation', async () => {
+  queueAnother();
+  store.db.prepare('UPDATE payments SET error=? WHERE id=?').run(new Uint8Array([0, 1, 255]), firstId);
+  const a = store.get(firstId)!.error as unknown, b = store.get(firstId)!.error as unknown;
+  assert.ok(a instanceof Uint8Array && b instanceof Uint8Array); assert.notEqual(a, b); assert.deepEqual(a, b);
+  const race = confirmationRace('block', () => {});
+  await assertFreshRecovery(race.worker);
+  assert.deepEqual(race.reads, { receipt: 1, broadcast: 0, head: 1, block: 1 });
+});
 
 for (const field of ['transactionHash', 'blockHash'] as const) {
   for (const [description, value] of [
